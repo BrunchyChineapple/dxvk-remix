@@ -1808,7 +1808,40 @@ namespace dxvk {
       const MaterialData* material = m_pReplacer->accessExternalMaterial(submesh.externalMaterial);
       if (material != nullptr) {
         state.drawCall.materialData.setHashOverride(material->getHash());
-      } 
+
+        // Auto-apply texture categories for API-submitted content (matches D3D9 behavior).
+        // For API materials, the albedo texture hash is what D3D9's setupCategoriesForTexture()
+        // pattern normally keys off, so look it up directly from the material's opaque data.
+        XXH64_hash_t textureHash = 0;
+        if (material->getType() == MaterialDataType::Opaque) {
+          const auto& opaqueMat = material->getOpaqueMaterialData();
+          if (opaqueMat.getAlbedoOpacityTexture().isValid()) {
+            textureHash = opaqueMat.getAlbedoOpacityTexture().getImageHash();
+          }
+        }
+
+        if (textureHash != 0 && textureHash != kEmptyHash) {
+          auto applyCategory = [&](const fast_unordered_set& hashSet, InstanceCategories cat) {
+            if (hashSet.find(textureHash) != hashSet.end()) {
+              state.drawCall.categories.set(cat);
+            }
+          };
+
+          applyCategory(RtxOptions::skyBoxTextures(), InstanceCategories::Sky);
+          applyCategory(RtxOptions::ignoreTextures(), InstanceCategories::Ignore);
+          applyCategory(RtxOptions::worldSpaceUiTextures(), InstanceCategories::WorldUI);
+          applyCategory(RtxOptions::worldSpaceUiBackgroundTextures(), InstanceCategories::WorldMatte);
+          applyCategory(RtxOptions::particleTextures(), InstanceCategories::Particle);
+          applyCategory(RtxOptions::beamTextures(), InstanceCategories::Beam);
+          applyCategory(RtxOptions::decalTextures(), InstanceCategories::DecalStatic);
+          applyCategory(RtxOptions::terrainTextures(), InstanceCategories::Terrain);
+          applyCategory(RtxOptions::animatedWaterTextures(), InstanceCategories::AnimatedWater);
+          applyCategory(RtxOptions::ignoreLights(), InstanceCategories::IgnoreLights);
+          applyCategory(RtxOptions::antiCullingTextures(), InstanceCategories::IgnoreAntiCulling);
+          applyCategory(RtxOptions::motionBlurMaskOutTextures(), InstanceCategories::IgnoreMotionBlur);
+          applyCategory(RtxOptions::hideInstanceTextures(), InstanceCategories::Hidden);
+        }
+      }
 
       const RtxParticleSystemDesc* pParticles = nullptr;
       if(state.optionalParticleDesc.has_value()) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) 2023-2025, NVIDIA CORPORATION. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -188,6 +188,8 @@ namespace remix {
     Result< void >                    DestroyLight(remixapi_LightHandle handle);
     Result< void >                    DrawLightInstance(remixapi_LightHandle handle);
     Result< void >                    SetConfigVariable(const char* key, const char* value);
+    Result< void >                    AddTextureHash(const char* textureCategory, const char* textureHash);
+    Result< void >                    RemoveTextureHash(const char* textureCategory, const char* textureHash);
 
     // DXVK interoperability
     Result< IDirect3D9Ex* >                  dxvk_CreateD3D9(bool editorModeEnabled = false);
@@ -198,6 +200,7 @@ namespace remix {
                                                                       remixapi_dxvk_CopyRenderingOutputType type);
     Result< void >                           dxvk_SetDefaultOutput(remixapi_dxvk_CopyRenderingOutputType type,
                                                                    const remixapi_Float4D& color);
+    Result< uint64_t >                       dxvk_GetTextureHash(IDirect3DTexture9* texture);
     // Object picking utils
     template< typename CallbackLambda > // void( remix::Span<uint32_t> objectPickingValues )
     Result< void >                           pick_RequestObjectPicking(const Rect2D& region, CallbackLambda &&callback);
@@ -224,7 +227,7 @@ namespace remix {
         return status;
       }
 
-      static_assert(sizeof(remixapi_Interface) == 168,
+      static_assert(sizeof(remixapi_Interface) == 208,
                     "Change version, update C++ wrapper when adding new functions");
 
       remix::Interface interfaceInCpp = {};
@@ -266,6 +269,20 @@ namespace remix {
       return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
     }
     return m_CInterface.SetConfigVariable(key, value);
+  }
+
+  inline Result< void > Interface::AddTextureHash(const char* textureCategory, const char* textureHash) {
+    if (!m_CInterface.AddTextureHash) {
+      return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    }
+    return m_CInterface.AddTextureHash(textureCategory, textureHash);
+  }
+
+  inline Result< void > Interface::RemoveTextureHash(const char* textureCategory, const char* textureHash) {
+    if (!m_CInterface.RemoveTextureHash) {
+      return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    }
+    return m_CInterface.RemoveTextureHash(textureCategory, textureHash);
   }
 
   inline Result< void > Interface::Present(const remixapi_PresentInfo* info) {
@@ -985,6 +1002,7 @@ namespace remix {
       pNext = nullptr;
       hash = 0;
       radiance = { 1.0f, 1.0f, 1.0f };
+      isDynamic = false;  // Default to static for temporal accumulation
       STATIC_ASSERT_SIZEOF(remixapi_LightInfo, 40);
     }
   };
@@ -1060,6 +1078,18 @@ namespace remix {
   inline Result< void > Interface::dxvk_SetDefaultOutput(
       remixapi_dxvk_CopyRenderingOutputType type, const remixapi_Float4D& color) {
     return m_CInterface.dxvk_SetDefaultOutput(type, &color);
+  }
+
+  inline Result< uint64_t > Interface::dxvk_GetTextureHash(IDirect3DTexture9* texture) {
+    if (!m_CInterface.dxvk_GetTextureHash) {
+      return REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+    }
+    uint64_t hash = 0;
+    remixapi_ErrorCode status = m_CInterface.dxvk_GetTextureHash(texture, &hash);
+    if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
+      return status;
+    }
+    return hash;
   }
 
   template< typename CallbackLambda >
