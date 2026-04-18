@@ -1115,8 +1115,8 @@ namespace {
         dst.color0Buffer = dxvk::RasterBuffer { vertexSlice, offsetof(remixapi_HardcodedVertex, color), sizeof(remixapi_HardcodedVertex), VK_FORMAT_B8G8R8A8_UNORM };
         if (src.skinning_hasvalue) {
           dst.numBonesPerVertex = src.skinning_value.bonesPerVertex;
-          dst.blendWeightBuffer = dxvk::RasterBuffer { blendWeightsSlice, 0, sizeof(float), VK_FORMAT_R32_SFLOAT };;
-          dst.blendIndicesBuffer = dxvk::RasterBuffer { blendIndicesSlice, 0, sizeof(uint32_t), VK_FORMAT_R8G8B8A8_USCALED };
+          dst.blendWeightBuffer = dxvk::RasterBuffer { blendWeightsSlice, 0, uint32_t(sizeof(float) * src.skinning_value.bonesPerVertex), VK_FORMAT_R32_SFLOAT };
+          dst.blendIndicesBuffer = dxvk::RasterBuffer { blendIndicesSlice, 0, uint32_t(sizeof(uint32_t) * dxvk::divCeil(src.skinning_value.bonesPerVertex, 4u)), VK_FORMAT_R8G8B8A8_USCALED };
         }
 
         dst.indexCount = src.indices_count;
@@ -1230,8 +1230,8 @@ namespace {
       dst.color0Buffer   = dxvk::RasterBuffer { vertexSlice, offsetof(remixapi_HardcodedVertex, color),    sizeof(remixapi_HardcodedVertex), VK_FORMAT_B8G8R8A8_UNORM };
       if (src.hasSkinning) {
         dst.numBonesPerVertex = src.bonesPerVertex;
-        dst.blendWeightBuffer  = dxvk::RasterBuffer { blendWeightsSlice, 0, sizeof(float), VK_FORMAT_R32_SFLOAT };
-        dst.blendIndicesBuffer = dxvk::RasterBuffer { blendIndicesSlice, 0, sizeof(uint32_t), VK_FORMAT_R8G8B8A8_USCALED };
+        dst.blendWeightBuffer  = dxvk::RasterBuffer { blendWeightsSlice, 0, uint32_t(sizeof(float) * src.bonesPerVertex), VK_FORMAT_R32_SFLOAT };
+        dst.blendIndicesBuffer = dxvk::RasterBuffer { blendIndicesSlice, 0, uint32_t(sizeof(uint32_t) * dxvk::divCeil(src.bonesPerVertex, 4u)), VK_FORMAT_R8G8B8A8_USCALED };
       }
       dst.indexCount = static_cast<uint32_t>(src.indices.size());
       dst.indexBuffer = dxvk::RasterBuffer { indexSlice, 0, sizeof(uint32_t), VK_INDEX_TYPE_UINT32 };

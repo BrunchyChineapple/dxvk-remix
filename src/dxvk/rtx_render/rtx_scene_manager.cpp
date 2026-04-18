@@ -1987,6 +1987,12 @@ namespace dxvk {
 
       const MaterialData* material = m_pReplacer->accessExternalMaterial(submeshes[i].externalMaterial);
       if (material != nullptr) {
+        // Check for material replacement (matches the D3D9 draw path behavior).
+        MaterialData* pReplacementMaterial = m_pReplacer->getReplacementMaterial(material->getHash());
+        if (pReplacementMaterial != nullptr) {
+          material = pReplacementMaterial;
+        }
+
         state.drawCall.materialData.setHashOverride(material->getHash());
 
         // Auto-apply texture categories for API-submitted content (matches D3D9 behavior).
