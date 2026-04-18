@@ -38,6 +38,7 @@
 #include "rtx_remix_pnext.h"
 
 #include "../dxvk_image.h"
+#include "../dxvk_util.h"
 
 #include "../../util/util_math.h"
 #include "../../util/util_vector.h"
@@ -83,6 +84,15 @@ namespace {
   uint64_t s_apiVersion{ 0 };
   IDirect3D9Ex* s_dxvkD3D9 { nullptr };
   dxvk::D3D9DeviceEx* s_dxvkDevice { nullptr };
+  // Lock order invariant:
+  //   s_mutex is taken BEFORE dxvk::RtxOptionImpl::getUpdateMutex().
+  // Any code path that needs both must respect this order. RtxOption mutators
+  // (setValue / addHash / clearHash / removeHash and friends) internally
+  // acquire the RtxOption update mutex, so callers that already hold s_mutex
+  // (e.g. mutateTextureHashOption via remixapi_AddTextureHash /
+  // remixapi_RemoveTextureHash) must not invert this order. Conversely, any
+  // lambda enqueued via EmitCs that runs under the RtxOption update mutex
+  // must not re-enter s_mutex.
   dxvk::mutex s_mutex {};
 
 
@@ -1283,7 +1293,11 @@ namespace {
     if (mutation == TextureHashMutation::Add) {
       hashSetOption->addHash(h, layer);
     } else {
-      hashSetOption->clearHash(h, layer);
+      // removeHash (not clearHash): record a negative opinion on the user
+      // layer so lower-priority layers (config files, rtx.conf defaults)
+      // cannot re-contribute the hash. Matches fork's hard-delete semantic;
+      // clearHash would only drop the user layer's opinion.
+      hashSetOption->removeHash(h, layer);
     }
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
@@ -1338,6 +1352,14 @@ namespace {
     }
 
     if (!info->data || info->dataSize == 0 || info->width == 0 || info->height == 0) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+
+    // 3D textures not supported by this API yet; caller must use depth=1.
+    // The image below is hardcoded to VK_IMAGE_TYPE_2D, so depth > 1 would
+    // create an invalid VkImage. The header documents "Set to 1 for 2D textures";
+    // treat any other value as unsupported until real 3D-texture support lands.
+    if (info->depth > 1) {
       return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
     }
 
@@ -1436,9 +1458,7 @@ namespace {
       cImage = image,
       cImageView = imageView,
       cStagingBuffer = stagingBuffer,
-      cWidth = info->width,
-      cHeight = info->height,
-      cDepth = imageInfo.extent.depth,
+      cBaseExtent = imageInfo.extent,
       cMipLevels = imageInfo.mipLevels,
       cDataSize = info->dataSize,
       cFormat = vkFormat
@@ -1447,11 +1467,11 @@ namespace {
       // Transition image to transfer dst
       ctx->changeImageLayout(cImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-      // Upload each mip level
-      uint32_t offset = 0;
-      uint32_t w = cWidth;
-      uint32_t h = cHeight;
-      uint32_t d = cDepth;
+      // Upload each mip level. Use upstream's block-aware helpers so the
+      // per-mip byte count is correct for compressed formats (BC1 = 8
+      // bytes / 4x4 block, BC3/5/7 = 16 bytes / 4x4 block) as well as
+      // uncompressed formats.
+      VkDeviceSize offset = 0;
 
       for (uint32_t mip = 0; mip < cMipLevels; ++mip) {
         VkImageSubresourceLayers subresource = {};
@@ -1460,21 +1480,19 @@ namespace {
         subresource.baseArrayLayer = 0;
         subresource.layerCount = 1;
 
-        VkExtent3D extent = { w, h, d };
+        const VkExtent3D extent = dxvk::util::computeMipLevelExtent(cBaseExtent, mip);
+        const VkDeviceSize mipSize = dxvk::util::computeImageDataSize(cFormat, extent);
 
-        // Calculate mip size (simplified - assumes uncompressed or standard BC block size)
-        uint32_t mipSize = w * h * d * 4; // Simplified - should calculate properly per format
-        if (mipSize > cDataSize - offset) {
-          mipSize = static_cast<uint32_t>(cDataSize - offset);
+        if (offset + mipSize > cDataSize) {
+          // Source data truncated for this mip; stop uploading rather than
+          // read past the staging buffer.
+          break;
         }
 
         ctx->copyBufferToImage(cImage, subresource, VkOffset3D { 0, 0, 0 }, extent,
                                cStagingBuffer, offset, 0, 0);
 
         offset += mipSize;
-        w = std::max(1u, w / 2);
-        h = std::max(1u, h / 2);
-        d = std::max(1u, d / 2);
 
         if (offset >= cDataSize) {
           break;
@@ -1524,13 +1542,20 @@ namespace {
     remixDevice->EmitCs([cHash = reinterpret_cast<uint64_t>(handle)](dxvk::DxvkContext* ctx) {
       auto& textureManager = ctx->getCommonObjects()->getTextureManager();
 
-      // Find and release texture by hash
+      // Find the texture entry registered for this hash and release it via
+      // RtxTextureManager::releaseTexture. releaseTexture drops the entry
+      // from the SparseUniqueCache's internal map, which in turn releases
+      // the held Rc<DxvkImageView> / Rc<ManagedTexture> references. Once
+      // no other holders remain (caller has already discarded the handle
+      // and no materials reference the texture), the GPU resources are
+      // refcount-released by DXVK.
       const auto& textureTable = textureManager.getTextureTable();
-      for (auto& textureRef : textureTable) {
+      for (const auto& textureRef : textureTable) {
         if (textureRef.isValid() && textureRef.getImageHash() == cHash) {
-          // NOTE: This is a simplified approach - proper cleanup would need
-          // to be coordinated with the texture manager's lifecycle.
-          // For now, just let it be garbage collected naturally.
+          // releaseTexture takes a non-const reference for lookup only; copy
+          // so we don't alias an entry that releaseTexture will invalidate.
+          dxvk::TextureRef toRelease = textureRef;
+          textureManager.releaseTexture(toRelease);
           break;
         }
       }
