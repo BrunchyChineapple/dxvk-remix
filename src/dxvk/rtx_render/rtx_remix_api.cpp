@@ -1225,9 +1225,10 @@ namespace {
     std::lock_guard lock { s_mutex };
     if (auto src = pnext::find<remixapi_LightInfoDomeEXT>(info)) {
       // Special case for dome lights
-      remixDevice->EmitCs([cHandle = handle, 
-                          cRadiance = convert::tovec3(info->radiance), 
-                          cTransform = convert::tomat4(src->transform), 
+      auto devLock = remixDevice->LockDevice();
+      remixDevice->EmitCs([cHandle = handle,
+                          cRadiance = convert::tovec3(info->radiance),
+                          cTransform = convert::tomat4(src->transform),
                           cTexturePath = convert::topath(src->colorTexture)]
                           (dxvk::DxvkContext* ctx) {
         auto preloadTexture = [&ctx](const std::filesystem::path& path)->dxvk::TextureRef {
@@ -1271,6 +1272,7 @@ namespace {
       // Set the ignoreViewModel flag from the LightInfo
       rtLight->ignoreViewModel = info->ignoreViewModel;
 
+      auto devLock = remixDevice->LockDevice();
       remixDevice->EmitCs([cHandle = handle, cRtLight = *rtLight](dxvk::DxvkContext* ctx) {
         auto& lightMgr = ctx->getCommonObjects()->getSceneManager().getLightManager();
         lightMgr.addExternalLight(cHandle, cRtLight);
@@ -1279,10 +1281,13 @@ namespace {
 
     *out_handle = handle;
     // Auto-register for persistent instancing on device
-    remixDevice->EmitCs([cHandle = handle](dxvk::DxvkContext* ctx) {
-      auto& lightMgr = ctx->getCommonObjects()->getSceneManager().getLightManager();
-      lightMgr.registerPersistentExternalLight(cHandle);
-    });
+    {
+      auto devLock = remixDevice->LockDevice();
+      remixDevice->EmitCs([cHandle = handle](dxvk::DxvkContext* ctx) {
+        auto& lightMgr = ctx->getCommonObjects()->getSceneManager().getLightManager();
+        lightMgr.registerPersistentExternalLight(cHandle);
+      });
+    }
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
 
@@ -2098,20 +2103,20 @@ namespace {
     // Apply pending creates, updates and auto-instance persistent lights once per frame
     std::vector<PendingLightCreate> creates;
     std::vector<PendingLightUpdate> updates;
-    std::vector<PendingDomeUpdate> dune;
+    std::vector<PendingDomeUpdate> domeUpdates;
     std::vector<remixapi_LightHandle> destroys;
     {
       std::lock_guard lock { s_mutex };
       creates.swap(s_pendingLightCreates);
       updates.swap(s_pendingLightUpdates);
-      dune.swap(s_pendingDomeUpdates);
+      domeUpdates.swap(s_pendingDomeUpdates);
       destroys.swap(s_pendingLightDestroys);
     }
     // Build tombstone set for this frame to avoid re-adding deleted lights
     std::unordered_set<remixapi_LightHandle> tombstones;
     tombstones.insert(destroys.begin(), destroys.end());
 
-    remixDevice->EmitCs([creates = std::move(creates), updates = std::move(updates), dune = std::move(dune), destroys = std::move(destroys), tombstones = std::move(tombstones)](dxvk::DxvkContext* ctx) mutable {
+    remixDevice->EmitCs([creates = std::move(creates), updates = std::move(updates), domeUpdates = std::move(domeUpdates), destroys = std::move(destroys), tombstones = std::move(tombstones)](dxvk::DxvkContext* ctx) mutable {
       auto& lightMgr = ctx->getCommonObjects()->getSceneManager().getLightManager();
       // Apply destroys first
       for (auto h : destroys) {
@@ -2166,7 +2171,7 @@ namespace {
           lightMgr.addExternalLightInstance(upd.handle);
         }
       }
-      for (auto& du : dune) {
+      for (auto& du : domeUpdates) {
         if (tombstones.find(du.handle) != tombstones.end()) {
           continue;
         }
@@ -2289,17 +2294,17 @@ extern "C"
     // Drain pending work and apply on render thread at a safe point
     std::vector<PendingLightCreate> creates;
     std::vector<PendingLightUpdate> updates;
-    std::vector<PendingDomeUpdate> dune;
+    std::vector<PendingDomeUpdate> domeUpdates;
     std::vector<remixapi_LightHandle> destroys;
     {
       std::lock_guard lock { s_mutex };
       s_handlesDeletedThisFrame.clear();
       creates.swap(s_pendingLightCreates);
       updates.swap(s_pendingLightUpdates);
-      dune.swap(s_pendingDomeUpdates);
+      domeUpdates.swap(s_pendingDomeUpdates);
       destroys.swap(s_pendingLightDestroys);
     }
-    remixDevice->EmitCs([creates = std::move(creates), updates = std::move(updates), dune = std::move(dune), destroys = std::move(destroys)](dxvk::DxvkContext* ctx) mutable {
+    remixDevice->EmitCs([creates = std::move(creates), updates = std::move(updates), domeUpdates = std::move(domeUpdates), destroys = std::move(destroys)](dxvk::DxvkContext* ctx) mutable {
       auto& lightMgr = ctx->getCommonObjects()->getSceneManager().getLightManager();
       // Apply destroys first
       for (auto h : destroys) {
@@ -2351,7 +2356,7 @@ extern "C"
         }
       }
       // Apply dome updates
-      for (auto& du : dune) {
+      for (auto& du : domeUpdates) {
         auto preloadTexture = [ctx](const std::filesystem::path& path) {
           if (path.empty()) {
             return dxvk::TextureRef{};
@@ -2458,6 +2463,10 @@ extern "C"
       interf.CreateMaterial = remixapi_CreateMaterial;
       interf.DestroyMaterial = remixapi_DestroyMaterial;
       interf.CreateMesh = remixapi_CreateMesh;
+      // TODO Sub-feature 3: wire up CreateMeshBatched. Shim to nullptr so the
+      // interface vtable layout stays byte-compatible with fork-compiled
+      // consumers at this intermediate state.
+      interf.CreateMeshBatched = nullptr;
       interf.DestroyMesh = remixapi_DestroyMesh;
       interf.SetupCamera = remixapi_SetupCamera;
       interf.SetCameraMediumMaterial = remixapi_SetCameraMediumMaterial;
@@ -2480,12 +2489,21 @@ extern "C"
       interf.dxvk_GetTextureHash = remixapi_dxvk_GetTextureHash;
       interf.pick_RequestObjectPicking = remixapi_pick_RequestObjectPicking;
       interf.pick_HighlightObjects = remixapi_pick_HighlightObjects;
+      // TODO Sub-feature 4: wire up GetUIState/SetUIState. Shim to nullptr so
+      // the interface vtable layout stays byte-compatible with fork-compiled
+      // consumers at this intermediate state.
+      interf.GetUIState = nullptr;
+      interf.SetUIState = nullptr;
       // Optional extensions introduced alongside v0.5.1 changes
       interf.RegisterCallbacks = remixapi_RegisterCallbacks;
       interf.AutoInstancePersistentLights = remixapi_AutoInstancePersistentLights;
       interf.UpdateLightDefinition = remixapi_UpdateLightDefinition;
+      // TODO Sub-feature 4: wire up DrawScreenOverlay. Shim to nullptr so the
+      // interface vtable layout stays byte-compatible with fork-compiled
+      // consumers at this intermediate state.
+      interf.DrawScreenOverlay = nullptr;
     }
-    static_assert(sizeof(interf) == 240, "Add/remove function registration");
+    static_assert(sizeof(interf) == 272, "Add/remove function registration");
 
     *out_result = interf;
     return REMIXAPI_ERROR_CODE_SUCCESS;

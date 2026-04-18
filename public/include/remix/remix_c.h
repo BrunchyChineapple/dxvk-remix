@@ -362,6 +362,13 @@ extern "C" {
     const remixapi_MeshInfo*  info,
     remixapi_MeshHandle*      out_handle);
 
+  // TODO Sub-feature 3: implement CreateMeshBatched. Declared here so the
+  // remixapi_Interface vtable layout matches the fork exactly; the slot is
+  // currently nullptr in the init function.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_CreateMeshBatched)(
+    const remixapi_MeshInfo*  info,
+    remixapi_MeshHandle*      out_handle);
+
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyMesh)(
     remixapi_MeshHandle       handle);
 
@@ -372,6 +379,18 @@ extern "C" {
     REMIXAPI_CAMERA_TYPE_SKY,
     REMIXAPI_CAMERA_TYPE_VIEW_MODEL,
   } remixapi_CameraType;
+
+  // TODO Sub-feature 4: implement UI state query/set. Declared here so the
+  // remixapi_Interface vtable layout matches the fork exactly; the slots are
+  // currently nullptr in the init function.
+  typedef enum remixapi_UIState {
+      REMIXAPI_UI_STATE_NONE = 0,
+      REMIXAPI_UI_STATE_BASIC = 1,
+      REMIXAPI_UI_STATE_ADVANCED = 2
+  } remixapi_UIState;
+
+  REMIXAPI remixapi_UIState REMIXAPI_CALL remixapi_GetUIState(void);
+  REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_SetUIState(remixapi_UIState state);
 
   typedef struct remixapi_CameraInfoParameterizedEXT {
     remixapi_StructType sType;
@@ -833,6 +852,16 @@ extern "C" {
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyTexture)(
     remixapi_TextureHandle      handle);
 
+  // TODO Sub-feature 4: implement DrawScreenOverlay. Declared here so the
+  // remixapi_Interface vtable layout matches the fork exactly; the slot is
+  // currently nullptr in the init function.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DrawScreenOverlay)(
+    const void*       pPixelData,
+    uint32_t          width,
+    uint32_t          height,
+    remixapi_Format   format,
+    float             opacity);
+
 
   typedef struct remixapi_InitializeLibraryInfo {
     remixapi_StructType sType;
@@ -845,6 +874,7 @@ extern "C" {
     PFN_remixapi_CreateMaterial     CreateMaterial;
     PFN_remixapi_DestroyMaterial    DestroyMaterial;
     PFN_remixapi_CreateMesh         CreateMesh;
+    PFN_remixapi_CreateMeshBatched  CreateMeshBatched;
     PFN_remixapi_DestroyMesh        DestroyMesh;
     PFN_remixapi_SetupCamera        SetupCamera;
     PFN_remixapi_SetCameraMediumMaterial SetCameraMediumMaterial;
@@ -873,11 +903,14 @@ extern "C" {
 
     PFN_remixapi_Startup            Startup;
     PFN_remixapi_Present            Present;
+    remixapi_UIState                (*GetUIState)(void);
+    remixapi_ErrorCode              (*SetUIState)(remixapi_UIState state);
 
     // Optional extension functions (present starting in v0.5.1+)
     PFN_remixapi_RegisterCallbacks          RegisterCallbacks;
     PFN_remixapi_AutoInstancePersistentLights AutoInstancePersistentLights;
     PFN_remixapi_UpdateLightDefinition      UpdateLightDefinition;
+    PFN_remixapi_DrawScreenOverlay          DrawScreenOverlay;
   } remixapi_Interface;
 
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_InitializeLibrary(
