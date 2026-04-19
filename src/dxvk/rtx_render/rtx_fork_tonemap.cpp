@@ -78,7 +78,7 @@ namespace dxvk {
     }
 
     // Combo items string uses ImGui's \0-separated format.
-    static const char* k_operatorItems = "None\0ACES\0ACES (Legacy)\0Hable Filmic\0AgX\0Lottes 2016\0\0";
+    static const char* k_operatorItems = "None\0ACES\0ACES (Legacy)\0Hable Filmic\0AgX\0Lottes\0\0";
 
     // Shared slider rendering for per-operator parameter panels.
     static void showHableFilmicSliders() {
@@ -162,7 +162,7 @@ namespace dxvk {
     }
 
     void showLocalTonemapOperatorUI() {
-      RemixGui::Combo("Tonemapping Operator (Local)",
+      RemixGui::Combo("Tonemapping Operator",
                       &RtxForkLocalTonemap::tonemapOperatorObject(),
                       k_operatorItems);
 
