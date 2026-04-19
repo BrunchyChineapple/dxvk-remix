@@ -45,23 +45,24 @@ namespace dxvk {
 class DxvkContext;
 class DxvkDevice;
 struct RtLight;
+struct LightManager;
 
 // Forward declarations of fork_hooks functions that require friend access to
 // LightManager private members. Implementations live in rtx_fork_light.cpp.
 namespace fork_hooks {
-  void flushPendingLightMutations(class LightManager& mgr);
+  void flushPendingLightMutations(LightManager& mgr);
   void updateLightStaticSleep(RtLight* light, const RtLight& newLight,
                               DxvkDevice* device, uint64_t externalId);
-  void setExternalLightEmplace(class LightManager& mgr,
+  void setExternalLightEmplace(LightManager& mgr,
                                remixapi_LightHandle handle,
                                const RtLight& rtlight);
-  void disableExternalLightQueue(class LightManager& mgr,
+  void disableExternalLightQueue(LightManager& mgr,
                                  remixapi_LightHandle handle);
-  void registerPersistentLight(class LightManager& mgr,
+  void registerPersistentLight(LightManager& mgr,
                                remixapi_LightHandle handle);
-  void unregisterPersistentLight(class LightManager& mgr,
+  void unregisterPersistentLight(LightManager& mgr,
                                  remixapi_LightHandle handle);
-  void queueAutoInstancePersistent(class LightManager& mgr);
+  void queueAutoInstancePersistent(LightManager& mgr);
 } // namespace fork_hooks
 
 struct LightRange {
