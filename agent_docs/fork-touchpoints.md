@@ -4,7 +4,7 @@ This index lists every upstream file the fork touches. It is the authoritative
 inventory of fork-vs-upstream surface area, maintained as fork edits are added
 or removed.
 
-See `docs/superpowers/specs/2026-04-18-fork-touchpoint-pattern-design.md` for
+See `agent_docs/specs/2026-04-18-fork-touchpoint-pattern-design.md` for
 the design this index supports.
 
 ## Conventions
