@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "rtx_asset_replacer.h"
+#include "rtx_fork_hooks.h"
 #include "rtx_scene_manager.h"
 #include "rtx_opacity_micromap_manager.h"
 #include "dxvk_device.h"
@@ -1801,11 +1802,8 @@ namespace dxvk {
       state.drawCall.transformData.instancesToObject = &m_externalGpuInstancingTransforms.back();
     }
 
-    // Check for mesh/light replacements keyed on the API mesh handle, same as
-    // the D3D9 draw-call path. This lets .usd replacements target API-submitted
-    // meshes (e.g. hash the remix API mesh handle and author a replacement).
     const XXH64_hash_t meshHash = reinterpret_cast<XXH64_hash_t>(state.mesh);
-    if (std::vector<AssetReplacement>* pReplacements = m_pReplacer->getReplacementsForMesh(meshHash)) {
+    if (std::vector<AssetReplacement>* pReplacements = fork_hooks::externalDrawMeshReplacement(*m_pReplacer, meshHash)) {
       MaterialData renderMaterialData = determineMaterialData(nullptr, state.drawCall);
       drawReplacements(ctx, &state.drawCall, pReplacements, renderMaterialData);
       return;
@@ -1815,52 +1813,15 @@ namespace dxvk {
       state.drawCall.geometryData = submesh;
       state.drawCall.geometryData.cullMode = state.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
 
-      // Hoisted out of the material != nullptr branch so the object-picking
-      // metadata store below can see the resolved texture hash even when the
-      // material-specific category lookup skipped it.
       XXH64_hash_t textureHash = 0;
 
       const MaterialData* material = m_pReplacer->accessExternalMaterial(submesh.externalMaterial);
       if (material != nullptr) {
-        // Check for material replacement (matches the D3D9 draw path behavior).
-        MaterialData* pReplacementMaterial = m_pReplacer->getReplacementMaterial(material->getHash());
-        if (pReplacementMaterial != nullptr) {
-          material = pReplacementMaterial;
-        }
+        fork_hooks::externalDrawMaterialReplacement(*m_pReplacer, material);
 
         state.drawCall.materialData.setHashOverride(material->getHash());
 
-        // Auto-apply texture categories for API-submitted content (matches D3D9 behavior).
-        // For API materials, the albedo texture hash is what D3D9's setupCategoriesForTexture()
-        // pattern normally keys off, so look it up directly from the material's opaque data.
-        if (material->getType() == MaterialDataType::Opaque) {
-          const auto& opaqueMat = material->getOpaqueMaterialData();
-          if (opaqueMat.getAlbedoOpacityTexture().isValid()) {
-            textureHash = opaqueMat.getAlbedoOpacityTexture().getImageHash();
-          }
-        }
-
-        if (textureHash != 0 && textureHash != kEmptyHash) {
-          auto applyCategory = [&](const fast_unordered_set& hashSet, InstanceCategories cat) {
-            if (hashSet.find(textureHash) != hashSet.end()) {
-              state.drawCall.categories.set(cat);
-            }
-          };
-
-          applyCategory(RtxOptions::skyBoxTextures(), InstanceCategories::Sky);
-          applyCategory(RtxOptions::ignoreTextures(), InstanceCategories::Ignore);
-          applyCategory(RtxOptions::worldSpaceUiTextures(), InstanceCategories::WorldUI);
-          applyCategory(RtxOptions::worldSpaceUiBackgroundTextures(), InstanceCategories::WorldMatte);
-          applyCategory(RtxOptions::particleTextures(), InstanceCategories::Particle);
-          applyCategory(RtxOptions::beamTextures(), InstanceCategories::Beam);
-          applyCategory(RtxOptions::decalTextures(), InstanceCategories::DecalStatic);
-          applyCategory(RtxOptions::terrainTextures(), InstanceCategories::Terrain);
-          applyCategory(RtxOptions::animatedWaterTextures(), InstanceCategories::AnimatedWater);
-          applyCategory(RtxOptions::ignoreLights(), InstanceCategories::IgnoreLights);
-          applyCategory(RtxOptions::antiCullingTextures(), InstanceCategories::IgnoreAntiCulling);
-          applyCategory(RtxOptions::motionBlurMaskOutTextures(), InstanceCategories::IgnoreMotionBlur);
-          applyCategory(RtxOptions::hideInstanceTextures(), InstanceCategories::Hidden);
-        }
+        fork_hooks::externalDrawTextureCategories(material, state.drawCall, textureHash);
       }
 
       const RtxParticleSystemDesc* pParticles = nullptr;
@@ -1868,23 +1829,7 @@ namespace dxvk {
         pParticles = &state.optionalParticleDesc.value();
       }
 
-      // Store texture hash metadata for object picking (mirrors the D3D9 draw
-      // path which populates m_drawCallMeta in processDrawCallState). API draws
-      // supply their own drawCallID via remixapi_InstanceInfoObjectPickingEXT,
-      // so we hash it in directly here.
-      const bool objectPickingActive = m_device->getCommon()->getResources().getRaytracingOutput()
-        .m_primaryObjectPicking.isValid();
-      if (objectPickingActive && state.drawCall.drawCallID != 0 &&
-          textureHash != 0 && textureHash != kEmptyHash) {
-        auto meta = DrawCallMetaInfo {};
-        meta.legacyTextureHash = textureHash;
-
-        std::lock_guard lock { m_drawCallMeta.mutex };
-        auto [iter, isNew] = m_drawCallMeta.infos[m_drawCallMeta.ticker].emplace(state.drawCall.drawCallID, meta);
-        ONCE_IF_FALSE(isNew, Logger::warn(
-          "Found multiple API draw calls with the same \'objectPickingValue\'. "
-          "Some objects might not be available through object picking"));
-      }
+      fork_hooks::externalDrawObjectPicking(*m_device, state.drawCall, textureHash, *this);
 
       processDrawCallState(ctx, state.drawCall, material != nullptr ? MaterialData(*material) : LegacyMaterialData().as<OpaqueMaterialData>(), nullptr, pParticles);
     }
