@@ -335,29 +335,40 @@ check will enforce it if discipline slips.
 ## src/dxvk/rtx_render/rtx_light_manager.cpp
 
 **Pre-refactor fork footprint:** +126 / -12 LOC (audit 2026-04-18)
+**Post-refactor footprint:** 7 hook call sites + `#include "rtx_fork_hooks.h"` (migrated 2026-04-18)
 
 **Category:** migrate
 
-- **Block** at `LightManager::prepareSceneData` (pending-mutation flush block) — ~55 LOC, planned target `fork_hooks::flushPendingLightMutations` in `rtx_fork_light.cpp`.
-  *At frame start, applies queued external-light erases (clearing replacement links), applies queued updates (erase-then-emplace to handle union-type changes), registers pending active-light activations, and auto-instances all persistent lights.*
+- **Hook** at `LightManager::prepareSceneData` (pending-mutation flush block) → `fork_hooks::flushPendingLightMutations` in `rtx_fork_light.cpp`
+  *At frame start, applies queued external-light erases (clearing replacement links), applies queued updates (erase-then-emplace to handle union-type changes), registers pending active-light activations, and auto-instances all persistent lights. Access to private members granted via `friend` declaration — see `rtx_light_manager.h`.*
 
-- **Block** at `LightManager::updateLight` (static-light sleep logic) — ~28 LOC (two nearly identical copies — one for the indexed path, one for the hash-map path), planned target `fork_hooks::updateLightStaticSleep` in `rtx_fork_light.cpp`.
-  *Adds per-light static-sleep logic: tracks `isStaticCount` per frame, skips updating static lights that have been motionless for `numFramesToPutLightsToSleep` frames to preserve temporal denoiser data, while always updating dynamic lights.*
+- **Hook** at `LightManager::updateExternallyTrackedLight` (indexed static-sleep path) → `fork_hooks::updateLightStaticSleep` in `rtx_fork_light.cpp`
+  *Shared static-sleep logic: tracks `isStaticCount`, skips copy when motionless for N frames, always updates dynamic lights. Restores `externallyTrackedLightId` when externalId is valid.*
 
-- **Block** at `LightManager::setExternalLight` (emplace + frame-touched) — ~6 LOC, planned target `fork_hooks::setExternalLightEmplace` in `rtx_fork_light.cpp`.
-  *Emplaces a new external light and stamps its `frameLastTouched`; paired with the update branch above.*
+- **Hook** at `LightManager::addExternalLight` (hash-map static-sleep path) → `fork_hooks::updateLightStaticSleep` in `rtx_fork_light.cpp`
+  *Second call site for the same hook (Block 2's two-copies reduction). Passes `kInvalidExternallyTrackedLightId` so the id-restore branch is skipped.*
 
-- **Block** at `LightManager::disableExternalLight` (queue erase) — ~2 LOC, planned target `fork_hooks::disableExternalLightQueue` in `rtx_fork_light.cpp`.
-  *Queues the light handle for deferred erase in `m_pendingExternalLightErases` instead of erasing immediately.*
+- **Hook** at `LightManager::addExternalLight` (new-light emplace branch) → `fork_hooks::setExternalLightEmplace` in `rtx_fork_light.cpp`
+  *Emplaces the new external light and stamps `frameLastTouched`. Access to `m_externalLights` via `friend` declaration.*
 
-- **Block** at `LightManager::registerPersistentExternalLight` / `unregisterPersistentExternalLight` / `queueAutoInstancePersistent` (new methods) — ~20 LOC, planned target `fork_hooks::persistentLightRegistry` in `rtx_fork_light.cpp`.
-  *Adds three new methods to manage the persistent-light set: register/unregister a handle in `m_persistentExternalLights`, and queue all persistent handles for activation in the next frame's flush.*
+- **Hook** at `LightManager::removeExternalLight` (queue erase) → `fork_hooks::disableExternalLightQueue` in `rtx_fork_light.cpp`
+  *Queues the handle for deferred erase instead of immediate removal. Access to `m_pendingExternalLightErases` via `friend` declaration.*
+
+- **Hook** at `LightManager::registerPersistentExternalLight` → `fork_hooks::registerPersistentLight` in `rtx_fork_light.cpp`
+  *Inserts the handle into `m_persistentExternalLights`. Access via `friend` declaration.*
+
+- **Hook** at `LightManager::unregisterPersistentExternalLight` → `fork_hooks::unregisterPersistentLight` in `rtx_fork_light.cpp`
+  *Removes the handle from `m_persistentExternalLights`. Access via `friend` declaration.*
+
+- **Hook** at `LightManager::queueAutoInstancePersistent` → `fork_hooks::queueAutoInstancePersistent` in `rtx_fork_light.cpp`
+  *Copies all persistent-light handles into `m_pendingExternalActiveLights`. Access via `friend` declaration.*
 
 ---
 
 ## src/dxvk/rtx_render/rtx_light_manager.h
 
 **Pre-refactor fork footprint:** +10 / -0 LOC (audit 2026-04-18)
+**Post-refactor footprint:** forward decls + `friend` declarations (updated 2026-04-18)
 
 **Category:** index-only
 
@@ -366,6 +377,12 @@ check will enforce it if discipline slips.
 
 - **Inline tweak** at `LightManager` class (private member declarations) (~line 129) — 6-line addition.
   *Adds four deferred-mutation member containers: `m_pendingExternalLightErases`, `m_pendingExternalLightUpdates`, `m_pendingExternalActiveLights`, and `m_persistentExternalLights`.*
+
+- **Inline tweak** at file scope (just before `struct LightManager`) — forward declarations of all seven `fork_hooks::` functions that need `LightManager` or `RtLight` access, plus `struct RtLight` forward decl.
+  *Required so the `friend` declarations inside the class can name the fork-owned hooks.*
+
+- **Inline tweak** at `LightManager` class body (top of class, before `public:`) — 7-line block of `friend` declarations granting the light hooks access to private members.
+  *Canonical pattern for hooks that must read/write private upstream state — one `friend` line per hook, tracked here.*
 
 ---
 
