@@ -416,6 +416,49 @@ namespace dxvk {
     // Implementation in rtx_fork_api_entry.cpp.
     void remixApiVtableInit(remixapi_Interface& interf);
 
+    // Populates the tonemap-operator-related fields of the global tonemapper's
+    // shader args struct (tonemapOperator, directOperatorMode, Hable params,
+    // AgX params, Lottes params). Called from DxvkToneMapping::dispatchApplyToneMapping.
+    // No private-member access — uses public RtxOption accessors only.
+    // Implementation in rtx_fork_tonemap.cpp.
+    void populateTonemapOperatorArgs(struct ToneMappingApplyToneMappingArgs& args);
+
+    // Populates the tonemap-operator-related fields of the local tonemapper's
+    // FinalCombineArgs constant-buffer struct. Called from
+    // DxvkLocalToneMapping::dispatchFinalCombine (or equivalent args-population
+    // site). The local tonemapper's LuminanceArgs struct (which also has a
+    // useLegacyACES field) is handled inline via a small tweak in Commit 2;
+    // no dedicated hook is warranted for that 1-field struct.
+    // No private-member access.
+    // Implementation in rtx_fork_tonemap.cpp.
+    void populateLocalTonemapOperatorArgs(struct FinalCombineArgs& args);
+
+    // Renders the Tonemapping Operator combo + per-operator parameter sliders +
+    // Direct-mode toggle inside DxvkToneMapping::showImguiSettings. Called from
+    // the fork-hook call site replacing the old "Finalize With ACES" checkbox.
+    // No private-member access — uses only public RtxOption / RemixGui / ImGui APIs.
+    // Implementation in rtx_fork_tonemap.cpp.
+    void showTonemapOperatorUI();
+
+    // Same as showTonemapOperatorUI, but rendered inside
+    // DxvkLocalToneMapping::showImguiSettings. Separate hook because the local
+    // panel reads the rtx.localtonemap.tonemapOperator RtxOption (default
+    // ACESLegacy, preserving the port's current `finalizeWithACES=true` local
+    // default), whereas the global hook reads rtx.tonemap.tonemapOperator
+    // (default None, preserving the current `finalizeWithACES=false` global
+    // default). Keeping two options avoids silently changing either path's
+    // behavior under the enum refactor.
+    // Implementation in rtx_fork_tonemap.cpp.
+    void showLocalTonemapOperatorUI();
+
+    // Returns true when TonemappingMode::Direct is active. Callers in the
+    // global tonemap dispatch path (RtxContext / DxvkToneMapping::dispatch)
+    // use this to skip histogram, tone-curve, and local-pyramid passes and
+    // apply the operator alone to the exposure-adjusted input.
+    // No private-member access.
+    // Implementation in rtx_fork_tonemap.cpp.
+    bool shouldSkipToneCurve();
+
   } // namespace fork_hooks
 
 } // namespace dxvk
