@@ -28,6 +28,13 @@ namespace lss {
   struct Export;
 } // namespace lss
 
+// remixapi_LightHandle for the light-manager hooks. Guard against redefinition
+// when rtx_light_manager.h is also included in the same translation unit.
+#ifndef REMIXAPI_LIGHTHANDLE_DEFINED
+#define REMIXAPI_LIGHTHANDLE_DEFINED
+using remixapi_LightHandle = struct remixapi_LightHandle_T*;
+#endif
+
 namespace dxvk {
 
   // Forward declarations for types whose full definitions the hook header does
@@ -36,9 +43,11 @@ namespace dxvk {
   class DxvkDevice;
   class GameCapturer;
   class GameOverlay;
+  class LightManager;
   class RtInstance;
   class SceneManager;
   struct LegacyMaterialData;
+  struct RtLight;
 
   namespace fork_hooks {
 
@@ -108,6 +117,65 @@ namespace dxvk {
     // already in consistent Y-up space.
     // Implementation in rtx_fork_capture.cpp.
     void captureCoordSystemSkip(lss::Export& exportPrep);
+
+    // Drains the three deferred external-light mutation queues (erases, updates,
+    // activations) and auto-instances persistent lights. Called at the top of
+    // LightManager::prepareSceneData before linearization.
+    // NOTE: requires LightManager to declare this as a friend for access to
+    // private members. See rtx_light_manager.h.
+    // Implementation in rtx_fork_light.cpp.
+    void flushPendingLightMutations(LightManager& mgr);
+
+    // Shared static-sleep update logic for both the indexed (externally-tracked)
+    // and hash-map (external API) light paths. Preserves temporal denoiser data
+    // by skipping the copy once isStaticCount >= numFramesToPutLightsToSleep.
+    // Pass externalId = kInvalidExternallyTrackedLightId to skip id restoration
+    // (hash-map path). Stamps frameLastTouched unconditionally.
+    // Implementation in rtx_fork_light.cpp.
+    void updateLightStaticSleep(
+      RtLight* light,
+      const RtLight& newLight,
+      DxvkDevice* device,
+      uint64_t externalId);
+
+    // Emplaces a new external light into m_externalLights and stamps
+    // frameLastTouched. Called from the "new light" branch of addExternalLight.
+    // NOTE: requires LightManager to declare this as a friend for access to
+    // m_externalLights. See rtx_light_manager.h.
+    // Implementation in rtx_fork_light.cpp.
+    void setExternalLightEmplace(
+      LightManager& mgr,
+      remixapi_LightHandle handle,
+      const RtLight& rtlight);
+
+    // Queues a light handle for deferred erase in m_pendingExternalLightErases.
+    // Called from LightManager::removeExternalLight.
+    // NOTE: requires LightManager to declare this as a friend for access to
+    // m_pendingExternalLightErases. See rtx_light_manager.h.
+    // Implementation in rtx_fork_light.cpp.
+    void disableExternalLightQueue(LightManager& mgr, remixapi_LightHandle handle);
+
+    // Inserts a handle into m_persistentExternalLights if non-null.
+    // Called from LightManager::registerPersistentExternalLight.
+    // NOTE: requires LightManager to declare this as a friend for access to
+    // m_persistentExternalLights. See rtx_light_manager.h.
+    // Implementation in rtx_fork_light.cpp.
+    void registerPersistentLight(LightManager& mgr, remixapi_LightHandle handle);
+
+    // Removes a handle from m_persistentExternalLights if non-null.
+    // Called from LightManager::unregisterPersistentExternalLight.
+    // NOTE: requires LightManager to declare this as a friend for access to
+    // m_persistentExternalLights. See rtx_light_manager.h.
+    // Implementation in rtx_fork_light.cpp.
+    void unregisterPersistentLight(LightManager& mgr, remixapi_LightHandle handle);
+
+    // Copies all persistent-light handles into m_pendingExternalActiveLights.
+    // Called from LightManager::queueAutoInstancePersistent.
+    // NOTE: requires LightManager to declare this as a friend for access to
+    // m_persistentExternalLights and m_pendingExternalActiveLights. See
+    // rtx_light_manager.h.
+    // Implementation in rtx_fork_light.cpp.
+    void queueAutoInstancePersistent(LightManager& mgr);
 
   } // namespace fork_hooks
 
