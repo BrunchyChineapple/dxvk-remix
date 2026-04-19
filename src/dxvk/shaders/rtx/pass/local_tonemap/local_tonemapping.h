@@ -119,11 +119,22 @@ struct FinalCombineArgs
   float hableToeNumerator;       // E
   float hableToeDenominator;     // F
   float hableWhitePoint;         // W
+
+  // AgX parameters (op == tonemapOperatorAgX).
+  float agxGamma;
+  float agxSaturation;
+  float agxExposureOffset;
+  uint  agxLook;
+
+  float agxContrast;
+  float agxSlope;
+  float agxPower;
+  float agxPad;
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(LuminanceArgs)    == 32, "LuminanceArgs size preserved by the operator-enum refactor.");
-static_assert(sizeof(FinalCombineArgs) == 96, "FinalCombineArgs size: commit 3 added 32 bytes for Hable params.");
+static_assert(sizeof(LuminanceArgs)    == 32,  "LuminanceArgs size preserved by the operator-enum refactor.");
+static_assert(sizeof(FinalCombineArgs) == 128, "FinalCombineArgs size: commit 4 added 32 bytes for AgX params.");
 #endif
 
 

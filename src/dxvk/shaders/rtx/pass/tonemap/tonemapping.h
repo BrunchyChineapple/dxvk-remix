@@ -60,6 +60,7 @@ static const uint32_t tonemapOperatorNone        = 0;
 static const uint32_t tonemapOperatorACES        = 1;
 static const uint32_t tonemapOperatorACESLegacy  = 2;
 static const uint32_t tonemapOperatorHableFilmic = 3;  // Commit 3.
+static const uint32_t tonemapOperatorAgX         = 4;  // Commit 4.
 
 // Constant buffers
 
@@ -143,14 +144,25 @@ struct ToneMappingApplyToneMappingArgs {
   float hableToeNumerator;       // E
   float hableToeDenominator;     // F
   float hableWhitePoint;         // W
+
+  // AgX parameters (op == tonemapOperatorAgX). Appended after Hable; AgX is
+  // a distinct operator so no slot sharing.
+  float agxGamma;
+  float agxSaturation;
+  float agxExposureOffset;
+  uint  agxLook;
+
+  float agxContrast;
+  float agxSlope;
+  float agxPower;
+  float agxPad;                  // Reserved for 16-byte alignment.
 };
 
 #ifdef __cplusplus
-// Workstream 2 commit 3 grows the struct with 8 Hable params (32 bytes).
-// Commit 4 appends 32 bytes of AgX params; commit 5 confirms Lottes
-// overlays Hable's slots without further growth.
-static_assert(sizeof(ToneMappingApplyToneMappingArgs) == 112,
-              "ToneMappingApplyToneMappingArgs size: commit 3 added 32 bytes for Hable params.");
+// Workstream 2 commit 4 appends 32 bytes of AgX params onto commit 3's
+// Hable block. Commit 5 overlays Lottes on Hable's slots (no growth).
+static_assert(sizeof(ToneMappingApplyToneMappingArgs) == 144,
+              "ToneMappingApplyToneMappingArgs size: commit 4 added 32 bytes for AgX params.");
 #endif
 
 

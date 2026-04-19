@@ -73,4 +73,15 @@ namespace dxvk {
     RTX_OPTION("rtx.tonemap.hable", float, whitePoint,       4.00f, "Hable Filmic: W — linear-scene white point. Defaults to 4.0 (Half-Life: Alyx); Uncharted 2 reference is 11.2.");
   };
 
+  // AgX operator parameters. Defaults from gmod f3501d46.
+  class RtxForkAgX {
+    RTX_OPTION("rtx.tonemap.agx", float, gamma,          2.0f, "AgX gamma adjustment for contrast control. Lower values increase contrast. Range [0.5, 3.0].");
+    RTX_OPTION("rtx.tonemap.agx", float, saturation,     1.1f, "AgX saturation multiplier. Higher values increase color saturation. Range [0.5, 2.0].");
+    RTX_OPTION("rtx.tonemap.agx", float, exposureOffset, 0.0f, "AgX exposure offset in EV stops. Positive values brighten the image. Range [-2.0, 2.0].");
+    RTX_OPTION("rtx.tonemap.agx", int,   look,           0,    "AgX look preset: 0 = None, 1 = Punchy, 2 = Golden, 3 = Greyscale.");
+    RTX_OPTION("rtx.tonemap.agx", float, contrast,       1.0f, "AgX contrast adjustment. Range [0.5, 2.0].");
+    RTX_OPTION("rtx.tonemap.agx", float, slope,          1.0f, "AgX slope adjustment for highlight rolloff. Range [0.5, 2.0].");
+    RTX_OPTION("rtx.tonemap.agx", float, power,          1.0f, "AgX power adjustment for midtone response. Range [0.5, 2.0].");
+  };
+
 } // namespace dxvk

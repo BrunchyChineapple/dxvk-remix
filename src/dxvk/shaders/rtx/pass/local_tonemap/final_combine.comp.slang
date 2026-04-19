@@ -116,7 +116,14 @@ void main(uint2 threadId : SV_DispatchThreadID)
                                     cb.hableToeStrength,
                                     cb.hableToeNumerator,
                                     cb.hableToeDenominator,
-                                    cb.hableWhitePoint);
+                                    cb.hableWhitePoint,
+                                    cb.agxGamma,
+                                    cb.agxSaturation,
+                                    cb.agxExposureOffset,
+                                    cb.agxLook,
+                                    cb.agxContrast,
+                                    cb.agxSlope,
+                                    cb.agxPower);
   if (cb.performSRGBConversion)
   {
     texelFinal = linearToGamma(texelFinal);

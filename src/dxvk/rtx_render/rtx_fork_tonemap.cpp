@@ -24,12 +24,12 @@
 namespace dxvk {
   namespace fork_hooks {
 
-    // Shared helper: copies the Hable Filmic RtxOption values into whatever
-    // args struct exposes the same `hable*` fields. Two translation paths
-    // (global + local) both call into this; the compiler dispatches on the
-    // template parameter type to inline the correct struct layout.
+    // Shared helper: copies the Hable + AgX RtxOption values into whatever
+    // args struct exposes the same fields. Two translation paths (global +
+    // local) both call into this; the compiler inlines the struct layout.
     template<typename ArgsT>
-    static void writeHableParams(ArgsT& args) {
+    static void writeOperatorParams(ArgsT& args) {
+      // Hable (commit 3).
       args.hableExposureBias     = RtxForkHableFilmic::exposureBias();
       args.hableShoulderStrength = RtxForkHableFilmic::shoulderStrength();
       args.hableLinearStrength   = RtxForkHableFilmic::linearStrength();
@@ -38,22 +38,30 @@ namespace dxvk {
       args.hableToeNumerator     = RtxForkHableFilmic::toeNumerator();
       args.hableToeDenominator   = RtxForkHableFilmic::toeDenominator();
       args.hableWhitePoint       = RtxForkHableFilmic::whitePoint();
+      // AgX (commit 4).
+      args.agxGamma          = RtxForkAgX::gamma();
+      args.agxSaturation     = RtxForkAgX::saturation();
+      args.agxExposureOffset = RtxForkAgX::exposureOffset();
+      args.agxLook           = static_cast<uint32_t>(RtxForkAgX::look());
+      args.agxContrast       = RtxForkAgX::contrast();
+      args.agxSlope          = RtxForkAgX::slope();
+      args.agxPower          = RtxForkAgX::power();
     }
 
     void populateTonemapOperatorArgs(ToneMappingApplyToneMappingArgs& args) {
       args.tonemapOperator    = static_cast<uint32_t>(RtxForkGlobalTonemap::tonemapOperator());
       args.directOperatorMode = (RtxOptions::tonemappingMode() == TonemappingMode::Direct) ? 1u : 0u;
-      writeHableParams(args);
+      writeOperatorParams(args);
     }
 
     void populateLocalTonemapOperatorArgs(FinalCombineArgs& args) {
       args.tonemapOperator    = static_cast<uint32_t>(RtxForkLocalTonemap::tonemapOperator());
       args.directOperatorMode = (RtxOptions::tonemappingMode() == TonemappingMode::Direct) ? 1u : 0u;
-      writeHableParams(args);
+      writeOperatorParams(args);
     }
 
     // Combo items string uses ImGui's \0-separated format.
-    static const char* k_operatorItems = "None\0ACES\0ACES (Legacy)\0Hable Filmic\0\0";
+    static const char* k_operatorItems = "None\0ACES\0ACES (Legacy)\0Hable Filmic\0AgX\0\0";
 
     // Shared slider rendering for per-operator parameter panels.
     static void showHableFilmicSliders() {
@@ -66,6 +74,19 @@ namespace dxvk {
         RemixGui::DragFloat("E (toeNumerator)", &RtxForkHableFilmic::toeNumeratorObject(),     0.01f, 0.0f,  1.0f);
         RemixGui::DragFloat("F (toeDenom)",     &RtxForkHableFilmic::toeDenominatorObject(),   0.01f, 0.0f,  1.0f);
         RemixGui::DragFloat("W (whitePoint)",   &RtxForkHableFilmic::whitePointObject(),       0.10f, 0.1f, 32.0f);
+        ImGui::TreePop();
+      }
+    }
+
+    static void showAgXSliders() {
+      if (ImGui::TreeNodeEx("AgX Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
+        RemixGui::DragFloat("Gamma",           &RtxForkAgX::gammaObject(),          0.01f,  0.5f,  3.0f);
+        RemixGui::DragFloat("Saturation",      &RtxForkAgX::saturationObject(),     0.01f,  0.5f,  2.0f);
+        RemixGui::DragFloat("Exposure Offset", &RtxForkAgX::exposureOffsetObject(), 0.05f, -2.0f,  2.0f);
+        RemixGui::Combo(    "Look",            &RtxForkAgX::lookObject(),           "None\0Punchy\0Golden\0Greyscale\0\0");
+        RemixGui::DragFloat("Contrast",        &RtxForkAgX::contrastObject(),       0.01f,  0.5f,  2.0f);
+        RemixGui::DragFloat("Slope",           &RtxForkAgX::slopeObject(),          0.01f,  0.5f,  2.0f);
+        RemixGui::DragFloat("Power",           &RtxForkAgX::powerObject(),          0.01f,  0.5f,  2.0f);
         ImGui::TreePop();
       }
     }
@@ -89,6 +110,9 @@ namespace dxvk {
       if (RtxForkGlobalTonemap::tonemapOperator() == TonemapOperator::HableFilmic) {
         showHableFilmicSliders();
       }
+      if (RtxForkGlobalTonemap::tonemapOperator() == TonemapOperator::AgX) {
+        showAgXSliders();
+      }
     }
 
     void showLocalTonemapOperatorUI() {
@@ -98,6 +122,9 @@ namespace dxvk {
 
       if (RtxForkLocalTonemap::tonemapOperator() == TonemapOperator::HableFilmic) {
         showHableFilmicSliders();
+      }
+      if (RtxForkLocalTonemap::tonemapOperator() == TonemapOperator::AgX) {
+        showAgXSliders();
       }
     }
 
