@@ -24,6 +24,7 @@
 
 #include "rtx_context.h"              // RtxContext
 #include "rtx_resources.h"            // Resources::RaytracingOutput
+#include "rtx_shader_manager.h"       // ManagedShader, SHADER_SOURCE, PUSH_CONSTANTS macros
 #include "rtx/pass/screen_overlay/screen_overlay.h"
 #include <rtx_shaders/screen_overlay.h>
 

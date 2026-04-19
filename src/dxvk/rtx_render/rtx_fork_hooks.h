@@ -60,7 +60,7 @@ namespace dxvk {
   class DxvkDevice;
   class GameCapturer;
   class GameOverlay;
-  class LightManager;
+  struct LightManager;
   class RtInstance;
   class RtxContext;
   class SceneManager;
