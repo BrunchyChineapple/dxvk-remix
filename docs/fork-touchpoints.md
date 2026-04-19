@@ -206,6 +206,9 @@ check will enforce it if discipline slips.
 - **Block** at `ImGUI::showMainMenu` (wrapper tab handling) — ~6 LOC. **Partially migrated** to `fork_hooks::wrapperTabDraw` in `rtx_fork_overlay.cpp`.
   *The `kTab_Wrapper` guard (`remixapi_imgui_HasDrawCallback()` check + `continue`) remains as an inline tweak in the tab loop (structural control flow, not extractable). The case body (`remixapi_imgui_InvokeDrawCallback()`) is wrapped as `fork_hooks::wrapperTabDraw()`. No friend declaration needed.*
 
+- **[pending commit 2]** Hook at tonemapper ImGui settings → `fork_hooks::showTonemapOperatorUI` / `fork_hooks::showLocalTonemapOperatorUI` in `rtx_fork_tonemap.cpp`. Also remove the standalone `RemixGui::Checkbox("Use Legacy ACES", ...)` at ~line 3888 — its RtxOption `rtx.useLegacyACES` is being deleted.
+  *Operator combo + per-operator sliders + Direct-mode toggle replace the old ACES checkbox. "Use Legacy ACES" reachable via TonemapOperator::ACESLegacy enum value.*
+
 ---
 
 ## src/dxvk/imgui/dxvk_imgui.h
@@ -241,6 +244,9 @@ check will enforce it if discipline slips.
 
 - **Inline tweak** at `dxvk_src` files list (~line 400) — 2-line addition registering ImGui export sources.
   *Registers `imgui/imgui_remix_exports.cpp` and `imgui/imgui_remix_exports.h` in the DXVK build.*
+
+- **[pending commit 1]** Inline tweak — register `src/dxvk/rtx_render/rtx_fork_tonemap.cpp` in the rtx_render source list. Subsequent commits add `fork_tonemap_operators.slangh` (commit 2), `AgX.hlsl` (commit 4), `Lottes.hlsl` (commit 5).
+  *Fork-owned tonemap module and shader source files.*
 
 ---
 
@@ -278,6 +284,9 @@ check will enforce it if discipline slips.
 
 - **Hook** at `RtxContext::dispatchScreenOverlay` (method body + ScreenOverlayShader class) → `fork_hooks::dispatchScreenOverlay` in `rtx_fork_overlay.cpp`
   *`ScreenOverlayShader` lifted to `rtx_fork_overlay.cpp`; `dispatchScreenOverlay` is now a one-line delegate. The hook alpha-composites a plugin-uploaded RGBA buffer over the final tone-mapped image using the compute shader.*
+
+- **[pending commit 3]** Inline tweak at tonemap dispatch point — Direct-mode branch via `fork_hooks::shouldSkipToneCurve`.
+  *Skips histogram + tone-curve + local-pyramid passes when Direct mode is selected.*
 
 ---
 
@@ -444,6 +453,20 @@ check will enforce it if discipline slips.
 
 ---
 
+## src/dxvk/rtx_render/rtx_local_tone_mapping.cpp
+
+- **[pending commit 2]** Hook calls at `DxvkLocalToneMapping::dispatchFinalCombine` (args-population) and `DxvkLocalToneMapping::showImguiSettings` (ImGui panel) → `fork_hooks::populateLocalTonemapOperatorArgs` + `fork_hooks::showLocalTonemapOperatorUI` in `rtx_fork_tonemap.cpp`. Plus inline tweak: `LuminanceArgs::useLegacyACES` field assignment → write operator-derived uint (1-field struct, not worth its own hook).
+  *Routes local tonemap through the fork operator dispatcher.*
+
+---
+
+## src/dxvk/rtx_render/rtx_local_tone_mapping.h
+
+- **[pending commit 2]** Inline tweak — remove `rtx.localtonemap.finalizeWithACES` RtxOption (default was `true`; superseded by `rtx.localtonemap.tonemapOperator` in `rtx_fork_tonemap.cpp` with default `ACESLegacy` to preserve behavior); add `#include "rtx_fork_tonemap.h"`.
+  *Adopts the fork operator enum; preserves the port's local ACES-Legacy default.*
+
+---
+
 ## src/dxvk/rtx_render/rtx_options.h
 
 **Pre-refactor fork footprint:** +32 / -0 LOC (audit 2026-04-18)
@@ -461,6 +484,9 @@ check will enforce it if discipline slips.
 
 - **Inline tweak** at `RtxOptions` class body (atmosphere RTX_OPTIONs block) — ~25 LOC.
   *Declares all 17 atmosphere tuning options under the `rtx.atmosphere` prefix: `sunDisc`, `sunSize`, `sunIntensity`, `sunElevation`, `sunRotation`, `altitude`, `airDensity`, `aerosolDensity`, `ozoneDensity`, `planetRadius`, `atmosphereThickness`, `mieAnisotropy`, `rayleighScattering`, `mieScattering`, `ozoneAbsorption`, `ozoneLayerAltitude`, `ozoneLayerWidth`, and `sunIlluminance`. All consumed by `RtxAtmosphere` and the atmosphere hooks in `rtx_fork_atmosphere.cpp`.*
+
+- **[pending commit 2]** Inline tweak — remove `rtx.useLegacyACES` + `rtx.showLegacyACESOption` RtxOptions (superseded by `TonemapOperator::ACESLegacy` enum value).
+  *Both options live at the `rtx` namespace (not `rtx.tonemap`); removed in the enum refactor.*
 
 ---
 
@@ -668,6 +694,20 @@ check will enforce it if discipline slips.
 
 - **Inline tweak** at `tryHandleSky` (~line 145) — 6-line addition for physical atmosphere sky skip.
   *Returns `TryHandleSkyResult::SkipSubmit` early for any draw with `cameraType == CameraType::Sky` when Physical Atmosphere mode is active, preventing rasterized skybox geometry from being submitted.*
+
+---
+
+## src/dxvk/rtx_render/rtx_tone_mapping.cpp
+
+- **[pending commit 2]** Hook calls at `DxvkToneMapping::dispatchApplyToneMapping` (args-population) and `DxvkToneMapping::showImguiSettings` (ImGui panel) → `fork_hooks::populateTonemapOperatorArgs` + `fork_hooks::showTonemapOperatorUI` in `rtx_fork_tonemap.cpp`.
+  *Routes global tonemap through the fork operator dispatcher.*
+
+---
+
+## src/dxvk/rtx_render/rtx_tone_mapping.h
+
+- **[pending commit 2]** Inline tweak — remove `rtx.tonemap.finalizeWithACES` RtxOption (superseded by `rtx.tonemap.tonemapOperator` in `rtx_fork_tonemap.cpp`); add `#include "rtx_fork_tonemap.h"`.
+  *Adopts the fork operator enum.*
 
 ---
 
