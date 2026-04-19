@@ -60,7 +60,7 @@ inline for structural reasons:
   where a hook would be pure ceremony.
 
 All remaining inline edits are **explicitly tracked as Inline tweak entries
-in `docs/fork-touchpoints.md`**, so the rebase reviewer has a dashboard of
+in `agent_docs/fork-touchpoints.md`**, so the rebase reviewer has a dashboard of
 every fork touchpoint without surprises.
 
 ## Success criterion assessment
@@ -83,7 +83,7 @@ render-path files (`rtx_context.cpp`, `rtx_light_manager.cpp`,
 The actual wall-clock measurement will come from the next real upstream
 rebase. At that time, the reviewer follows the rebase workflow described
 in the spec (section 3.3): resolve conflicts by cross-referencing
-`docs/fork-touchpoints.md` rather than inspecting every upstream file. If
+`agent_docs/fork-touchpoints.md` rather than inspecting every upstream file. If
 the measured time does not meet the spec's <12-hour target, the gap points
 to files still carrying significant inline fork footprint — the audit
 script (`scripts/audit-fork-touchpoints.sh`) re-runs trivially to surface

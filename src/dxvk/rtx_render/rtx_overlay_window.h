@@ -29,7 +29,7 @@
 namespace dxvk {
 
 // Forward decls so GameOverlay can friend the fork hook that needs access
-// to private m_hwnd state. See docs/fork-touchpoints.md.
+// to private m_hwnd state. See agent_docs/fork-touchpoints.md.
 class GameOverlay;
 namespace fork_hooks {
   void overlayKeyboardForward(
@@ -39,7 +39,7 @@ namespace fork_hooks {
   class GameOverlay : public RcObject {
     // Fork touchpoint: the overlay keyboard-forward hook needs access to
     // private m_hwnd. Tracked as an inline tweak in
-    // docs/fork-touchpoints.md.
+    // agent_docs/fork-touchpoints.md.
     friend void fork_hooks::overlayKeyboardForward(
       GameOverlay&, HWND, UINT, WPARAM, LPARAM);
   public:
