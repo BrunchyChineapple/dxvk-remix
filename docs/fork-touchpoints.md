@@ -957,9 +957,16 @@ check will enforce it if discipline slips.
 
 ---
 
+## src/dxvk/shaders/rtx/pass/tonemap/AgX.hlsl
+
+- **Fork-owned** — new file (commit 4, byte-for-byte port from gmod f3501d46). Contains the AgX tonemapper (`AgXToneMapping(color, gamma, saturation, exposureOffset, look, contrast, slope, power)`) plus its look presets and internal helpers. Included by `fork_tonemap_operators.slangh`.
+  *Fork-owned AgX operator implementation.*
+
+---
+
 ## src/dxvk/shaders/rtx/pass/tonemap/fork_tonemap_operators.slangh
 
-- **Fork-owned** — new file. Hosts the `applyTonemapOperator(uint op, vec3 color, bool suppressBlackLevelClamp)` dispatcher and (in later commits) Hable / AgX / Lottes operator bodies. Upstream shader passes include this header and call the dispatcher in place of inline ACES branches.
+- **Fork-owned** — new file. Hosts the `applyTonemapOperator(uint op, vec3 color, bool suppressBlackLevelClamp, ...)` dispatcher. Commits 3-5 extend the dispatcher with HableFilmic / AgX / Lottes branches and include their respective operator implementations (`AgX.hlsl` in commit 4, `Lottes.hlsl` in commit 5).
   *Fork-owned shader header: operator dispatch lives here so upstream passes shrink to one-line calls.*
 
 ---

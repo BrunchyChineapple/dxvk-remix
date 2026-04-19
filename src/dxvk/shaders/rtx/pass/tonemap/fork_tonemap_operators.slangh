@@ -20,7 +20,11 @@
 // ACESFilm() is declared by tonemapping.slangh, which consumers always
 // include before this header. Do NOT include ACES.hlsl here — it lacks
 // include guards and is already pulled in via tonemapping.slangh.
+//
+// AgX.hlsl and Lottes.hlsl (fork-owned) are headers with unique symbols,
+// so double-inclusion is not a concern here.
 #include "rtx/pass/tonemap/tonemapping.h"
+#include "rtx/pass/tonemap/AgX.hlsl"
 
 // Hable Filmic (Uncharted 2) tonemapper core.
 // Reference: http://filmicworlds.com/blog/filmic-tonemapping-operators/
@@ -48,15 +52,20 @@ float3 hableFilmicToneMapper(float3 color,
 // `suppressBlackLevelClamp` forwards to the ACES path (matches the upstream
 // ACESFilm signature). Operators without an equivalent parameter ignore it.
 //
-// Hable parameters are passed explicitly (rather than read from a struct)
-// so this function works for both the global ToneMappingApplyToneMappingArgs
-// and the local FinalCombineArgs — the call site unpacks its cb.hable*
-// fields into these positional parameters.
+// Per-operator parameters are passed explicitly (rather than read from a
+// struct) so this function works for both the global
+// ToneMappingApplyToneMappingArgs and the local FinalCombineArgs — the call
+// site unpacks its cb fields into these positional parameters.
 float3 applyTonemapOperator(uint op, float3 color, bool suppressBlackLevelClamp,
+                            // Hable Filmic (commit 3).
                             float hableExposureBias,
                             float hableA, float hableB, float hableC,
                             float hableD, float hableE, float hableF,
-                            float hableW)
+                            float hableW,
+                            // AgX (commit 4).
+                            float agxGamma, float agxSaturation, float agxExposureOffset,
+                            uint  agxLook,
+                            float agxContrast, float agxSlope, float agxPower)
 {
   if (op == tonemapOperatorACES)
   {
@@ -71,6 +80,11 @@ float3 applyTonemapOperator(uint op, float3 color, bool suppressBlackLevelClamp,
     return hableFilmicToneMapper(color, hableExposureBias,
                                  hableA, hableB, hableC,
                                  hableD, hableE, hableF, hableW);
+  }
+  if (op == tonemapOperatorAgX)
+  {
+    return AgXToneMapping(color, agxGamma, agxSaturation, agxExposureOffset,
+                          (int)agxLook, agxContrast, agxSlope, agxPower);
   }
   // tonemapOperatorNone (0) or unrecognised — identity.
   return color;
