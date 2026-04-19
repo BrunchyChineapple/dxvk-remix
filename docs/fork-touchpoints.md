@@ -578,21 +578,20 @@ check will enforce it if discipline slips.
 
 ## src/dxvk/rtx_render/rtx_scene_manager.cpp
 
-**Pre-refactor fork footprint:** +73 / -2 LOC (audit 2026-04-18)
+**Pre-refactor footprint:** +73 / -2 LOC (migrated 2026-04-18)
+**Post-refactor footprint:** 4 hook call sites + 1 `#include "rtx_fork_hooks.h"`
 
-**Category:** migrate
+- **Hook** at `SceneManager::submitExternalDraw` (before submesh loop) → `fork_hooks::externalDrawMeshReplacement` in `rtx_fork_submit.cpp`
+  *Checks for USD mesh/light replacements keyed on the API mesh handle hash; call site handles the early-exit + `drawReplacements` dispatch since those are private SceneManager methods.*
 
-- **Block** at `SceneManager::submitExternalDraw` (mesh replacement lookup) — ~10 LOC, planned target `fork_hooks::externalDrawMeshReplacement` in `rtx_fork_submit.cpp`.
-  *Checks for USD mesh/light replacements keyed on the API mesh handle hash before submitting external geometry, mirroring the D3D9 draw-call replacement path.*
+- **Hook** at `SceneManager::submitExternalDraw` (inside `if (material != nullptr)`, before `setHashOverride`) → `fork_hooks::externalDrawMaterialReplacement` in `rtx_fork_submit.cpp`
+  *Checks for USD material replacements via `getReplacementMaterial()` and updates the `material` pointer in-place if one is found.*
 
-- **Block** at `SceneManager::submitExternalDraw` (texture-category auto-apply block) — ~32 LOC, planned target `fork_hooks::externalDrawTextureCategories` in `rtx_fork_submit.cpp`.
-  *Auto-applies all texture-based instance categories (Sky, Ignore, WorldUI, WorldMatte, Particle, Beam, DecalStatic, Terrain, AnimatedWater, IgnoreLights, IgnoreAntiCulling, IgnoreMotionBlur, Hidden) for API-submitted draws by looking up the albedo texture hash against each RtxOption hash set.*
+- **Hook** at `SceneManager::submitExternalDraw` (inside `if (material != nullptr)`, after `setHashOverride`) → `fork_hooks::externalDrawTextureCategories` in `rtx_fork_submit.cpp`
+  *Resolves albedo texture hash from the API material's opaque data and auto-applies all texture-based instance categories (Sky, Ignore, WorldUI, WorldMatte, Particle, Beam, DecalStatic, Terrain, AnimatedWater, IgnoreLights, IgnoreAntiCulling, IgnoreMotionBlur, Hidden).*
 
-- **Block** at `SceneManager::submitExternalDraw` (material replacement lookup) — ~6 LOC, planned target `fork_hooks::externalDrawMaterialReplacement` in `rtx_fork_submit.cpp`.
-  *Checks for USD material replacements via `getReplacementMaterial(material->getHash())` before finalizing the API draw, matching D3D9 behavior.*
-
-- **Block** at `SceneManager::submitExternalDraw` (object-picking metadata block) — ~16 LOC, planned target `fork_hooks::externalDrawObjectPicking` in `rtx_fork_submit.cpp`.
-  *Stores per-draw texture hash metadata in `m_drawCallMeta` when object picking is active, using the `drawCallID` supplied via `remixapi_InstanceInfoObjectPickingEXT` as the key.*
+- **Hook** at `SceneManager::submitExternalDraw` (after particle setup, before `processDrawCallState`) → `fork_hooks::externalDrawObjectPicking` in `rtx_fork_submit.cpp`
+  *Stores per-draw texture hash metadata in `m_drawCallMeta` when object picking is active. Requires a `friend` declaration for this function in `SceneManager` (or a public accessor for `m_drawCallMeta`) — flagged for Phase 4 build-validation fixup.*
 
 ---
 
