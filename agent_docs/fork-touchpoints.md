@@ -46,8 +46,8 @@ check will enforce it if discipline slips.
 
 **Category:** migrate
 
-- **Block** at `Interface` class (method declarations) — ~12 LOC, planned target `N/A (public header)` in `N/A (public header)`.
-  *Declares fork-added C++ wrapper methods: `CreateMeshBatched`, `GetUIState`, `SetUIState`, `AddTextureHash`, `RemoveTextureHash`, `dxvk_GetTextureHash`, `CreateLightBatched`, `UpdateLightDefinition`.*
+- **Block** at `Interface` class (method declarations) — ~13 LOC, planned target `N/A (public header)` in `N/A (public header)`.
+  *Declares fork-added C++ wrapper methods: `CreateMeshBatched`, `GetUIState`, `SetUIState`, `AddTextureHash`, `RemoveTextureHash`, `dxvk_GetTextureHash`, `CreateLightBatched`, `UpdateLightDefinition`, `SetGameValue`.*
 
 - **Block** at `Interface::CreateMeshBatched` (inline definition) — ~9 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Inline C++ wrapper that calls `m_CInterface.CreateMeshBatched` for the batched mesh submission API slot.*
@@ -67,8 +67,11 @@ check will enforce it if discipline slips.
 - **Block** at `UIState` enum (file scope) — ~5 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Adds `UIState` C++ enum mirroring `remixapi_UIState` for the C++ API surface.*
 
+- **Block** at `Interface::SetGameValue` (declaration + inline definition) — ~8 LOC, planned target `N/A (public header)` in `N/A (public header)`.
+  *C++ wrapper for the `remixapi_SetGameValue` C API slot introduced in workstream 10 (plugin-injected game-state write). Wrapper guards on nullptr vtable slot before dispatching, matching the `SetConfigVariable` shape. Companion readers are graph components `GameValueReadBool` / `GameValueReadNumber`; backing store lives in `rtx_fork_game_state.h`.*
+
 - **Block** at `remixapi_Interface` static_assert updates (file scope) — ~3 LOC (three separate assert sizes), planned target `N/A (public header)` in `N/A (public header)`.
-  *Updates `sizeof(remixapi_Interface)` static_asserts in the C++ header to match each successive vtable extension (208 → 240 → 272 → 280).*
+  *Updates `sizeof(remixapi_Interface)` static_asserts in the C++ header to match each successive vtable extension (208 → 240 → 272 → 280 → 288).*
 
 ---
 
@@ -129,8 +132,11 @@ check will enforce it if discipline slips.
 - **Block** at `PFN_remixapi_dxvk_GetSharedD3D11TextureHandle` typedef (file scope) — ~5 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Declares the dxvk-specific extension function for the DX11 shared-texture export path (stub in this fork; slot populated for ABI layout compatibility).*
 
-- **Block** at `remixapi_Interface` vtable additions (struct fields) — ~14 LOC spread across the vtable struct, planned target `N/A (public header)` in `N/A (public header)`.
-  *Appends new function-pointer slots to `remixapi_Interface`: `AddTextureHash`, `RemoveTextureHash`, `CreateTexture`, `DestroyTexture`, `dxvk_GetTextureHash`, `CreateMeshBatched`, `GetUIState`/`SetUIState`, `DrawScreenOverlay`, `RegisterCallbacks`, `AutoInstancePersistentLights`, `UpdateLightDefinition`, `CreateLightBatched`, `dxvk_GetSharedD3D11TextureHandle`.*
+- **Block** at `PFN_remixapi_SetGameValue` typedef (file scope) — ~14 LOC (including the contract doc block), planned target `N/A (public header)` in `N/A (public header)`.
+  *Declares the function-pointer type for the plugin-injected game-state write API introduced in workstream 10. The entrypoint stores a single string/string pair under a caller-chosen key in a fork-owned thread-safe map; graph components `GameValueReadBool` / `GameValueReadNumber` read those values by name. The contract doc block above the typedef describes key/value semantics, validation, and lifetime (store survives `Shutdown` / re-init).*
+
+- **Block** at `remixapi_Interface` vtable additions (struct fields) — ~15 LOC spread across the vtable struct, planned target `N/A (public header)` in `N/A (public header)`.
+  *Appends new function-pointer slots to `remixapi_Interface`: `AddTextureHash`, `RemoveTextureHash`, `CreateTexture`, `DestroyTexture`, `dxvk_GetTextureHash`, `CreateMeshBatched`, `GetUIState`/`SetUIState`, `DrawScreenOverlay`, `RegisterCallbacks`, `AutoInstancePersistentLights`, `UpdateLightDefinition`, `CreateLightBatched`, `dxvk_GetSharedD3D11TextureHandle`, `SetGameValue`.*
 
 ---
 
@@ -526,8 +532,8 @@ check will enforce it if discipline slips.
 **Pre-refactor fork footprint:** +1277 / -118 LOC (audit 2026-04-18)
 **Post-refactor footprint (fully migrated — migrations #7a, #7b, #7c done):** 20 hook call sites + 1 `#include "rtx_fork_hooks.h"` + inline tweaks listed below. All extractable fork blocks have been migrated to `rtx_fork_api_entry.cpp`.
 
-- **Inline tweak** at `(file scope)` (includes block) — ~7 LOC added. Not migrated: include lines don't get hooks — they either stay inline or the fork-owned file pulls them for its own code. Tracked here per the fridge-list invariant.
-  *Adds includes for `dxvk_objects.h`, `dxvk_imgui.h`, `rtx_context.h`, `rtx_option_layer.h`, `util_hash_set_layer.h`, `xxhash.h`, `algorithm`, and `d3d9_texture.h` to support fork-added API functions, plus `rtx_fork_hooks.h` added in migration #7a.*
+- **Inline tweak** at `(file scope)` (includes block) — ~8 LOC added. Not migrated: include lines don't get hooks — they either stay inline or the fork-owned file pulls them for its own code. Tracked here per the fridge-list invariant.
+  *Adds includes for `dxvk_objects.h`, `dxvk_imgui.h`, `rtx_context.h`, `rtx_option_layer.h`, `util_hash_set_layer.h`, `xxhash.h`, `algorithm`, and `d3d9_texture.h` to support fork-added API functions, plus `rtx_fork_hooks.h` added in migration #7a and `rtx_fork_game_state.h` added in workstream 10 for the `remixapi_SetGameValue` entry point.*
 
 - **Inline tweak** at `(file scope)` (`PendingScreenOverlay` struct + `s_pendingScreenOverlay`) — **Removed in migration #7b**. Both the struct and the optional are now defined exclusively in `rtx_fork_api_entry.cpp` (anonymous namespace). A comment marking the removal remains in the upstream file for auditability.
   *The struct held staging buffer, dimensions, format, and opacity; the optional was the hand-off point between the API thread (writer: `drawScreenOverlay`) and the render thread (reader: `presentScreenOverlayFlush`). Both now live in the fork-owned TU.*
@@ -605,11 +611,14 @@ check will enforce it if discipline slips.
 - **Inline tweak** at `REMIXAPI_INSTANCE_CATEGORY_BIT_LEGACY_EMISSIVE` routing (in category conversion) — ~1 LOC. Not migrated (latent ABI: bit 24 semantic).
   *Routes `REMIXAPI_INSTANCE_CATEGORY_BIT_LEGACY_EMISSIVE` (bit 24) to `InstanceCategories::SmoothNormals` in the category-bit conversion function.*
 
-- **Block** at `extern "C"` vtable init block (fork-added anonymous-namespace slots) — ~10 LOC inline assignment block in `remixapi_InitializeLibrary`. Not fully hookable: the anonymous-namespace function pointers have internal linkage and cannot be named from another TU. Tracked here per the fridge-list invariant. The three extern-C-linked fork slots (RegisterCallbacks, AutoInstancePersistentLights, UpdateLightDefinition) are assigned via `fork_hooks::remixApiVtableInit` (migrated 2026-04-18, migration #7c).
-  *Registers all fork-added API functions into the `remixapi_Interface` vtable. The inline block assigns the anonymous-namespace slots; the hook fills the three externally-linked ones.*
+- **Inline tweak** at `(anonymous namespace)` `remixapi_SetGameValue` — ~15 LOC. Not migrated (fork-owned store + direct inline body fits the surrounding `remixapi_SetConfigVariable` pattern; no anonymous-namespace state to share with other TUs).
+  *Implements the plugin-injected game-state write API introduced in workstream 10. Validates args, constructs `std::string` copies of the incoming C strings, and forwards to `dxvk::fork_game_state::GameStateStore::get().set(key, value)`. Does not take `s_mutex` — the store owns its own lock, and funnelling high-frequency plugin writes through the API-wide mutex has no benefit.*
+
+- **Block** at `extern "C"` vtable init block (fork-added anonymous-namespace slots) — ~11 LOC inline assignment block in `remixapi_InitializeLibrary`. Not fully hookable: the anonymous-namespace function pointers have internal linkage and cannot be named from another TU. Tracked here per the fridge-list invariant. The three extern-C-linked fork slots (RegisterCallbacks, AutoInstancePersistentLights, UpdateLightDefinition) are assigned via `fork_hooks::remixApiVtableInit` (migrated 2026-04-18, migration #7c).
+  *Registers all fork-added API functions into the `remixapi_Interface` vtable. The inline block assigns the anonymous-namespace slots (including `SetGameValue` added in workstream 10); the hook fills the three externally-linked ones.*
 
 - **Inline tweak** at `extern "C"` vtable size static_assert — 1 LOC. Not migrated (fridge-listed).
-  *The `static_assert(sizeof(interf) == 280, ...)` sentinel is the final value in the chain (208 → 240 → 272 → 280 across four workstreams). Retained inline in `remixapi_InitializeLibrary` as a size sentinel.*
+  *The `static_assert(sizeof(interf) == 288, ...)` sentinel is the final value in the chain (208 → 240 → 272 → 280 → 288 across five workstreams). Retained inline in `remixapi_InitializeLibrary` as a size sentinel.*
 
 ---
 

@@ -31,6 +31,7 @@
 #include "rtx_globals.h"
 #include "rtx_options.h"
 #include "rtx_debug_view.h"
+#include "rtx_fork_game_state.h"
 
 #include "../dxvk_device.h"
 #include "../dxvk_objects.h"
@@ -1591,6 +1592,22 @@ namespace {
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
 
+  remixapi_ErrorCode REMIXAPI_CALL remixapi_SetGameValue(
+    const char* key,
+    const char* value) {
+    if (!key || key[0] == '\0' || !value) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+
+    // The game-state store owns its own mutex. s_mutex is deliberately NOT
+    // taken here: funnelling high-frequency plugin writes through the same
+    // lock as the rest of the API has no benefit and would add contention.
+    dxvk::fork_game_state::GameStateStore::get().set(
+      std::string{ key }, std::string{ value });
+
+    return REMIXAPI_ERROR_CODE_SUCCESS;
+  }
+
   // Fork-owned helper body lives in rtx_fork_api_entry.cpp as
   // fork_hooks::mutateTextureHashOption (add flag replaces the local
   // TextureHashMutation enum). Both call sites hold s_mutex across the call
@@ -2447,10 +2464,11 @@ extern "C"
       interf.SetUIState = remixapi_SetUIState;
       interf.DrawScreenOverlay = remixapi_DrawScreenOverlay;
       interf.CreateLightBatched = remixapi_CreateLightBatched;
+      interf.SetGameValue = remixapi_SetGameValue;
       // Fork-added vtable slots (extern-C exported; delegated to fork hook)
       dxvk::fork_hooks::remixApiVtableInit(interf);
     }
-    static_assert(sizeof(interf) == 280, "Add/remove function registration");
+    static_assert(sizeof(interf) == 288, "Add/remove function registration");
 
     *out_result = interf;
     return REMIXAPI_ERROR_CODE_SUCCESS;

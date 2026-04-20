@@ -707,6 +707,20 @@ extern "C" {
     const char*               key,
     const char*               value);
 
+  // Plugin-injected game-state write. Stores `value` under `key` in a
+  // fork-owned, thread-safe string/string map that graph components
+  // (GameValueReadBool / GameValueReadNumber) read by name.
+  //
+  // Keys are chosen by the plugin; Remix does not validate or namespace them.
+  // The store survives Shutdown / re-init, so callers do not have to
+  // re-populate their state across device resets.
+  //
+  // Returns REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS on a null or empty key,
+  // REMIXAPI_ERROR_CODE_SUCCESS otherwise.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_SetGameValue)(
+    const char*               key,
+    const char*               value);
+
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_AddTextureHash)(
     const char* textureCategory,
     const char* textureHash);
@@ -901,6 +915,7 @@ extern "C" {
     PFN_remixapi_AutoInstancePersistentLights AutoInstancePersistentLights;
     PFN_remixapi_UpdateLightDefinition      UpdateLightDefinition;
     PFN_remixapi_DrawScreenOverlay          DrawScreenOverlay;
+    PFN_remixapi_SetGameValue               SetGameValue;
   } remixapi_Interface;
 
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_InitializeLibrary(

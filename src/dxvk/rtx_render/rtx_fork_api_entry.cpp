@@ -755,7 +755,7 @@ namespace fork_hooks {
   // CreateLightBatched, etc.) are assigned inline in rtx_remix_api.cpp where
   // their symbols are visible.
   //
-  // The static_assert(sizeof(interf) == 280) sentinel is retained inline in
+  // The static_assert(sizeof(interf) == 288) sentinel is retained inline in
   // upstream; it is not repeated here.
   // ---------------------------------------------------------------------------
   void remixApiVtableInit(remixapi_Interface& interf) {
