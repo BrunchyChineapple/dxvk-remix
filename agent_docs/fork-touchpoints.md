@@ -258,6 +258,15 @@ check will enforce it if discipline slips.
 
 ---
 
+## src/dxvk/rtx_render/graph/rtx_component_list.h
+
+**Category:** index-only
+
+- **Inline tweak** at `components/` include list (~line 56) — 2-line addition. Not migrated: the include manifest is the intended extension point for new components, and adding two alphabetically-placed `#include` lines is the canonical way to register fork-owned graph components.
+  *Registers `components/game_value_read_bool.h` and `components/game_value_read_number.h` in the component manifest. Both are fork-owned Sense components introduced in workstream 10 (plugin-injected game-state readers); their backing store is the fork-owned `rtx_fork_game_state.h`.*
+
+---
+
 ## src/dxvk/rtx_render/rtx_camera_manager.cpp
 
 **Pre-refactor fork footprint:** +10 / -10 LOC (audit 2026-04-18)
