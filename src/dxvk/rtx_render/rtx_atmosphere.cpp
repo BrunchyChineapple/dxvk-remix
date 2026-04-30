@@ -158,6 +158,18 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.mieScaleHeight = kMieScaleHeight;
   args.pad2 = 0;
 
+  // Night sky parameters
+  args.starBrightness = RtxOptions::starBrightness();
+  args.starDensity = RtxOptions::starDensity();
+  args.starTwinkleSpeed = RtxOptions::starTwinkleSpeed();
+  args.nightSkyBrightness = RtxOptions::nightSkyBrightness();
+  args.nightSkyColor = RtxOptions::nightSkyColor();
+
+  // Time for animation (monotonic seconds)
+  static auto startTime = std::chrono::steady_clock::now();
+  auto now = std::chrono::steady_clock::now();
+  args.timeSeconds = std::chrono::duration<float>(now - startTime).count();
+
   return args;
 }
 

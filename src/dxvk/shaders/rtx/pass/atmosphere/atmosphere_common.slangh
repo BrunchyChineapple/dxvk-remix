@@ -773,6 +773,135 @@ vec3 getAnalyticalMultiscattering(float altitude, float sunZenithCosAngle, Atmos
   return groundReflect + airScatter;
 }
 
+// ============================================================
+// Night Sky: Procedural Star Field
+// ============================================================
+
+// Hash functions for procedural star generation
+// Based on integer lattice hashing for stable, non-repeating patterns
+float hash31(vec3 p) {
+  p = fract(p * vec3(443.8975f, 397.2973f, 491.1871f));
+  p += dot(p, p.yzx + 19.19f);
+  return fract((p.x + p.y) * p.z);
+}
+
+vec3 hash33(vec3 p) {
+  p = vec3(dot(p, vec3(127.1f, 311.7f, 74.7f)),
+           dot(p, vec3(269.5f, 183.3f, 246.1f)),
+           dot(p, vec3(113.5f, 271.9f, 124.6f)));
+  return fract(sin(p) * 43758.5453123f);
+}
+
+// Generate star brightness for a given sky direction
+// Returns star color (white-blue-orange based on temperature) and brightness
+vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
+  // Project view direction onto a high-resolution grid on the unit sphere
+  // Use multiple octaves for different star sizes
+
+  vec3 totalStars = vec3(0.0f);
+
+  // Normalize direction
+  vec3 dir = normalize(viewDir);
+
+  // Convert to spherical for stable grid sampling
+  float theta = acos(clamp(dir.y, -1.0f, 1.0f));  // [0, pi]
+  float phi = atan2(dir.z, dir.x);                  // [-pi, pi]
+
+  // Star layer: fine grid for individual stars
+  float gridScale = 800.0f;  // Controls star density on the sphere
+  vec2 gridUV = vec2(phi * gridScale / kPi, theta * gridScale / kPi);
+  vec2 gridCell = floor(gridUV);
+  vec2 gridFrac = fract(gridUV);
+
+  // Check this cell and neighbors for star centers
+  for (int dy = -1; dy <= 1; dy++) {
+    for (int dx = -1; dx <= 1; dx++) {
+      vec2 neighbor = vec2(float(dx), float(dy));
+      vec2 cell = gridCell + neighbor;
+
+      // Random position within cell
+      vec3 cellHash = hash33(vec3(cell, 0.0f));
+      vec2 starPos = neighbor + cellHash.xy - gridFrac;
+
+      // Distance to star center
+      float dist = length(starPos);
+
+      // Star brightness from hash (most cells have no visible star)
+      float starMag = cellHash.z;
+
+      // Density threshold: only show stars above threshold
+      if (starMag < args.starDensity) continue;
+
+      // Remap magnitude above threshold to brightness
+      float brightness = (starMag - args.starDensity) / (1.0f - args.starDensity);
+      brightness = brightness * brightness;  // Quadratic falloff for natural magnitude distribution
+
+      // Star point spread function (small Gaussian)
+      float psf = exp(-dist * dist * 800.0f);
+
+      // Star color based on temperature (hash-derived)
+      // Blue-white stars (hot), yellow stars (medium), orange-red stars (cool)
+      float temp = hash31(vec3(cell, 1.0f));
+      vec3 starColor;
+      if (temp > 0.7f) {
+        starColor = vec3(0.7f, 0.8f, 1.0f);   // Blue-white (O/B type)
+      } else if (temp > 0.3f) {
+        starColor = vec3(1.0f, 1.0f, 0.95f);   // White-yellow (F/G type)
+      } else {
+        starColor = vec3(1.0f, 0.85f, 0.7f);   // Orange (K type)
+      }
+
+      // Twinkling: subtle brightness variation over time
+      float twinkle = 1.0f;
+      if (args.starTwinkleSpeed > 0.0f) {
+        float twinklePhase = hash31(vec3(cell, 2.0f)) * 6.283f;
+        float twinkleFreq = 0.5f + hash31(vec3(cell, 3.0f)) * 2.0f;
+        twinkle = 0.7f + 0.3f * sin(args.timeSeconds * twinkleFreq * args.starTwinkleSpeed + twinklePhase);
+      }
+
+      totalStars += starColor * brightness * psf * twinkle;
+    }
+  }
+
+  return totalStars * args.starBrightness;
+}
+
+// Compute night sky contribution (stars + airglow)
+vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
+  float sunElevation = args.sunDirection.y;
+
+  // Night sky visibility: fade in during twilight, full at night
+  // Civil twilight ends at -6° (cos ≈ -0.105)
+  // Nautical twilight ends at -12° (cos ≈ -0.208)
+  // Stars become visible around nautical twilight
+  const float kStarFadeStart = -0.02f;   // Stars start appearing just below horizon
+  const float kStarFadeFull = -0.15f;    // Full star brightness at ~-8.5°
+
+  float nightFactor = smoothstep(kStarFadeStart, kStarFadeFull, -sunElevation);
+  if (nightFactor <= 0.0f) return vec3(0.0f);
+
+  // Atmospheric extinction for stars near horizon
+  // Stars near the horizon are dimmer due to longer atmospheric path
+  float viewElevation = viewDir.y;  // Y-up: positive = above horizon
+  float horizonExtinction = 1.0f;
+  if (viewElevation < 0.15f) {
+    // Exponential extinction increase near horizon
+    float airMass = 1.0f / max(viewElevation + 0.05f, 0.01f);
+    airMass = min(airMass, 40.0f);
+    horizonExtinction = exp(-0.15f * airMass);
+  }
+
+  // Star field
+  vec3 stars = evalStarField(viewDir, args) * horizonExtinction;
+
+  // Airglow: faint ambient glow of the night sky
+  // Slightly brighter near the horizon (van Rhijn effect)
+  float airglowHorizonBoost = 1.0f + 0.5f * exp(-viewElevation * 5.0f);
+  vec3 airglow = args.nightSkyColor * args.nightSkyBrightness * airglowHorizonBoost;
+
+  return (stars + airglow) * nightFactor;
+}
+
 // Main evaluation function - computes atmosphere directly instead of using sky view LUT
 vec3 evalSkyRadiance(
   vec3 viewDir,
@@ -795,6 +924,11 @@ vec3 evalSkyRadiance(
     args,
     32  // numSamples hint (now using fixed physical step size)
   );
+  
+  // Add night sky contribution (stars + airglow)
+  // This is additive — during daytime, nightFactor is 0 so this adds nothing.
+  // During twilight and night, stars and airglow fade in.
+  radiance += evalNightSky(viewDirYUp, args);
   
   // Note: Sun disk rendering removed - direct lighting handles sun contribution
   

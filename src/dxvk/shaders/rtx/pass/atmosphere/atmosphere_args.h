@@ -56,4 +56,13 @@ struct AtmosphereArgs {
   float rayleighScaleHeight;  // exponential density falloff for Rayleigh (km)
   float mieScaleHeight;  // exponential density falloff for Mie (km)
   float sunAngularRadius; // Sun angular radius in radians
+
+  // Night sky parameters
+  float starBrightness;     // Overall star brightness multiplier
+  float starDensity;        // Controls how many stars are visible (threshold)
+  float starTwinkleSpeed;   // Speed of star twinkling animation
+  float nightSkyBrightness; // Airglow / ambient night sky brightness
+
+  vec3 nightSkyColor;       // Base color of the night sky (airglow tint)
+  float timeSeconds;        // Elapsed time for twinkling animation
 };
