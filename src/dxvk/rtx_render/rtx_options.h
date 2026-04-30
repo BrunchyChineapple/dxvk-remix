@@ -1239,10 +1239,10 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", Vector3, sunIlluminance, Vector3(20.0f, 20.0f, 20.0f), "Base Sun illuminance color/intensity.");
 
     // Night sky parameters
-    RTX_OPTION("rtx.atmosphere", float, starBrightness, 3.0f, "Overall brightness multiplier for stars.");
-    RTX_OPTION("rtx.atmosphere", float, starDensity, 0.985f, "Star density threshold (0.0 = all stars, 1.0 = no stars). Higher values show fewer, brighter stars.");
+    RTX_OPTION("rtx.atmosphere", float, starBrightness, 8.0f, "Overall brightness multiplier for stars.");
+    RTX_OPTION("rtx.atmosphere", float, starDensity, 0.98f, "Star density threshold (0.0 = all stars, 1.0 = no stars). Higher values show fewer, brighter stars.");
     RTX_OPTION("rtx.atmosphere", float, starTwinkleSpeed, 1.0f, "Speed of star twinkling animation (0 = no twinkle).");
-    RTX_OPTION("rtx.atmosphere", float, nightSkyBrightness, 0.003f, "Ambient night sky brightness from airglow and zodiacal light.");
+    RTX_OPTION("rtx.atmosphere", float, nightSkyBrightness, 0.008f, "Ambient night sky brightness from airglow and zodiacal light.");
     RTX_OPTION("rtx.atmosphere", Vector3, nightSkyColor, Vector3(0.15f, 0.2f, 0.4f), "Base color tint of the night sky airglow.");
 
     // TODO (REMIX-656): Remove this once we can transition content to new hash

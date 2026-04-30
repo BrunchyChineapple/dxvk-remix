@@ -871,13 +871,15 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
   float sunElevation = args.sunDirection.y;
 
   // Night sky visibility: fade in during twilight, full at night
-  // Civil twilight ends at -6° (cos ≈ -0.105)
-  // Nautical twilight ends at -12° (cos ≈ -0.208)
+  // Civil twilight ends at -6° (sunDirection.y ≈ -0.105)
   // Stars become visible around nautical twilight
-  const float kStarFadeStart = -0.02f;   // Stars start appearing just below horizon
-  const float kStarFadeFull = -0.15f;    // Full star brightness at ~-8.5°
+  // sunElevation is sunDirection.y: negative = below horizon
+  const float kStarFadeStart = 0.02f;   // Stars start appearing when sun is 1° below horizon
+  const float kStarFadeFull = 0.15f;    // Full star brightness when sun is ~8.5° below
 
-  float nightFactor = smoothstep(kStarFadeStart, kStarFadeFull, -sunElevation);
+  // -sunElevation is positive when sun is below horizon
+  float belowHorizon = -sunElevation;
+  float nightFactor = smoothstep(kStarFadeStart, kStarFadeFull, belowHorizon);
   if (nightFactor <= 0.0f) return vec3(0.0f);
 
   // Atmospheric extinction for stars near horizon
