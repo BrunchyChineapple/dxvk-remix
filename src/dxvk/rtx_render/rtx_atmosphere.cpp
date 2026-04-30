@@ -170,6 +170,27 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   auto now = std::chrono::steady_clock::now();
   args.timeSeconds = std::chrono::duration<float>(now - startTime).count();
 
+  // Moon parameters (Secunda)
+  {
+    constexpr float kDegToRadLocal = 3.14159265358979323846f / 180.0f;
+    float moonElev = RtxOptions::moonElevation() * kDegToRadLocal;
+    float moonAzim = RtxOptions::moonRotation() * kDegToRadLocal;
+    
+    args.moonDirection.x = std::cos(moonElev) * std::sin(moonAzim);
+    args.moonDirection.y = std::sin(moonElev);
+    args.moonDirection.z = std::cos(moonElev) * std::cos(moonAzim);
+    
+    float moonSizeRad = RtxOptions::moonAngularRadius() * kDegToRadLocal;
+    args.moonAngularRadius = moonSizeRad * 0.5f;
+    
+    args.moonColor = RtxOptions::moonColor();
+    args.moonBrightness = RtxOptions::moonBrightness();
+    args.moonPhase = RtxOptions::moonPhase();
+    args.moonEnabled = RtxOptions::moonEnabled() ? 1.0f : 0.0f;
+    args.pad3 = 0.0f;
+    args.pad4 = 0.0f;
+  }
+
   return args;
 }
 

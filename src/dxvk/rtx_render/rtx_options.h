@@ -1245,6 +1245,15 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", float, nightSkyBrightness, 0.008f, "Ambient night sky brightness from airglow and zodiacal light.");
     RTX_OPTION("rtx.atmosphere", Vector3, nightSkyColor, Vector3(0.15f, 0.2f, 0.4f), "Base color tint of the night sky airglow.");
 
+    // Moon parameters (Secunda)
+    RTX_OPTION("rtx.atmosphere", bool, moonEnabled, true, "Enable moon rendering in the night sky.");
+    RTX_OPTION("rtx.atmosphere", float, moonAngularRadius, 0.65f, "Moon angular diameter in degrees (Earth's moon is ~0.53).");
+    RTX_OPTION("rtx.atmosphere", float, moonBrightness, 15.0f, "Moon brightness multiplier.");
+    RTX_OPTION("rtx.atmosphere", Vector3, moonColor, Vector3(0.9f, 0.92f, 1.0f), "Moon surface color/albedo.");
+    RTX_OPTION("rtx.atmosphere", float, moonElevation, 45.0f, "Moon elevation in degrees (overridden by game sync when active).");
+    RTX_OPTION("rtx.atmosphere", float, moonRotation, 90.0f, "Moon rotation/azimuth in degrees (overridden by game sync when active).");
+    RTX_OPTION("rtx.atmosphere", float, moonPhase, 0.5f, "Moon phase: 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter.");
+
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");
 

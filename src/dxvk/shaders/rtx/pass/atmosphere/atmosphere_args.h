@@ -65,4 +65,16 @@ struct AtmosphereArgs {
 
   vec3 nightSkyColor;       // Base color of the night sky (airglow tint)
   float timeSeconds;        // Elapsed time for twinkling animation
+
+  // Moon parameters (Secunda)
+  vec3 moonDirection;       // Direction to moon in Y-up space (normalized)
+  float moonAngularRadius;  // Moon angular radius in radians
+  
+  vec3 moonColor;           // Base moon color/albedo
+  float moonBrightness;     // Overall moon brightness multiplier
+  
+  float moonPhase;          // Moon phase [0, 1]: 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter
+  float moonEnabled;        // 1.0 if moon should be rendered, 0.0 otherwise
+  float pad3;
+  float pad4;
 };

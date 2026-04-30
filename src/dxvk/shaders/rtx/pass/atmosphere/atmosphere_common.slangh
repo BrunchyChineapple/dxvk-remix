@@ -866,7 +866,76 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   return totalStars * args.starBrightness;
 }
 
-// Compute night sky contribution (stars + airglow)
+// Render moon disk with phase
+vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
+  if (args.moonEnabled < 0.5f) return vec3(0.0f);
+  
+  vec3 moonDir = normalize(args.moonDirection);
+  
+  // Moon must be above horizon
+  if (moonDir.y <= -0.01f) return vec3(0.0f);
+  
+  float cosAngle = dot(viewDir, moonDir);
+  float moonCosRadius = cos(args.moonAngularRadius);
+  
+  if (cosAngle < moonCosRadius) return vec3(0.0f);
+  
+  // We're looking at the moon disk
+  float normalizedAngle = acos(clamp(cosAngle, -1.0f, 1.0f)) / args.moonAngularRadius;
+  
+  // Limb darkening (subtle for the moon)
+  float limbDarkening = 1.0f - 0.3f * normalizedAngle * normalizedAngle;
+  limbDarkening = max(limbDarkening, 0.0f);
+  
+  // Moon phase illumination
+  // The phase determines what fraction of the visible disk is lit
+  // phase 0.0 = new moon (dark), 0.5 = full moon (fully lit)
+  // We compute the terminator position based on phase
+  
+  // Get the position on the moon disk in local coordinates
+  // Build a coordinate frame with moonDir as Z
+  vec3 up = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
+  vec3 moonRight = normalize(cross(up, moonDir));
+  vec3 moonUp = cross(moonDir, moonRight);
+  
+  // Project view direction onto moon disk plane
+  vec3 toView = normalize(viewDir - moonDir * cosAngle);
+  float diskX = dot(toView, moonRight) * normalizedAngle;
+  float diskY = dot(toView, moonUp) * normalizedAngle;
+  
+  // Phase terminator: the line dividing lit and unlit portions
+  // At phase 0.5 (full), everything is lit
+  // At phase 0.0 (new), nothing is lit
+  // The terminator is an ellipse whose semi-major axis rotates with phase
+  float phaseAngle = args.moonPhase * 2.0f * kPi;
+  float terminatorX = cos(phaseAngle);
+  
+  // Illumination: positive side of terminator is lit
+  float illumination = smoothstep(-0.15f, 0.15f, diskX * terminatorX + 0.5f * (1.0f - abs(terminatorX)));
+  
+  // For new moon (phase near 0 or 1), almost nothing is lit
+  float phaseBrightness = 0.5f + 0.5f * cos(2.0f * kPi * (args.moonPhase - 0.5f));
+  illumination *= phaseBrightness;
+  
+  // Moon surface: slight color variation across the disk (maria vs highlands)
+  float surfaceDetail = 0.85f + 0.15f * hash31(vec3(diskX * 5.0f, diskY * 5.0f, 0.0f));
+  
+  // Atmospheric transmittance to the moon
+  float moonElevation = moonDir.y;
+  float moonAirMass = 1.0f / max(moonElevation, 0.01f);
+  moonAirMass = min(moonAirMass, 40.0f);
+  vec3 moonTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * exp(0.0f) * moonAirMass);
+  
+  // Horizon fade
+  float horizonFade = smoothstep(0.0f, 0.05f, moonElevation);
+  
+  vec3 moonRadiance = args.moonColor * args.moonBrightness * illumination * 
+                       limbDarkening * surfaceDetail * moonTransmittance * horizonFade;
+  
+  return max(moonRadiance, vec3(0.0f));
+}
+
+// Compute night sky contribution (stars + airglow + moon)
 vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
   float sunElevation = args.sunDirection.y;
 
@@ -901,7 +970,10 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
   float airglowHorizonBoost = 1.0f + 0.5f * exp(-viewElevation * 5.0f);
   vec3 airglow = args.nightSkyColor * args.nightSkyBrightness * airglowHorizonBoost;
 
-  return (stars + airglow) * nightFactor;
+  // Moon disk
+  vec3 moon = evalMoonDisk(viewDir, args);
+
+  return (stars + airglow + moon) * nightFactor;
 }
 
 // Main evaluation function - computes atmosphere directly instead of using sky view LUT
