@@ -1247,7 +1247,7 @@ namespace dxvk {
 
     // Moon parameters (Secunda)
     RTX_OPTION("rtx.atmosphere", bool, moonEnabled, true, "Enable moon rendering in the night sky.");
-    RTX_OPTION("rtx.atmosphere", float, moonAngularRadius, 0.65f, "Moon angular diameter in degrees (Earth's moon is ~0.53).");
+    RTX_OPTION("rtx.atmosphere", float, moonAngularRadius, 3.0f, "Moon angular diameter in degrees (vanilla Secunda is ~8, Earth's moon is ~0.53).");
     RTX_OPTION("rtx.atmosphere", float, moonBrightness, 15.0f, "Moon brightness multiplier.");
     RTX_OPTION("rtx.atmosphere", Vector3, moonColor, Vector3(0.9f, 0.92f, 1.0f), "Moon surface color/albedo.");
     RTX_OPTION("rtx.atmosphere", float, moonElevation, 45.0f, "Moon elevation in degrees (overridden by game sync when active).");
