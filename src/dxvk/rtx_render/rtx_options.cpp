@@ -300,8 +300,8 @@ namespace dxvk {
       DxvkRtxdiRayQuery::stealBoundaryPixelSamplesWhenOutsideOfScreen.setDeferred(false);
       DxvkRtxdiRayQuery::permutationSamplingNthFrame.setDeferred(1);
       DxvkRtxdiRayQuery::enableDenoiserConfidence.setDeferred(false);
-      DxvkRtxdiRayQuery::enableBestLightSampling.setDeferred(false);
-      DxvkRtxdiRayQuery::initialSampleCount.setDeferred(3);
+      DxvkRtxdiRayQuery::enableBestLightSampling.setDeferred(true);
+      DxvkRtxdiRayQuery::initialSampleCount.setDeferred(64);
       DxvkRtxdiRayQuery::spatialSamples.setDeferred(2);
       DxvkRtxdiRayQuery::disocclusionSamples.setDeferred(2);
       DxvkRtxdiRayQuery::enableSampleStealing.setDeferred(false);
@@ -473,8 +473,8 @@ namespace dxvk {
     bool isRayReconstruction = RtxOptions::isRayReconstructionEnabled();
 
     auto lowGraphicsPresetCommonSettings = [&]() {
-      pathMinBounces.setDeferred(0);
-      pathMaxBounces.setDeferred(2);
+      pathMinBounces.setDeferred(1);
+      pathMaxBounces.setDeferred(8);
       enableTransmissionApproximationInIndirectRays.setDeferred(true);
       enableUnorderedEmissiveParticlesInIndirectRays.setDeferred(false);
       denoiseDirectAndIndirectLightingSeparately.setDeferred(false);
@@ -505,7 +505,7 @@ namespace dxvk {
 
     if (graphicsPreset() == GraphicsPreset::Ultra) {
       pathMinBounces.setDeferred(1);
-      pathMaxBounces.setDeferred(4);
+      pathMaxBounces.setDeferred(8);
       enableTransmissionApproximationInIndirectRays.setDeferred(false);
       enableUnorderedEmissiveParticlesInIndirectRays.setDeferred(true);
       denoiseDirectAndIndirectLightingSeparately.setDeferred(true);
