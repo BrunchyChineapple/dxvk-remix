@@ -928,21 +928,25 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   illumination *= phaseBrightness;
   
   // Moon surface: procedural craters, maria, and surface roughness
-  // Use disk coordinates (diskX, diskY) as UV on the moon face
-  // Scale to fill the disk properly
   float uvScale = 8.0f;
   vec2 moonUV = vec2(diskX, diskY) * uvScale;
 
-  // Maria (dark basaltic plains) — large smooth dark patches
-  float maria = fbmClouds(moonUV * 0.4f + vec2(3.7f, 1.2f), 3);
+  // Maria (dark basaltic plains) — use integer hash noise
+  vec2 mp = moonUV * 0.4f + vec2(3.7f, 1.2f);
+  vec2 mi = floor(mp);
+  vec2 mf = fract(mp);
+  mf = mf * mf * (3.0f - 2.0f * mf);
+  float ma = hash31(vec3(mi.x, mi.y, 0.5f));
+  float mb = hash31(vec3(mi.x + 1.0f, mi.y, 0.5f));
+  float mc = hash31(vec3(mi.x, mi.y + 1.0f, 0.5f));
+  float md = hash31(vec3(mi.x + 1.0f, mi.y + 1.0f, 0.5f));
+  float maria = mix(mix(ma, mb, mf.x), mix(mc, md, mf.x), mf.y);
   maria = smoothstep(0.35f, 0.65f, maria);
 
-  // Highland base brightness (lighter areas between maria)
   float highland = 1.0f - maria * 0.35f;
 
-  // Large craters — circular dark spots with bright rims
+  // Large craters
   float craters = 0.0f;
-  // Several fixed large craters at specific positions on the disk
   vec2 craterPositions[5];
   craterPositions[0] = vec2(-0.25f, 0.3f);
   craterPositions[1] = vec2(0.35f, -0.15f);
@@ -959,28 +963,24 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   for (int ci = 0; ci < 5; ci++) {
     float dist = length(vec2(diskX, diskY) - craterPositions[ci]);
     float craterRadius = craterSizes[ci];
-    // Dark interior
     float interior = 1.0f - smoothstep(craterRadius * 0.6f, craterRadius * 0.9f, dist);
-    // Bright rim
     float rim = smoothstep(craterRadius * 0.85f, craterRadius, dist) *
                 (1.0f - smoothstep(craterRadius, craterRadius * 1.15f, dist));
     craters += interior * 0.15f - rim * 0.08f;
   }
 
-  // Small craters — procedural noise-based
-  float smallCraters = valueNoise(moonUV * 3.0f + vec2(7.3f, 2.1f));
+  // Small craters
+  float smallCraters = hash31(vec3(moonUV.x * 3.0f + 7.3f, moonUV.y * 3.0f + 2.1f, 1.0f));
   smallCraters = smoothstep(0.72f, 0.78f, smallCraters) * 0.12f;
 
-  // Surface roughness — fine grain texture
-  float roughness = valueNoise(moonUV * 6.0f + vec2(11.1f, 5.5f)) * 0.08f;
+  // Surface roughness
+  float roughness = hash31(vec3(moonUV.x * 6.0f + 11.1f, moonUV.y * 6.0f + 5.5f, 2.0f)) * 0.08f;
 
-  // Combine all surface features
   float surfaceDetail = highland - craters - smallCraters + roughness;
 
-  // Subtle color variation: maria are slightly warmer (brownish), highlands cooler (grey)
   vec3 surfaceColor = mix(
-    vec3(0.85f, 0.83f, 0.80f),  // Maria: warm grey-brown
-    vec3(0.95f, 0.95f, 0.93f),  // Highlands: cool light grey
+    vec3(0.85f, 0.83f, 0.80f),
+    vec3(0.95f, 0.95f, 0.93f),
     1.0f - maria
   );
   surfaceDetail = clamp(surfaceDetail, 0.5f, 1.1f);
