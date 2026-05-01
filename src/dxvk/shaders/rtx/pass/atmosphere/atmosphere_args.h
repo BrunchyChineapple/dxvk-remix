@@ -77,18 +77,4 @@ struct AtmosphereArgs {
   float moonEnabled;        // 1.0 if moon should be rendered, 0.0 otherwise
   float pad3;
   float pad4;
-
-  // Cloud parameters
-  float cloudCoverage;      // Cloud coverage [0, 1]: 0=clear sky, 1=fully overcast
-  float cloudDensity;       // Cloud optical density multiplier
-  float cloudAltitude;      // Cloud layer altitude in km above ground
-  float cloudThickness;     // Cloud layer thickness in km
-
-  vec3 cloudColor;          // Base cloud color (lit by sun)
-  float cloudSpeed;         // Cloud movement speed multiplier
-
-  float cloudScale;         // Noise scale for cloud pattern
-  float cloudDetailScale;   // Detail noise scale
-  float cloudWindX;         // Wind direction X component
-  float cloudWindZ;         // Wind direction Z component
 };
