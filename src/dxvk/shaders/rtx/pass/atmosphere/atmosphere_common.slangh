@@ -1198,13 +1198,17 @@ vec3 evalSkyRadiance(
   // During twilight and night, stars and airglow fade in.
   radiance += evalNightSky(viewDirYUp, args);
   
-  // Masser renders first (behind Secunda since it's larger and farther)
-  vec3 masserContrib = evalMasserDisk(viewDirYUp, args);
-  radiance += masserContrib;
+  // Moons: only visible at night, fade in during twilight
+  float moonFade = smoothstep(0.02f, -0.05f, args.sunDirection.y);
+  if (moonFade > 0.001f) {
+    // Masser renders first (behind Secunda since it's larger and farther)
+    vec3 masserContrib = evalMasserDisk(viewDirYUp, args);
+    radiance += masserContrib * moonFade;
 
-  // Secunda renders on top (closer, smaller moon)
-  vec3 moonContrib = evalMoonDisk(viewDirYUp, args);
-  radiance += moonContrib;
+    // Secunda renders on top (closer, smaller moon)
+    vec3 moonContrib = evalMoonDisk(viewDirYUp, args);
+    radiance += moonContrib * moonFade;
+  }
   
   return max(radiance, vec3(0.0f));
 }
