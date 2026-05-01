@@ -1256,7 +1256,7 @@ namespace dxvk {
 
     // Cloud parameters
     RTX_OPTION("rtx.atmosphere", bool, cloudsEnabled, true, "Enable procedural cloud layer in the sky.");
-    RTX_OPTION("rtx.atmosphere", float, cloudCoverage, 0.0f, "Cloud coverage (0=clear, 1=overcast). Driven by game weather when synced.");
+    RTX_OPTION("rtx.atmosphere", float, cloudCoverage, 0.4f, "Cloud coverage (0=clear, 1=overcast). Driven by game weather when synced.");
     RTX_OPTION("rtx.atmosphere", float, cloudDensity, 1.5f, "Cloud optical density multiplier.");
     RTX_OPTION("rtx.atmosphere", float, cloudAltitude, 3.0f, "Cloud layer altitude in km above ground.");
     RTX_OPTION("rtx.atmosphere", float, cloudThickness, 1.0f, "Cloud layer thickness in km.");

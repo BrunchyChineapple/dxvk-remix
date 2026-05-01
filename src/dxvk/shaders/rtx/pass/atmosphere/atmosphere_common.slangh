@@ -780,16 +780,19 @@ vec3 getAnalyticalMultiscattering(float altitude, float sunZenithCosAngle, Atmos
 // Hash functions for procedural star generation
 // Based on integer lattice hashing for stable, non-repeating patterns
 float hash31(vec3 p) {
-  p = fract(p * vec3(443.8975f, 397.2973f, 491.1871f));
-  p += dot(p, p.yzx + 19.19f);
-  return fract((p.x + p.y) * p.z);
+  // Integer hash — avoids sin() patterns
+  uvec3 q = uvec3(int(p.x * 1597.0f), int(p.y * 2549.0f), int(p.z * 3571.0f));
+  uint n = (q.x ^ q.y ^ q.z) * 2654435761u;
+  n = (n >> 16u) ^ n;
+  return float(n) / 4294967296.0f;
 }
 
 vec3 hash33(vec3 p) {
-  p = vec3(dot(p, vec3(127.1f, 311.7f, 74.7f)),
-           dot(p, vec3(269.5f, 183.3f, 246.1f)),
-           dot(p, vec3(113.5f, 271.9f, 124.6f)));
-  return fract(sin(p) * 43758.5453123f);
+  // Integer hash — avoids sin() which creates visible patterns on GPU
+  uvec3 q = uvec3(int(p.x * 1597.0f), int(p.y * 2549.0f), int(p.z * 3571.0f));
+  q = (q.x ^ q.y ^ q.z) * uvec3(2654435761u, 2246822519u, 3266489917u);
+  q = (q >> 16u) ^ q;
+  return vec3(float(q.x), float(q.y), float(q.z)) / 4294967296.0f;
 }
 
 // Generate star brightness for a given sky direction
