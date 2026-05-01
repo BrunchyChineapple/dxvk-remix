@@ -191,6 +191,18 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.pad4 = 0.0f;
   }
 
+  // Cloud parameters
+  args.cloudCoverage = RtxOptions::cloudsEnabled() ? RtxOptions::cloudCoverage() : 0.0f;
+  args.cloudDensity = RtxOptions::cloudDensity();
+  args.cloudAltitude = RtxOptions::cloudAltitude();
+  args.cloudThickness = RtxOptions::cloudThickness();
+  args.cloudColor = RtxOptions::cloudColor();
+  args.cloudSpeed = RtxOptions::cloudSpeed();
+  args.cloudScale = RtxOptions::cloudScale();
+  args.cloudDetailScale = RtxOptions::cloudDetailScale();
+  args.cloudWindX = RtxOptions::cloudWindX();
+  args.cloudWindZ = RtxOptions::cloudWindZ();
+
   return args;
 }
 

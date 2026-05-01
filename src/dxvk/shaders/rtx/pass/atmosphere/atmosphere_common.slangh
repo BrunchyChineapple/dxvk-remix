@@ -979,6 +979,101 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
   return (stars + airglow) * nightFactor;
 }
 
+// ============================================================
+// Procedural Cloud Layer
+// ============================================================
+
+// Value noise for cloud shapes (smooth, continuous)
+float valueNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0f - 2.0f * f);  // Smoothstep interpolation
+
+  float a = hash31(vec3(i, 0.0f));
+  float b = hash31(vec3(i + vec2(1.0f, 0.0f), 0.0f));
+  float c = hash31(vec3(i + vec2(0.0f, 1.0f), 0.0f));
+  float d = hash31(vec3(i + vec2(1.0f, 1.0f), 0.0f));
+
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// Fractal Brownian Motion for cloud shapes
+float fbmClouds(vec2 p, int octaves) {
+  float value = 0.0f;
+  float amplitude = 0.5f;
+  float frequency = 1.0f;
+
+  for (int i = 0; i < octaves && i < 6; i++) {
+    value += amplitude * valueNoise(p * frequency);
+    frequency *= 2.0f;
+    amplitude *= 0.5f;
+  }
+  return value;
+}
+
+// Evaluate cloud density at a sky direction
+// Returns (cloud opacity, cloud brightness)
+vec2 evalCloudLayer(vec3 viewDir, AtmosphereArgs args) {
+  if (args.cloudCoverage <= 0.001f) return vec2(0.0f, 0.0f);
+
+  // Only render clouds above the horizon
+  if (viewDir.y <= 0.01f) return vec2(0.0f, 0.0f);
+
+  // Ray-plane intersection with cloud layer
+  // Cloud layer is at altitude cloudAltitude (km) above ground
+  // In Y-up space, ground is at y=0
+  float t = args.cloudAltitude / max(viewDir.y, 0.01f);
+
+  // World-space position on the cloud plane
+  vec2 cloudPos = vec2(viewDir.x, viewDir.z) * t;
+
+  // Animate clouds with wind
+  vec2 windOffset = vec2(args.cloudWindX, args.cloudWindZ) * args.timeSeconds * args.cloudSpeed * 1000.0f;
+  cloudPos += windOffset;
+
+  // Scale to cloud pattern size
+  vec2 scaledPos = cloudPos * args.cloudScale;
+
+  // Base cloud shape: large-scale FBM
+  float baseShape = fbmClouds(scaledPos, 5);
+
+  // Detail erosion: smaller-scale noise that carves into cloud edges
+  float detail = fbmClouds(cloudPos * args.cloudDetailScale, 3);
+
+  // Coverage remapping: cloudCoverage controls how much of the noise becomes cloud
+  // At coverage 0: only the very peaks of noise become clouds (almost none)
+  // At coverage 1: almost all noise becomes cloud (fully overcast)
+  float coverageThreshold = 1.0f - args.cloudCoverage;
+  float density = smoothstep(coverageThreshold - 0.1f, coverageThreshold + 0.2f, baseShape);
+
+  // Erode edges with detail noise
+  density *= smoothstep(0.2f, 0.6f, detail);
+
+  // Apply density multiplier
+  density *= args.cloudDensity;
+
+  // Cloud lighting: simple approximation
+  // Clouds facing the sun are brighter (silver lining effect)
+  vec3 sunDir = args.sunDirection;
+  float sunDot = dot(normalize(vec3(viewDir.x, 0.0f, viewDir.z)), normalize(vec3(sunDir.x, 0.0f, sunDir.z)));
+  float silverLining = 0.5f + 0.5f * sunDot;
+
+  // Sun elevation affects cloud brightness
+  float sunBrightness = max(sunDir.y, 0.0f);
+  // At night, clouds are very dark but not invisible (moonlight)
+  float nightBrightness = 0.02f;
+  float cloudBrightness = max(sunBrightness * (0.6f + 0.4f * silverLining), nightBrightness);
+
+  // Fade clouds near horizon to avoid hard cutoff
+  float horizonFade = smoothstep(0.01f, 0.15f, viewDir.y);
+  density *= horizonFade;
+
+  // Clamp density
+  density = clamp(density, 0.0f, 1.0f);
+
+  return vec2(density, cloudBrightness);
+}
+
 // Main evaluation function - computes atmosphere directly instead of using sky view LUT
 vec3 evalSkyRadiance(
   vec3 viewDir,
@@ -1011,7 +1106,18 @@ vec3 evalSkyRadiance(
   // Atmospheric scattering already handles the sky brightness that washes out the moon during day
   vec3 moonContrib = evalMoonDisk(viewDirYUp, args);
   radiance += moonContrib;
-  
+
+  // Procedural cloud layer
+  vec2 cloudResult = evalCloudLayer(viewDirYUp, args);
+  float cloudOpacity = cloudResult.x;
+  float cloudBrightness = cloudResult.y;
+  if (cloudOpacity > 0.001f) {
+    // Cloud color: base color * sun illuminance * brightness
+    vec3 cloudRadiance = args.cloudColor * args.sunIlluminance * cloudBrightness;
+    // Blend: clouds occlude the sky behind them
+    radiance = mix(radiance, cloudRadiance, cloudOpacity);
+  }
+
   // Note: Sun disk rendering removed - direct lighting handles sun contribution
   
   return max(radiance, vec3(0.0f));

@@ -1254,6 +1254,19 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", float, moonRotation, 90.0f, "Moon rotation/azimuth in degrees (overridden by game sync when active).");
     RTX_OPTION("rtx.atmosphere", float, moonPhase, 0.5f, "Moon phase: 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter.");
 
+    // Cloud parameters
+    RTX_OPTION("rtx.atmosphere", bool, cloudsEnabled, true, "Enable procedural cloud layer in the sky.");
+    RTX_OPTION("rtx.atmosphere", float, cloudCoverage, 0.0f, "Cloud coverage (0=clear, 1=overcast). Driven by game weather when synced.");
+    RTX_OPTION("rtx.atmosphere", float, cloudDensity, 1.5f, "Cloud optical density multiplier.");
+    RTX_OPTION("rtx.atmosphere", float, cloudAltitude, 3.0f, "Cloud layer altitude in km above ground.");
+    RTX_OPTION("rtx.atmosphere", float, cloudThickness, 1.0f, "Cloud layer thickness in km.");
+    RTX_OPTION("rtx.atmosphere", Vector3, cloudColor, Vector3(1.0f, 1.0f, 1.0f), "Base cloud color.");
+    RTX_OPTION("rtx.atmosphere", float, cloudSpeed, 0.002f, "Cloud movement speed.");
+    RTX_OPTION("rtx.atmosphere", float, cloudScale, 0.0003f, "Cloud pattern noise scale (smaller = larger clouds).");
+    RTX_OPTION("rtx.atmosphere", float, cloudDetailScale, 0.003f, "Cloud detail noise scale.");
+    RTX_OPTION("rtx.atmosphere", float, cloudWindX, 1.0f, "Cloud wind direction X (driven by game wind).");
+    RTX_OPTION("rtx.atmosphere", float, cloudWindZ, 0.3f, "Cloud wind direction Z (driven by game wind).");
+
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");
 
