@@ -1078,8 +1078,6 @@ vec2 evalCloudLayer(vec3 viewDir, AtmosphereArgs args) {
   if (viewDir.y <= 0.01f) return vec2(0.0f, 0.0f);
 
   // Ray-plane intersection with cloud layer
-  // Cloud layer is at altitude cloudAltitude (km) above ground
-  // In Y-up space, ground is at y=0
   float t = args.cloudAltitude / max(viewDir.y, 0.01f);
 
   // World-space position on the cloud plane
@@ -1093,40 +1091,67 @@ vec2 evalCloudLayer(vec3 viewDir, AtmosphereArgs args) {
   vec2 scaledPos = cloudPos * args.cloudScale;
 
   // Base cloud shape: large-scale FBM
-  float baseShape = fbmClouds(scaledPos, 5);
+  float baseShape = 0.0f;
+  {
+    float amp = 0.5f;
+    float freq = 1.0f;
+    vec2 p = scaledPos;
+    for (int oct = 0; oct < 5; oct++) {
+      // Inline value noise to avoid hash function issues
+      vec2 i = floor(p * freq);
+      vec2 f = fract(p * freq);
+      f = f * f * (3.0f - 2.0f * f);
+      
+      float a = fract(sin(dot(i, vec2(127.1f, 311.7f))) * 43758.5453f);
+      float b = fract(sin(dot(i + vec2(1.0f, 0.0f), vec2(127.1f, 311.7f))) * 43758.5453f);
+      float c = fract(sin(dot(i + vec2(0.0f, 1.0f), vec2(127.1f, 311.7f))) * 43758.5453f);
+      float d = fract(sin(dot(i + vec2(1.0f, 1.0f), vec2(127.1f, 311.7f))) * 43758.5453f);
+      
+      baseShape += amp * mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+      freq *= 2.0f;
+      amp *= 0.5f;
+    }
+  }
 
-  // Detail erosion: smaller-scale noise that carves into cloud edges
-  float detail = fbmClouds(cloudPos * args.cloudDetailScale, 3);
+  // Detail erosion
+  float detail = 0.0f;
+  {
+    float amp = 0.5f;
+    float freq = 1.0f;
+    vec2 p = cloudPos * args.cloudDetailScale;
+    for (int oct = 0; oct < 3; oct++) {
+      vec2 i = floor(p * freq);
+      vec2 f = fract(p * freq);
+      f = f * f * (3.0f - 2.0f * f);
+      
+      float a = fract(sin(dot(i, vec2(269.5f, 183.3f))) * 43758.5453f);
+      float b = fract(sin(dot(i + vec2(1.0f, 0.0f), vec2(269.5f, 183.3f))) * 43758.5453f);
+      float c = fract(sin(dot(i + vec2(0.0f, 1.0f), vec2(269.5f, 183.3f))) * 43758.5453f);
+      float d = fract(sin(dot(i + vec2(1.0f, 1.0f), vec2(269.5f, 183.3f))) * 43758.5453f);
+      
+      detail += amp * mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+      freq *= 2.0f;
+      amp *= 0.5f;
+    }
+  }
 
-  // Coverage remapping: cloudCoverage controls how much of the noise becomes cloud
-  // At coverage 0: only the very peaks of noise become clouds (almost none)
-  // At coverage 1: almost all noise becomes cloud (fully overcast)
+  // Coverage remapping
   float coverageThreshold = 1.0f - args.cloudCoverage;
   float density = smoothstep(coverageThreshold - 0.1f, coverageThreshold + 0.2f, baseShape);
-
-  // Erode edges with detail noise
   density *= smoothstep(0.2f, 0.6f, detail);
-
-  // Apply density multiplier
   density *= args.cloudDensity;
 
-  // Cloud lighting: simple approximation
-  // Clouds facing the sun are brighter (silver lining effect)
+  // Cloud lighting
   vec3 sunDir = args.sunDirection;
   float sunDot = dot(normalize(vec3(viewDir.x, 0.0f, viewDir.z)), normalize(vec3(sunDir.x, 0.0f, sunDir.z)));
   float silverLining = 0.5f + 0.5f * sunDot;
-
-  // Sun elevation affects cloud brightness
   float sunBrightness = max(sunDir.y, 0.0f);
-  // At night, clouds are very dark but not invisible (moonlight)
   float nightBrightness = 0.02f;
   float cloudBrightness = max(sunBrightness * (0.6f + 0.4f * silverLining), nightBrightness);
 
-  // Fade clouds near horizon to avoid hard cutoff
+  // Fade clouds near horizon
   float horizonFade = smoothstep(0.01f, 0.15f, viewDir.y);
   density *= horizonFade;
-
-  // Clamp density
   density = clamp(density, 0.0f, 1.0f);
 
   return vec2(density, cloudBrightness);
