@@ -77,4 +77,16 @@ struct AtmosphereArgs {
   float moonEnabled;        // 1.0 if moon should be rendered, 0.0 otherwise
   float pad3;
   float pad4;
+
+  // Masser (large red moon) parameters
+  vec3 masserDirection;     // Direction to Masser in Y-up space (normalized)
+  float masserAngularRadius; // Masser angular radius in radians
+
+  vec3 masserColor;         // Masser surface color (reddish)
+  float masserBrightness;   // Overall Masser brightness multiplier
+
+  float masserPhase;        // Masser phase [0, 1]
+  float masserEnabled;      // 1.0 if Masser should be rendered
+  float pad5;
+  float pad6;
 };

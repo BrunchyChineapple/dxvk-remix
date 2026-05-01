@@ -191,6 +191,27 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.pad4 = 0.0f;
   }
 
+  // Masser parameters (large red moon)
+  {
+    constexpr float kDegToRadLocal = 3.14159265358979323846f / 180.0f;
+    float masserElev = RtxOptions::masserElevation() * kDegToRadLocal;
+    float masserAzim = RtxOptions::masserRotation() * kDegToRadLocal;
+
+    args.masserDirection.x = std::cos(masserElev) * std::sin(masserAzim);
+    args.masserDirection.y = std::sin(masserElev);
+    args.masserDirection.z = std::cos(masserElev) * std::cos(masserAzim);
+
+    float masserSizeRad = RtxOptions::masserAngularRadius() * kDegToRadLocal;
+    args.masserAngularRadius = masserSizeRad * 0.5f;
+
+    args.masserColor = RtxOptions::masserColor();
+    args.masserBrightness = RtxOptions::masserBrightness();
+    args.masserPhase = RtxOptions::masserPhase();
+    args.masserEnabled = RtxOptions::masserEnabled() ? 1.0f : 0.0f;
+    args.pad5 = 0.0f;
+    args.pad6 = 0.0f;
+  }
+
   return args;
 }
 

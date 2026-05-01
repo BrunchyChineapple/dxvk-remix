@@ -999,6 +999,88 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   return max(moonRadiance, vec3(0.0f));
 }
 
+// Render Masser (large red moon) disk
+vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
+  if (args.masserEnabled < 0.5f) return vec3(0.0f);
+
+  vec3 masserDir = normalize(args.masserDirection);
+
+  if (dot(masserDir, masserDir) < 0.5f) {
+    masserDir = normalize(vec3(0.4f, 0.65f, 0.5f));
+  }
+
+  float cosAngle = dot(viewDir, masserDir);
+  float masserCosRadius = cos(args.masserAngularRadius);
+
+  if (args.masserAngularRadius < 0.001f) {
+    masserCosRadius = cos(1.0f * kPi / 180.0f);
+  }
+
+  if (cosAngle < masserCosRadius) return vec3(0.0f);
+
+  float normalizedAngle = acos(clamp(cosAngle, -1.0f, 1.0f)) / args.masserAngularRadius;
+
+  float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
+  limbDarkening = max(limbDarkening, 0.0f);
+
+  vec3 up = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
+  vec3 masserRight = normalize(cross(up, masserDir));
+  vec3 masserUp = cross(masserDir, masserRight);
+
+  vec3 toView = normalize(viewDir - masserDir * cosAngle);
+  float diskX = dot(toView, masserRight) * normalizedAngle;
+  float diskY = dot(toView, masserUp) * normalizedAngle;
+
+  // Phase illumination
+  float phaseAngle = args.masserPhase * 2.0f * kPi;
+  float terminatorX = cos(phaseAngle);
+  float illumination = smoothstep(-0.15f, 0.15f, diskX * terminatorX + 0.5f * (1.0f - abs(terminatorX)));
+  float phaseBrightness = 0.5f + 0.5f * cos(2.0f * kPi * (args.masserPhase - 0.5f));
+  illumination *= phaseBrightness;
+
+  // Masser surface: volcanic red terrain with dark regions
+  float uvScale = 6.0f;
+  vec2 masserUV = vec2(diskX, diskY) * uvScale;
+
+  // Volcanic dark regions
+  uint q1 = uint(int(masserUV.x * 3.7f + 5.0f) * 1597) ^ uint(int(masserUV.y * 3.7f + 5.0f) * 2549);
+  q1 = (q1 * 2654435761u) >> 16u;
+  float volcanic = float(q1 & 0xFFFFu) / 65536.0f;
+  volcanic = smoothstep(0.3f, 0.7f, volcanic) * 0.3f;
+
+  // Surface roughness
+  uint q2 = uint(int(masserUV.x * 8.0f + 11.0f) * 3571) ^ uint(int(masserUV.y * 8.0f + 11.0f) * 1597);
+  q2 = (q2 * 2246822519u) >> 16u;
+  float roughness = float(q2 & 0xFFFFu) / 65536.0f * 0.15f;
+
+  // Dark veins/cracks
+  uint q3 = uint(int(masserUV.x * 5.0f + 7.0f) * 2549) ^ uint(int(masserUV.y * 2.5f + 3.0f) * 3571);
+  q3 = (q3 * 3266489917u) >> 16u;
+  float veins = float(q3 & 0xFFFFu) / 65536.0f;
+  veins = smoothstep(0.65f, 0.72f, veins) * 0.2f;
+
+  float surfaceDetail = 1.0f - volcanic - veins + roughness;
+  surfaceDetail = clamp(surfaceDetail, 0.4f, 1.1f);
+
+  // Color: darker areas are deeper crimson, lighter areas brighter red
+  vec3 surfaceColor = mix(
+    vec3(0.6f, 0.12f, 0.08f),
+    vec3(0.9f, 0.35f, 0.25f),
+    surfaceDetail
+  );
+
+  // Atmospheric transmittance
+  float masserElevation = masserDir.y;
+  float masserAirMass = 1.0f / max(abs(masserElevation) + 0.05f, 0.05f);
+  masserAirMass = min(masserAirMass, 10.0f);
+  vec3 masserTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * masserAirMass * 0.2f);
+
+  vec3 masserRadiance = args.masserColor * surfaceColor * args.masserBrightness * illumination *
+                         limbDarkening * masserTransmittance;
+
+  return max(masserRadiance, vec3(0.0f));
+}
+
 // Compute night sky contribution (stars + airglow + moon)
 vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
   float sunElevation = args.sunDirection.y;
@@ -1065,7 +1147,11 @@ vec3 evalSkyRadiance(
   // During twilight and night, stars and airglow fade in.
   radiance += evalNightSky(viewDirYUp, args);
   
-  // Moon renders at all times (visible during day against bright sky, prominent at night)
+  // Masser renders first (behind Secunda since it's larger and farther)
+  vec3 masserContrib = evalMasserDisk(viewDirYUp, args);
+  radiance += masserContrib;
+
+  // Secunda renders on top (closer, smaller moon)
   vec3 moonContrib = evalMoonDisk(viewDirYUp, args);
   radiance += moonContrib;
   

@@ -1254,6 +1254,15 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", float, moonRotation, 90.0f, "Moon rotation/azimuth in degrees (overridden by game sync when active).");
     RTX_OPTION("rtx.atmosphere", float, moonPhase, 0.5f, "Moon phase: 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter.");
 
+    // Masser (large red moon) parameters
+    RTX_OPTION("rtx.atmosphere", bool, masserEnabled, true, "Enable Masser (large red moon) rendering.");
+    RTX_OPTION("rtx.atmosphere", float, masserAngularRadius, 5.0f, "Masser angular diameter in degrees (roughly 2x Secunda).");
+    RTX_OPTION("rtx.atmosphere", float, masserBrightness, 10.0f, "Masser brightness multiplier.");
+    RTX_OPTION("rtx.atmosphere", Vector3, masserColor, Vector3(0.85f, 0.25f, 0.18f), "Masser surface color (deep crimson red).");
+    RTX_OPTION("rtx.atmosphere", float, masserElevation, 45.0f, "Masser elevation in degrees (overridden by game sync).");
+    RTX_OPTION("rtx.atmosphere", float, masserRotation, 90.0f, "Masser rotation in degrees (overridden by game sync).");
+    RTX_OPTION("rtx.atmosphere", float, masserPhase, 0.5f, "Masser phase: 0=new, 0.5=full.");
+
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");
 
