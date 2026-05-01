@@ -796,11 +796,12 @@ vec3 hash33(vec3 p) {
 }
 
 // Smooth 2D value noise using hash31 for lattice values
-// Returns [0, 1] with smooth interpolation between grid cells
 float smoothNoise2D(vec2 p, float seed) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  f = f * f * (3.0f - 2.0f * f);  // Smoothstep interpolation
+  // Scale up coordinates to ensure integer hash gets distinct values
+  vec2 sp = p * 100.0f + vec2(seed * 13.7f, seed * 7.3f);
+  vec2 i = floor(sp);
+  vec2 f = fract(sp);
+  f = f * f * (3.0f - 2.0f * f);
 
   float a = hash31(vec3(i.x, i.y, seed));
   float b = hash31(vec3(i.x + 1.0f, i.y, seed));
@@ -814,11 +815,10 @@ float smoothNoise2D(vec2 p, float seed) {
 float fbmNoise2D(vec2 p, int octaves, float seed) {
   float value = 0.0f;
   float amplitude = 0.5f;
-  float frequency = 1.0f;
 
   for (int i = 0; i < octaves && i < 6; i++) {
-    value += amplitude * smoothNoise2D(p * frequency, seed + float(i) * 7.31f);
-    frequency *= 2.0f;
+    value += amplitude * smoothNoise2D(p, seed + float(i) * 17.31f);
+    p *= 2.0f;
     amplitude *= 0.5f;
   }
   return value;
@@ -962,10 +962,10 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
 
   // Maria (dark basaltic plains) — smooth multi-octave noise
   float maria = fbmNoise2D(moonUV * 0.4f + vec2(3.7f, 1.2f), 4, 10.0f);
-  maria = smoothstep(0.3f, 0.6f, maria);
+  maria = smoothstep(0.25f, 0.55f, maria);
 
   // Highland base brightness
-  float highland = 1.0f - maria * 0.4f;
+  float highland = 1.0f - maria * 0.5f;
 
   // Large craters — fixed positions with dark interiors and bright rims
   float craters = 0.0f;
@@ -992,19 +992,19 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
     float interior = 1.0f - smoothstep(craterRadius * 0.5f, craterRadius * 0.85f, dist);
     float rim = smoothstep(craterRadius * 0.8f, craterRadius * 0.95f, dist) *
                 (1.0f - smoothstep(craterRadius * 0.95f, craterRadius * 1.2f, dist));
-    craters += interior * 0.18f - rim * 0.1f;
+    craters += interior * 0.25f - rim * 0.12f;
   }
 
   // Small craters — smooth noise threshold
   float smallCraterNoise = fbmNoise2D(moonUV * 2.5f + vec2(7.3f, 2.1f), 3, 20.0f);
-  float smallCraters = smoothstep(0.68f, 0.75f, smallCraterNoise) * 0.15f;
+  float smallCraters = smoothstep(0.62f, 0.72f, smallCraterNoise) * 0.2f;
 
   // Surface roughness — fine detail
-  float roughness = fbmNoise2D(moonUV * 4.0f + vec2(11.1f, 5.5f), 2, 30.0f) * 0.1f;
+  float roughness = fbmNoise2D(moonUV * 4.0f + vec2(11.1f, 5.5f), 2, 30.0f) * 0.15f;
 
   // Streaks/rays from impacts
   float rays = fbmNoise2D(moonUV * 1.5f + vec2(2.3f, 8.7f), 2, 40.0f);
-  rays = smoothstep(0.55f, 0.7f, rays) * 0.08f;
+  rays = smoothstep(0.5f, 0.65f, rays) * 0.12f;
 
   float surfaceDetail = highland - craters - smallCraters + roughness + rays;
 
@@ -1014,7 +1014,7 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
     vec3(0.95f, 0.94f, 0.92f),  // Highlands: cool light grey
     1.0f - maria
   );
-  surfaceDetail = clamp(surfaceDetail, 0.45f, 1.1f);
+  surfaceDetail = clamp(surfaceDetail, 0.3f, 1.15f);
   
   // Atmospheric transmittance to the moon — use reduced effect to keep moon
   // looking white/silver rather than deep orange from Rayleigh scattering
@@ -1075,14 +1075,14 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
 
   // Large dark volcanic basins — smooth FBM
   float volcanic = fbmNoise2D(masserUV * 0.5f + vec2(5.1f, 3.3f), 4, 50.0f);
-  volcanic = smoothstep(0.25f, 0.6f, volcanic) * 0.35f;
+  volcanic = smoothstep(0.2f, 0.55f, volcanic) * 0.45f;
 
   // Surface roughness — medium scale terrain
-  float terrain = fbmNoise2D(masserUV * 1.2f + vec2(11.0f, 7.0f), 3, 60.0f) * 0.15f;
+  float terrain = fbmNoise2D(masserUV * 1.2f + vec2(11.0f, 7.0f), 3, 60.0f) * 0.2f;
 
   // Dark veins/canyons
   float veins = fbmNoise2D(masserUV * 2.0f + vec2(7.0f, 3.0f), 3, 70.0f);
-  veins = smoothstep(0.6f, 0.7f, veins) * 0.2f;
+  veins = smoothstep(0.55f, 0.68f, veins) * 0.25f;
 
   // Fine surface texture
   float fineDetail = fbmNoise2D(masserUV * 3.5f + vec2(13.0f, 9.0f), 2, 80.0f) * 0.08f;
@@ -1104,7 +1104,7 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
     float dist = length(vec2(diskX, diskY) - mCraterPos[mci]);
     float cr = mCraterSz[mci];
     float interior = 1.0f - smoothstep(cr * 0.5f, cr * 0.85f, dist);
-    masserCraters += interior * 0.12f;
+    masserCraters += interior * 0.2f;
   }
 
   float surfaceDetail = 1.0f - volcanic - veins - masserCraters + terrain + fineDetail;
