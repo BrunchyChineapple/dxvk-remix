@@ -872,11 +872,18 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   
   vec3 moonDir = normalize(args.moonDirection);
   
-  // Moon must be above horizon
-  if (moonDir.y <= -0.01f) return vec3(0.0f);
+  // If moonDirection is zero (not set), use a default high in the sky
+  if (dot(moonDir, moonDir) < 0.5f) {
+    moonDir = normalize(vec3(0.5f, 0.7f, 0.5f));
+  }
   
   float cosAngle = dot(viewDir, moonDir);
   float moonCosRadius = cos(args.moonAngularRadius);
+  
+  // Ensure angular radius is reasonable (at least 0.5 degrees)
+  if (args.moonAngularRadius < 0.001f) {
+    moonCosRadius = cos(0.5f * kPi / 180.0f);
+  }
   
   if (cosAngle < moonCosRadius) return vec3(0.0f);
   
@@ -922,15 +929,12 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   
   // Atmospheric transmittance to the moon
   float moonElevation = moonDir.y;
-  float moonAirMass = 1.0f / max(moonElevation, 0.01f);
+  float moonAirMass = 1.0f / max(abs(moonElevation) + 0.01f, 0.01f);
   moonAirMass = min(moonAirMass, 40.0f);
-  vec3 moonTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * exp(0.0f) * moonAirMass);
-  
-  // Horizon fade
-  float horizonFade = smoothstep(0.0f, 0.05f, moonElevation);
+  vec3 moonTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * moonAirMass);
   
   vec3 moonRadiance = args.moonColor * args.moonBrightness * illumination * 
-                       limbDarkening * surfaceDetail * moonTransmittance * horizonFade;
+                       limbDarkening * surfaceDetail * moonTransmittance;
   
   return max(moonRadiance, vec3(0.0f));
 }
