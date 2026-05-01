@@ -970,10 +970,7 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
   float airglowHorizonBoost = 1.0f + 0.5f * exp(-viewElevation * 5.0f);
   vec3 airglow = args.nightSkyColor * args.nightSkyBrightness * airglowHorizonBoost;
 
-  // Moon disk
-  vec3 moon = evalMoonDisk(viewDir, args);
-
-  return (stars + airglow + moon) * nightFactor;
+  return (stars + airglow) * nightFactor;
 }
 
 // Main evaluation function - computes atmosphere directly instead of using sky view LUT
@@ -1003,6 +1000,11 @@ vec3 evalSkyRadiance(
   // This is additive — during daytime, nightFactor is 0 so this adds nothing.
   // During twilight and night, stars and airglow fade in.
   radiance += evalNightSky(viewDirYUp, args);
+  
+  // Moon renders at all times (visible during day against bright sky, prominent at night)
+  // Atmospheric scattering already handles the sky brightness that washes out the moon during day
+  vec3 moonContrib = evalMoonDisk(viewDirYUp, args);
+  radiance += moonContrib;
   
   // Note: Sun disk rendering removed - direct lighting handles sun contribution
   
