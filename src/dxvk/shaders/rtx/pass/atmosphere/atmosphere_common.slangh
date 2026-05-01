@@ -927,11 +927,13 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   // Moon surface: slight color variation across the disk (maria vs highlands)
   float surfaceDetail = 0.85f + 0.15f * hash31(vec3(diskX * 5.0f, diskY * 5.0f, 0.0f));
   
-  // Atmospheric transmittance to the moon
+  // Atmospheric transmittance to the moon — use reduced effect to keep moon
+  // looking white/silver rather than deep orange from Rayleigh scattering
   float moonElevation = moonDir.y;
-  float moonAirMass = 1.0f / max(abs(moonElevation) + 0.01f, 0.01f);
-  moonAirMass = min(moonAirMass, 40.0f);
-  vec3 moonTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * moonAirMass);
+  float moonAirMass = 1.0f / max(abs(moonElevation) + 0.05f, 0.05f);
+  moonAirMass = min(moonAirMass, 10.0f);  // Limit air mass to prevent extreme reddening
+  // Use only 20% of the Rayleigh extinction to keep the moon mostly white
+  vec3 moonTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * moonAirMass * 0.2f);
   
   vec3 moonRadiance = args.moonColor * args.moonBrightness * illumination * 
                        limbDarkening * surfaceDetail * moonTransmittance;
