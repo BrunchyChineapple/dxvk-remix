@@ -1048,9 +1048,9 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
     baseMoonDir = normalize(args.masserDirection);
   }
   // Offset Masser slightly above and to the side of the base moon position
-  vec3 up = vec3(0.0f, 1.0f, 0.0f);
-  vec3 right = normalize(cross(up, baseMoonDir));
-  vec3 masserDir = normalize(baseMoonDir + up * 0.07f - right * 0.05f);
+  vec3 masserUp = vec3(0.0f, 1.0f, 0.0f);
+  vec3 masserRight = normalize(cross(masserUp, baseMoonDir));
+  vec3 masserDir = normalize(baseMoonDir + masserUp * 0.07f - masserRight * 0.05f);
 
   if (masserDir.y <= -0.01f) {
     masserDir = normalize(args.masserDirection);
@@ -1070,13 +1070,13 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
   float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
 
-  vec3 up = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
-  vec3 masserRight = normalize(cross(up, masserDir));
-  vec3 masserUp = cross(masserDir, masserRight);
+  vec3 masserUpDir = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
+  vec3 masserRightDir = normalize(cross(masserUpDir, masserDir));
+  vec3 masserUpPerp = cross(masserDir, masserRightDir);
 
   vec3 toView = normalize(viewDir - masserDir * cosAngle);
-  float diskX = dot(toView, masserRight) * normalizedAngle;
-  float diskY = dot(toView, masserUp) * normalizedAngle;
+  float diskX = dot(toView, masserRightDir) * normalizedAngle;
+  float diskY = dot(toView, masserUpPerp) * normalizedAngle;
 
   // Phase illumination
   float phaseAngle = args.masserPhase * 2.0f * kPi;
