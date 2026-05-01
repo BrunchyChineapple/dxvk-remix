@@ -902,15 +902,11 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
 vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   if (args.moonEnabled < 0.5f) return vec3(0.0f);
   
-  // Moon position is the negated sun direction — this ensures the moon
-  // is always exactly where Remix's nighttime GI light comes from.
-  // The sun direction at night points below the horizon; negating it
-  // gives us the above-horizon direction that the light appears to come from.
-  vec3 moonDir = -normalize(args.sunDirection);
+  vec3 moonDir = normalize(args.moonDirection);
   
-  // If sun direction is zero or moon would be below horizon, use args fallback
-  if (dot(moonDir, moonDir) < 0.5f || moonDir.y <= -0.01f) {
-    moonDir = normalize(args.moonDirection);
+  // If moonDirection is zero (not set), use a default high in the sky
+  if (dot(moonDir, moonDir) < 0.5f) {
+    moonDir = normalize(vec3(0.5f, 0.7f, 0.5f));
   }
   if (dot(moonDir, moonDir) < 0.5f) {
     moonDir = normalize(vec3(0.5f, 0.7f, 0.5f));
@@ -1041,19 +1037,10 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
 vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
   if (args.masserEnabled < 0.5f) return vec3(0.0f);
 
-  // Masser trails close to Secunda (which is at the negated sun direction)
-  // Apply a small angular offset from the negated sun direction
-  vec3 baseMoonDir = -normalize(args.sunDirection);
-  if (dot(baseMoonDir, baseMoonDir) < 0.5f) {
-    baseMoonDir = normalize(args.masserDirection);
-  }
-  // Offset Masser slightly above and to the side of the base moon position
-  vec3 masserUp = vec3(0.0f, 1.0f, 0.0f);
-  vec3 masserRight = normalize(cross(masserUp, baseMoonDir));
-  vec3 masserDir = normalize(baseMoonDir + masserUp * 0.07f - masserRight * 0.05f);
-
-  if (masserDir.y <= -0.01f) {
-    masserDir = normalize(args.masserDirection);
+  vec3 masserDir = normalize(args.masserDirection);
+  
+  if (dot(masserDir, masserDir) < 0.5f) {
+    masserDir = normalize(vec3(0.4f, 0.65f, 0.5f));
   }
 
   float cosAngle = dot(viewDir, masserDir);
