@@ -1191,6 +1191,10 @@ vec3 evalSkyRadiance(
   radiance += moonContrib;
 
   // Procedural cloud layer
+  // DEBUG: Force a visible cloud band to verify code path executes
+  if (viewDirYUp.y > 0.3f && viewDirYUp.y < 0.5f) {
+    radiance = mix(radiance, vec3(10.0f, 10.0f, 10.0f), 0.8f);
+  }
   vec2 cloudResult = evalCloudLayer(viewDirYUp, args);
   float cloudOpacity = cloudResult.x;
   float cloudBrightness = cloudResult.y;
