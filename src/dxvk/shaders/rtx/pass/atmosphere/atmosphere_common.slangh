@@ -1177,30 +1177,11 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
   // Star field
   vec3 stars = evalStarField(viewDir, args) * horizonExtinction;
 
-  // Nebula / Milky Way band — subtle galactic glow across the sky
-  // The band runs roughly north-south, tilted ~30 degrees
-  vec3 dir = normalize(viewDir);
-  float galacticAngle = dir.x * 0.5f + dir.y * 0.866f;  // ~30° tilt
-  float bandDist = abs(galacticAngle);
-  float nebulaBand = exp(-bandDist * bandDist * 8.0f);  // Gaussian band
-  
-  // Add noise variation to the nebula for wispy structure
-  float nebulaDetail = smoothNoise2D(vec2(
-    atan2(dir.z, dir.x) * 3.0f,
-    dir.y * 5.0f
-  ), 99.0f);
-  float nebulaWisp = smoothNoise2D(vec2(
-    atan2(dir.z, dir.x) * 8.0f + 3.7f,
-    dir.y * 12.0f + 1.3f
-  ), 111.0f);
-  
-  nebulaBand *= (0.5f + 0.5f * nebulaDetail) * (0.7f + 0.3f * nebulaWisp);
-  
   // Subtle nebula / milky way band with star density gradient
-  vec3 dir = normalize(viewDir);
+  vec3 nebulaDir = normalize(viewDir);
   // Galactic plane tilted ~60° from vertical, running roughly east-west
-  float galacticLat = dir.x * 0.866f + dir.y * 0.5f;  // ~30° from zenith
-  float galacticLon = atan2(dir.z, length(vec2(dir.x, dir.y)));
+  float galacticLat = nebulaDir.x * 0.866f + nebulaDir.y * 0.5f;
+  float galacticLon = atan2(nebulaDir.z, length(vec2(nebulaDir.x, nebulaDir.y)));
   
   // Narrow band with soft edges
   float bandDist = abs(galacticLat);
