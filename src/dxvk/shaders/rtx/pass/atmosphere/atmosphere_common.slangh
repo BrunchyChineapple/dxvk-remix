@@ -1196,25 +1196,49 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
   
   nebulaBand *= (0.5f + 0.5f * nebulaDetail) * (0.7f + 0.3f * nebulaWisp);
   
-  // Subtle purple-blue nebula color — boosted for visibility
-  vec3 nebulaColor = vec3(0.15f, 0.08f, 0.25f) * nebulaBand * 0.08f;
+  // Subtle nebula / milky way band with star density gradient
+  vec3 dir = normalize(viewDir);
+  // Galactic plane tilted ~60° from vertical, running roughly east-west
+  float galacticLat = dir.x * 0.866f + dir.y * 0.5f;  // ~30° from zenith
+  float galacticLon = atan2(dir.z, length(vec2(dir.x, dir.y)));
+  
+  // Narrow band with soft edges
+  float bandDist = abs(galacticLat);
+  float nebulaBand = exp(-bandDist * bandDist * 25.0f);  // Narrower Gaussian
+  
+  // Wispy structure within the band
+  float nebulaDetail = smoothNoise2D(vec2(galacticLon * 4.0f, galacticLat * 15.0f), 99.0f);
+  float nebulaWisp = smoothNoise2D(vec2(galacticLon * 10.0f + 3.7f, galacticLat * 25.0f + 1.3f), 111.0f);
+  float nebulaFine = smoothNoise2D(vec2(galacticLon * 20.0f + 7.1f, galacticLat * 40.0f + 5.9f), 123.0f);
+  
+  // Combine noise layers for wispy cloud-like structure
+  float nebulaShape = nebulaBand * (0.3f + 0.4f * nebulaDetail + 0.3f * nebulaWisp);
+  nebulaShape *= (0.7f + 0.3f * nebulaFine);  // Fine detail breaks up edges
+  
+  // Dense star clusters embedded in the band (bright spots)
+  float clusters = smoothNoise2D(vec2(galacticLon * 6.0f + 2.0f, galacticLat * 8.0f), 150.0f);
+  clusters = smoothstep(0.6f, 0.8f, clusters) * nebulaBand * 0.04f;
+  
+  // Color gradient: warm center (pinkish) to cool edges (blue-purple)
+  float colorGrad = smoothstep(0.0f, 0.5f, bandDist * 5.0f);
+  vec3 nebulaWarm = vec3(0.18f, 0.10f, 0.15f);   // Pinkish core
+  vec3 nebulaCool = vec3(0.08f, 0.06f, 0.15f);    // Blue-purple edges
+  vec3 nebulaColor = mix(nebulaWarm, nebulaCool, colorGrad) * nebulaShape * 0.05f;
+  nebulaColor += vec3(0.9f, 0.85f, 0.7f) * clusters;  // Warm star cluster glow
+  
   stars += nebulaColor * horizonExtinction;
 
-  // Shooting stars — occasional bright streaks
+  // Shooting stars — thin streaks with visible tail
   {
-    // Time-based slot: each 3-second window might have a shooting star
-    float slotTime = floor(args.timeSeconds / 3.0f);
-    float slotFrac = fract(args.timeSeconds / 3.0f);
+    float slotTime = floor(args.timeSeconds / 4.0f);
+    float slotFrac = fract(args.timeSeconds / 4.0f);
     
-    // Only ~10% of slots have a shooting star
+    // ~8% of slots have a shooting star
     float slotHash = hash31(vec3(slotTime, 0.0f, 42.0f));
-    if (slotHash > 0.9f) {
-      // Random start position on the sky sphere
-      float startTheta = hash31(vec3(slotTime, 1.0f, 42.0f)) * kPi * 0.6f + 0.2f;  // avoid horizon/zenith
+    if (slotHash > 0.92f) {
+      // Random start position
+      float startTheta = hash31(vec3(slotTime, 1.0f, 42.0f)) * kPi * 0.5f + 0.3f;
       float startPhi = hash31(vec3(slotTime, 2.0f, 42.0f)) * 2.0f * kPi;
-      
-      // Direction of streak (roughly downward)
-      float streakAngle = hash31(vec3(slotTime, 3.0f, 42.0f)) * kPi - kPi * 0.5f;
       
       vec3 streakStart = vec3(
         sin(startTheta) * cos(startPhi),
@@ -1222,20 +1246,40 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
         sin(startTheta) * sin(startPhi)
       );
       
-      // Animate along streak
-      vec3 streakDir = normalize(vec3(cos(streakAngle), -0.5f, sin(streakAngle)));
-      vec3 streakPos = streakStart + streakDir * slotFrac * 0.15f;
+      // Streak direction (roughly downward, random angle)
+      float streakAng = hash31(vec3(slotTime, 3.0f, 42.0f)) * kPi;
+      vec3 streakDir = normalize(vec3(cos(streakAng) * 0.3f, -0.4f, sin(streakAng) * 0.3f));
       
-      // Distance from view direction to streak position
-      float streakDist = length(normalize(viewDir) - normalize(streakPos));
+      // Current head position
+      float streakLen = 0.04f;  // Length of visible trail
+      vec3 headPos = normalize(streakStart + streakDir * slotFrac * 0.2f);
+      vec3 tailPos = normalize(streakStart + streakDir * (slotFrac * 0.2f - streakLen));
       
-      // Bright narrow streak with tail
-      float streakBright = exp(-streakDist * streakDist * 50000.0f);
-      // Fade in and out
-      float streakFade = sin(slotFrac * kPi);
-      streakFade *= streakFade;
-      
-      stars += vec3(1.0f, 0.95f, 0.8f) * streakBright * streakFade * 5.0f;
+      // Distance from view ray to the streak line segment
+      vec3 v = normalize(viewDir);
+      vec3 segDir = headPos - tailPos;
+      float segLen = length(segDir);
+      if (segLen > 0.001f) {
+        segDir /= segLen;
+        
+        // Closest point on line segment to view direction
+        float t = dot(v - tailPos, segDir);
+        t = clamp(t, 0.0f, segLen);
+        vec3 closest = tailPos + segDir * t;
+        float dist = length(v - closest);
+        
+        // Very thin streak (star-sized)
+        float streakBright = exp(-dist * dist * 500000.0f);
+        
+        // Tail fade: bright at head, dim at tail
+        float tailFade = t / max(segLen, 0.001f);
+        tailFade = tailFade * tailFade;  // Brighter toward head
+        
+        // Overall fade in/out
+        float timeFade = sin(slotFrac * kPi);
+        
+        stars += vec3(1.0f, 0.95f, 0.85f) * streakBright * tailFade * timeFade * 3.0f;
+      }
     }
   }
 
