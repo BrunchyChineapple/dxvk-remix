@@ -846,9 +846,9 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   float galacticDist = abs(galacticLat);
   
   // Galactic density: more stars near the galactic plane
-  // Tighter core + moderate halo for a well-defined band
-  float galacticCore = exp(-galacticDist * galacticDist * 200.0f);  // Very narrow bright core
-  float galacticHalo = exp(-galacticDist * galacticDist * 40.0f);   // Moderate halo
+  // Tighter core + narrow halo for a well-defined band
+  float galacticCore = exp(-galacticDist * galacticDist * 300.0f);  // Tight bright core
+  float galacticHalo = exp(-galacticDist * galacticDist * 80.0f);   // Narrower halo
   float galacticDensity = galacticCore * 0.5f + galacticHalo * 0.25f;
   
   // Vary density along the band (denser in some regions, sparser in others)
@@ -888,15 +888,47 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
       float psf = exp(-dist * dist * 800.0f);
 
       // Star color based on temperature (hash-derived)
-      // Blue-white stars (hot), yellow stars (medium), orange-red stars (cool)
+      // In the galactic band, shift colors toward warm amber/gold core
+      // with cooler purple/blue at the edges — matching real Galactic Center
       float temp = hash31(vec3(cell, 1.0f));
       vec3 starColor;
-      if (temp > 0.7f) {
-        starColor = vec3(0.7f, 0.8f, 1.0f);   // Blue-white (O/B type)
-      } else if (temp > 0.3f) {
-        starColor = vec3(1.0f, 1.0f, 0.95f);   // White-yellow (F/G type)
+      
+      // Galactic band color gradient: warm core → cool edges
+      // galacticDist is 0 at center, increases outward
+      float bandInfluence = exp(-galacticDist * galacticDist * 120.0f);  // How deep in the band
+      
+      if (bandInfluence > 0.05f) {
+        // Inside the galactic band: warm amber/gold/pink gradient
+        // Core (bandInfluence ~1.0): warm gold/amber
+        // Mid-band: dusty rose/pink
+        // Edge (bandInfluence ~0.05): cool blue-purple
+        float coreToEdge = 1.0f - bandInfluence;  // 0 = core, 1 = edge
+        
+        if (temp > 0.6f) {
+          // Warm gold/amber stars (dominant in core)
+          vec3 coreColor = vec3(1.0f, 0.82f, 0.45f);    // Warm amber-gold
+          vec3 edgeColor = vec3(0.55f, 0.45f, 0.85f);    // Cool blue-purple
+          starColor = mix(coreColor, edgeColor, coreToEdge * coreToEdge);
+        } else if (temp > 0.25f) {
+          // Dusty rose/pink stars (mid-band)
+          vec3 coreColor = vec3(0.95f, 0.60f, 0.55f);    // Dusty rose-pink
+          vec3 edgeColor = vec3(0.50f, 0.40f, 0.75f);    // Muted purple
+          starColor = mix(coreColor, edgeColor, coreToEdge);
+        } else {
+          // Reddish-orange stars (scattered throughout)
+          vec3 coreColor = vec3(1.0f, 0.55f, 0.30f);     // Deep orange-red
+          vec3 edgeColor = vec3(0.60f, 0.50f, 0.80f);     // Lavender
+          starColor = mix(coreColor, edgeColor, coreToEdge);
+        }
       } else {
-        starColor = vec3(1.0f, 0.85f, 0.7f);   // Orange (K type)
+        // Outside the galactic band: normal star colors
+        if (temp > 0.7f) {
+          starColor = vec3(0.7f, 0.8f, 1.0f);   // Blue-white (O/B type)
+        } else if (temp > 0.3f) {
+          starColor = vec3(1.0f, 1.0f, 0.95f);   // White-yellow (F/G type)
+        } else {
+          starColor = vec3(1.0f, 0.85f, 0.7f);   // Orange (K type)
+        }
       }
 
       // Twinkling: subtle brightness variation over time
@@ -1222,8 +1254,8 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
       vec3 streakMoveDir = normalize(vec3(cos(streakAng) * 0.3f, -0.4f, sin(streakAng) * 0.3f));
       
       float streakLen = 0.05f;  // Longer tail
-      vec3 headPos = normalize(streakStart + streakMoveDir * slotFrac * 0.3f);  // Faster
-      vec3 tailPos = normalize(streakStart + streakMoveDir * (slotFrac * 0.3f - streakLen));
+      vec3 headPos = normalize(streakStart + streakMoveDir * slotFrac * 0.4f);  // Faster travel
+      vec3 tailPos = normalize(streakStart + streakMoveDir * (slotFrac * 0.4f - streakLen));
       
       vec3 v = normalize(viewDir);
       vec3 segVec = headPos - tailPos;
@@ -1235,8 +1267,8 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
         vec3 closest = tailPos + segNorm * t;
         float dist = length(v - closest);
         
-        // Star-point-sized thickness
-        float streakBright = exp(-dist * dist * 8000000.0f);
+        // Thinner streak — tighter Gaussian falloff
+        float streakBright = exp(-dist * dist * 18000000.0f);
         
         // Tail gradient: bright head fading to dim tail
         float tailFade = t / max(segLen, 0.001f);
