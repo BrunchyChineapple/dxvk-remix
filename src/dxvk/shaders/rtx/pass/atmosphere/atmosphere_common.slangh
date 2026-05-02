@@ -941,7 +941,6 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   // We compute the terminator position based on phase
   
   // Get the position on the moon disk in local coordinates
-  // Build a coordinate frame with moonDir as Z
   vec3 up = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
   vec3 moonRight = normalize(cross(up, moonDir));
   vec3 moonUp = cross(moonDir, moonRight);
@@ -951,27 +950,27 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   float diskX = dot(toView, moonRight) * normalizedAngle;
   float diskY = dot(toView, moonUp) * normalizedAngle;
   
-  // Phase terminator: lit side faces the sun direction
-  // Project sun direction onto the moon disk plane for consistent terminator
-  vec3 sunDir = normalize(args.sunDirection);
-  float sunOnDiskX = dot(sunDir, moonRight);
-  float sunOnDiskY = dot(sunDir, moonUp);
-  float sunDiskAngle = atan2(sunOnDiskY, sunOnDiskX);
+  // 3D spherical normal for realistic shading
+  float diskR = length(vec2(diskX, diskY));
+  float nz = sqrt(max(0.0f, 1.0f - diskR * diskR));  // sphere normal Z
+  vec3 moonNormal = moonRight * diskX + moonUp * diskY + moonDir * nz;
+  moonNormal = normalize(moonNormal);
   
-  // Rotate disk coordinates to align with sun direction
-  float cosA = cos(sunDiskAngle);
-  float sinA = sin(sunDiskAngle);
-  float sunAlignedX = diskX * cosA + diskY * sinA;
+  // Terminator: lit side faces away from the sun (sun is below horizon at night)
+  // Use negated sun direction as the light source direction
+  vec3 lightDir = -normalize(args.sunDirection);
+  float NdotL = dot(moonNormal, lightDir);
   
-  // Phase controls how much of the disk is lit
-  float phaseAngle = args.moonPhase * 2.0f * kPi;
-  float terminatorX = cos(phaseAngle);
+  // Soft terminator with phase modulation
+  float phaseBias = (args.moonPhase - 0.5f) * 2.0f;  // -1 to 1
+  float illumination = smoothstep(-0.2f, 0.3f, NdotL + phaseBias * 0.5f);
   
-  float illumination = smoothstep(-0.15f, 0.15f, sunAlignedX * terminatorX + 0.5f * (1.0f - abs(terminatorX)));
-  
-  // For new moon (phase near 0 or 1), almost nothing is lit
+  // For new moon (phase near 0 or 1), reduce overall brightness
   float phaseBrightness = 0.5f + 0.5f * cos(2.0f * kPi * (args.moonPhase - 0.5f));
   illumination *= phaseBrightness;
+  
+  // 3D shading: diffuse lighting from the light direction
+  float diffuse = max(NdotL * 0.5f + 0.5f, 0.15f);  // half-lambert for softer look
   
   // Moon surface: procedural craters, maria, and surface roughness
   float uvScale = 8.0f;
@@ -1042,7 +1041,7 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   vec3 moonTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * moonAirMass * 0.2f);
   
   vec3 moonRadiance = args.moonColor * surfaceColor * args.moonBrightness * illumination * 
-                       limbDarkening * surfaceDetail * moonTransmittance;
+                       limbDarkening * surfaceDetail * diffuse * moonTransmittance;
   
   return max(moonRadiance, vec3(0.0f));
 }
@@ -1079,21 +1078,21 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
   float diskX = dot(toView, masserRightDir) * normalizedAngle;
   float diskY = dot(toView, masserUpPerp) * normalizedAngle;
 
-  // Phase illumination — terminator aligned with sun direction (synced with Secunda)
-  vec3 sunDir = normalize(args.sunDirection);
-  float sunOnDiskX = dot(sunDir, masserRightDir);
-  float sunOnDiskY = dot(sunDir, masserUpPerp);
-  float sunDiskAngle = atan2(sunOnDiskY, sunOnDiskX);
+  // Phase illumination — 3D spherical shading synced with Secunda
+  float diskR = length(vec2(diskX, diskY));
+  float nz = sqrt(max(0.0f, 1.0f - diskR * diskR));
+  vec3 masserNormal = masserRightDir * diskX + masserUpPerp * diskY + masserDir * nz;
+  masserNormal = normalize(masserNormal);
   
-  float cosA = cos(sunDiskAngle);
-  float sinA = sin(sunDiskAngle);
-  float sunAlignedX = diskX * cosA + diskY * sinA;
+  vec3 lightDir = -normalize(args.sunDirection);
+  float NdotL = dot(masserNormal, lightDir);
   
-  float phaseAngle = args.masserPhase * 2.0f * kPi;
-  float terminatorX = cos(phaseAngle);
-  float illumination = smoothstep(-0.15f, 0.15f, sunAlignedX * terminatorX + 0.5f * (1.0f - abs(terminatorX)));
+  float phaseBias = (args.masserPhase - 0.5f) * 2.0f;
+  float illumination = smoothstep(-0.2f, 0.3f, NdotL + phaseBias * 0.5f);
   float phaseBrightness = 0.5f + 0.5f * cos(2.0f * kPi * (args.masserPhase - 0.5f));
   illumination *= phaseBrightness;
+  
+  float diffuse = max(NdotL * 0.5f + 0.5f, 0.15f);
 
   // Masser surface: volcanic red terrain with dark regions
   float uvScale = 6.0f;
@@ -1150,7 +1149,7 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
   vec3 masserTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * masserAirMass * 0.2f);
 
   vec3 masserRadiance = args.masserColor * surfaceColor * args.masserBrightness * illumination *
-                         limbDarkening * masserTransmittance;
+                         limbDarkening * diffuse * masserTransmittance;
 
   return max(masserRadiance, vec3(0.0f));
 }
@@ -1197,9 +1196,48 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
   
   nebulaBand *= (0.5f + 0.5f * nebulaDetail) * (0.7f + 0.3f * nebulaWisp);
   
-  // Subtle purple-blue nebula color
-  vec3 nebulaColor = vec3(0.12f, 0.08f, 0.18f) * nebulaBand * 0.015f;
+  // Subtle purple-blue nebula color — boosted for visibility
+  vec3 nebulaColor = vec3(0.15f, 0.08f, 0.25f) * nebulaBand * 0.08f;
   stars += nebulaColor * horizonExtinction;
+
+  // Shooting stars — occasional bright streaks
+  {
+    // Time-based slot: each 3-second window might have a shooting star
+    float slotTime = floor(args.timeSeconds / 3.0f);
+    float slotFrac = fract(args.timeSeconds / 3.0f);
+    
+    // Only ~10% of slots have a shooting star
+    float slotHash = hash31(vec3(slotTime, 0.0f, 42.0f));
+    if (slotHash > 0.9f) {
+      // Random start position on the sky sphere
+      float startTheta = hash31(vec3(slotTime, 1.0f, 42.0f)) * kPi * 0.6f + 0.2f;  // avoid horizon/zenith
+      float startPhi = hash31(vec3(slotTime, 2.0f, 42.0f)) * 2.0f * kPi;
+      
+      // Direction of streak (roughly downward)
+      float streakAngle = hash31(vec3(slotTime, 3.0f, 42.0f)) * kPi - kPi * 0.5f;
+      
+      vec3 streakStart = vec3(
+        sin(startTheta) * cos(startPhi),
+        cos(startTheta),
+        sin(startTheta) * sin(startPhi)
+      );
+      
+      // Animate along streak
+      vec3 streakDir = normalize(vec3(cos(streakAngle), -0.5f, sin(streakAngle)));
+      vec3 streakPos = streakStart + streakDir * slotFrac * 0.15f;
+      
+      // Distance from view direction to streak position
+      float streakDist = length(normalize(viewDir) - normalize(streakPos));
+      
+      // Bright narrow streak with tail
+      float streakBright = exp(-streakDist * streakDist * 50000.0f);
+      // Fade in and out
+      float streakFade = sin(slotFrac * kPi);
+      streakFade *= streakFade;
+      
+      stars += vec3(1.0f, 0.95f, 0.8f) * streakBright * streakFade * 5.0f;
+    }
+  }
 
   // Airglow: faint ambient glow of the night sky
   // Slightly brighter near the horizon (van Rhijn effect)
