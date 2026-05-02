@@ -846,10 +846,10 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   float galacticDist = abs(galacticLat);
   
   // Galactic density: more stars near the galactic plane
-  // Narrow core (lots of stars) + wider halo (moderate increase)
-  float galacticCore = exp(-galacticDist * galacticDist * 80.0f);   // Narrow bright core
-  float galacticHalo = exp(-galacticDist * galacticDist * 15.0f);   // Wider dim halo
-  float galacticDensity = galacticCore * 0.6f + galacticHalo * 0.3f; // Combined
+  // Tighter core + moderate halo for a well-defined band
+  float galacticCore = exp(-galacticDist * galacticDist * 200.0f);  // Very narrow bright core
+  float galacticHalo = exp(-galacticDist * galacticDist * 40.0f);   // Moderate halo
+  float galacticDensity = galacticCore * 0.5f + galacticHalo * 0.25f;
   
   // Vary density along the band (denser in some regions, sparser in others)
   float bandVariation = smoothNoise2D(vec2(phi * 3.0f + 1.5f, galacticLat * 10.0f), 210.0f);
@@ -1013,12 +1013,27 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   craterSizes[6] = 0.08f;
 
   for (int ci = 0; ci < 7; ci++) {
-    float dist = length(vec2(diskX, diskY) - craterPositions[ci]);
+    float crDist = length(vec2(diskX, diskY) - craterPositions[ci]);
     float craterRadius = craterSizes[ci];
-    float interior = 1.0f - smoothstep(craterRadius * 0.5f, craterRadius * 0.85f, dist);
-    float rim = smoothstep(craterRadius * 0.8f, craterRadius * 0.95f, dist) *
-                (1.0f - smoothstep(craterRadius * 0.95f, craterRadius * 1.2f, dist));
-    craters += interior * 0.25f - rim * 0.12f;
+    
+    // Crater bowl with directional shading
+    float bowl = 1.0f - smoothstep(craterRadius * 0.3f, craterRadius * 0.9f, crDist);
+    
+    // Shadow direction inside crater
+    vec2 toCenter = craterPositions[ci] - vec2(diskX, diskY);
+    float tcLen = length(toCenter);
+    if (tcLen > 0.001f) toCenter /= tcLen;
+    vec2 lightOnDisk = vec2(dot(lightDir, moonRight), dot(lightDir, moonUp));
+    float ldLen = length(lightOnDisk);
+    if (ldLen > 0.001f) lightOnDisk /= ldLen;
+    float craterShadow = dot(toCenter, lightOnDisk) * 0.5f + 0.5f;
+    
+    // Bright raised rim (brighter on lit side)
+    float rim = smoothstep(craterRadius * 0.75f, craterRadius * 0.9f, crDist) *
+                (1.0f - smoothstep(craterRadius * 0.9f, craterRadius * 1.15f, crDist));
+    float rimLight = (1.0f - craterShadow) * 0.5f + 0.5f;
+    
+    craters += bowl * 0.3f * craterShadow - rim * 0.15f * rimLight;
   }
 
   // Small craters — smooth noise threshold
@@ -1206,9 +1221,9 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
       float streakAng = hash31(vec3(slotTime, 3.0f, 42.0f)) * kPi;
       vec3 streakMoveDir = normalize(vec3(cos(streakAng) * 0.3f, -0.4f, sin(streakAng) * 0.3f));
       
-      float streakLen = 0.03f;
-      vec3 headPos = normalize(streakStart + streakMoveDir * slotFrac * 0.2f);
-      vec3 tailPos = normalize(streakStart + streakMoveDir * (slotFrac * 0.2f - streakLen));
+      float streakLen = 0.05f;  // Longer tail
+      vec3 headPos = normalize(streakStart + streakMoveDir * slotFrac * 0.3f);  // Faster
+      vec3 tailPos = normalize(streakStart + streakMoveDir * (slotFrac * 0.3f - streakLen));
       
       vec3 v = normalize(viewDir);
       vec3 segVec = headPos - tailPos;
@@ -1220,8 +1235,8 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
         vec3 closest = tailPos + segNorm * t;
         float dist = length(v - closest);
         
-        // Star-sized thickness (much sharper than before)
-        float streakBright = exp(-dist * dist * 3000000.0f);
+        // Star-point-sized thickness
+        float streakBright = exp(-dist * dist * 8000000.0f);
         
         // Tail gradient: bright head fading to dim tail
         float tailFade = t / max(segLen, 0.001f);
