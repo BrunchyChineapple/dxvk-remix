@@ -827,25 +827,34 @@ float fbmNoise2D(vec2 p, int octaves, float seed) {
 // Generate star brightness for a given sky direction
 // Returns star color (white-blue-orange based on temperature) and brightness
 vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
-  // Project view direction onto a high-resolution grid on the unit sphere
-  // Use multiple octaves for different star sizes
-
   vec3 totalStars = vec3(0.0f);
-
-  // Normalize direction
   vec3 dir = normalize(viewDir);
 
-  // Convert to spherical for stable grid sampling
-  float theta = acos(clamp(dir.y, -1.0f, 1.0f));  // [0, pi]
-  float phi = atan2(dir.z, dir.x);                  // [-pi, pi]
+  float theta = acos(clamp(dir.y, -1.0f, 1.0f));
+  float phi = atan2(dir.z, dir.x);
 
-  // Reduce grid density near poles to avoid convergence artifacts
-  // At the poles (theta near 0 or pi), phi changes rapidly causing
-  // grid cells to collapse into visible circles/lines
-  float poleScale = sin(theta);  // 0 at poles, 1 at equator
-  poleScale = max(poleScale, 0.15f);  // prevent complete collapse
+  // Pole compensation
+  float poleScale = sin(theta);
+  poleScale = max(poleScale, 0.15f);
 
-  // Star layer: fine grid for individual stars
+  // Galactic plane: compute distance from the galactic band
+  // Band tilted ~60° from vertical, meandering slightly
+  float galacticLat = dir.x * 0.866f + dir.y * 0.5f;
+  // Add meander to the band using noise
+  float meander = smoothNoise2D(vec2(phi * 2.0f, theta * 0.5f), 200.0f) * 0.08f;
+  galacticLat += meander;
+  float galacticDist = abs(galacticLat);
+  
+  // Galactic density: more stars near the galactic plane
+  // Narrow core (lots of stars) + wider halo (moderate increase)
+  float galacticCore = exp(-galacticDist * galacticDist * 80.0f);   // Narrow bright core
+  float galacticHalo = exp(-galacticDist * galacticDist * 15.0f);   // Wider dim halo
+  float galacticDensity = galacticCore * 0.6f + galacticHalo * 0.3f; // Combined
+  
+  // Vary density along the band (denser in some regions, sparser in others)
+  float bandVariation = smoothNoise2D(vec2(phi * 3.0f + 1.5f, galacticLat * 10.0f), 210.0f);
+  galacticDensity *= (0.5f + 0.5f * bandVariation);
+
   float gridScale = 800.0f;
   vec2 gridUV = vec2(phi * gridScale * poleScale / kPi, theta * gridScale / kPi);
   vec2 gridCell = floor(gridUV);
@@ -867,8 +876,9 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
       // Star brightness from hash (most cells have no visible star)
       float starMag = cellHash.z;
 
-      // Density threshold: only show stars above threshold
-      if (starMag < args.starDensity) continue;
+      // Density threshold: lower in the galactic band = more stars visible
+      float localThreshold = args.starDensity - galacticDensity * 0.15f;
+      if (starMag < localThreshold) continue;
 
       // Remap magnitude above threshold to brightness
       float brightness = (starMag - args.starDensity) / (1.0f - args.starDensity);
@@ -1174,50 +1184,16 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
   float viewElevation = viewDir.y;
   float horizonExtinction = smoothstep(-0.02f, 0.1f, viewElevation);
 
-  // Star field
+  // Star field (includes galactic density band — no separate nebula overlay needed)
   vec3 stars = evalStarField(viewDir, args) * horizonExtinction;
 
-  // Subtle nebula / milky way band with star density gradient
-  vec3 nebulaDir = normalize(viewDir);
-  // Galactic plane tilted ~60° from vertical, running roughly east-west
-  float galacticLat = nebulaDir.x * 0.866f + nebulaDir.y * 0.5f;
-  float galacticLon = atan2(nebulaDir.z, length(vec2(nebulaDir.x, nebulaDir.y)));
-  
-  // Narrow band with soft edges
-  float bandDist = abs(galacticLat);
-  float nebulaBand = exp(-bandDist * bandDist * 25.0f);  // Narrower Gaussian
-  
-  // Wispy structure within the band
-  float nebulaDetail = smoothNoise2D(vec2(galacticLon * 4.0f, galacticLat * 15.0f), 99.0f);
-  float nebulaWisp = smoothNoise2D(vec2(galacticLon * 10.0f + 3.7f, galacticLat * 25.0f + 1.3f), 111.0f);
-  float nebulaFine = smoothNoise2D(vec2(galacticLon * 20.0f + 7.1f, galacticLat * 40.0f + 5.9f), 123.0f);
-  
-  // Combine noise layers for wispy cloud-like structure
-  float nebulaShape = nebulaBand * (0.3f + 0.4f * nebulaDetail + 0.3f * nebulaWisp);
-  nebulaShape *= (0.7f + 0.3f * nebulaFine);  // Fine detail breaks up edges
-  
-  // Dense star clusters embedded in the band (bright spots)
-  float clusters = smoothNoise2D(vec2(galacticLon * 6.0f + 2.0f, galacticLat * 8.0f), 150.0f);
-  clusters = smoothstep(0.6f, 0.8f, clusters) * nebulaBand * 0.04f;
-  
-  // Color gradient: warm center (pinkish) to cool edges (blue-purple)
-  float colorGrad = smoothstep(0.0f, 0.5f, bandDist * 5.0f);
-  vec3 nebulaWarm = vec3(0.18f, 0.10f, 0.15f);   // Pinkish core
-  vec3 nebulaCool = vec3(0.08f, 0.06f, 0.15f);    // Blue-purple edges
-  vec3 nebulaColor = mix(nebulaWarm, nebulaCool, colorGrad) * nebulaShape * 0.05f;
-  nebulaColor += vec3(0.9f, 0.85f, 0.7f) * clusters;  // Warm star cluster glow
-  
-  stars += nebulaColor * horizonExtinction;
-
-  // Shooting stars — thin streaks with visible tail
+  // Shooting stars — thin streaks with fading tail
   {
     float slotTime = floor(args.timeSeconds / 4.0f);
     float slotFrac = fract(args.timeSeconds / 4.0f);
     
-    // ~8% of slots have a shooting star
     float slotHash = hash31(vec3(slotTime, 0.0f, 42.0f));
     if (slotHash > 0.92f) {
-      // Random start position
       float startTheta = hash31(vec3(slotTime, 1.0f, 42.0f)) * kPi * 0.5f + 0.3f;
       float startPhi = hash31(vec3(slotTime, 2.0f, 42.0f)) * 2.0f * kPi;
       
@@ -1227,39 +1203,33 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
         sin(startTheta) * sin(startPhi)
       );
       
-      // Streak direction (roughly downward, random angle)
       float streakAng = hash31(vec3(slotTime, 3.0f, 42.0f)) * kPi;
-      vec3 streakDir = normalize(vec3(cos(streakAng) * 0.3f, -0.4f, sin(streakAng) * 0.3f));
+      vec3 streakMoveDir = normalize(vec3(cos(streakAng) * 0.3f, -0.4f, sin(streakAng) * 0.3f));
       
-      // Current head position
-      float streakLen = 0.04f;  // Length of visible trail
-      vec3 headPos = normalize(streakStart + streakDir * slotFrac * 0.2f);
-      vec3 tailPos = normalize(streakStart + streakDir * (slotFrac * 0.2f - streakLen));
+      float streakLen = 0.03f;
+      vec3 headPos = normalize(streakStart + streakMoveDir * slotFrac * 0.2f);
+      vec3 tailPos = normalize(streakStart + streakMoveDir * (slotFrac * 0.2f - streakLen));
       
-      // Distance from view ray to the streak line segment
       vec3 v = normalize(viewDir);
-      vec3 segDir = headPos - tailPos;
-      float segLen = length(segDir);
+      vec3 segVec = headPos - tailPos;
+      float segLen = length(segVec);
       if (segLen > 0.001f) {
-        segDir /= segLen;
-        
-        // Closest point on line segment to view direction
-        float t = dot(v - tailPos, segDir);
+        vec3 segNorm = segVec / segLen;
+        float t = dot(v - tailPos, segNorm);
         t = clamp(t, 0.0f, segLen);
-        vec3 closest = tailPos + segDir * t;
+        vec3 closest = tailPos + segNorm * t;
         float dist = length(v - closest);
         
-        // Very thin streak (star-sized)
-        float streakBright = exp(-dist * dist * 500000.0f);
+        // Star-sized thickness (much sharper than before)
+        float streakBright = exp(-dist * dist * 3000000.0f);
         
-        // Tail fade: bright at head, dim at tail
+        // Tail gradient: bright head fading to dim tail
         float tailFade = t / max(segLen, 0.001f);
-        tailFade = tailFade * tailFade;  // Brighter toward head
+        tailFade = pow(tailFade, 1.5f);
         
-        // Overall fade in/out
         float timeFade = sin(slotFrac * kPi);
         
-        stars += vec3(1.0f, 0.95f, 0.85f) * streakBright * tailFade * timeFade * 3.0f;
+        stars += vec3(1.0f, 0.95f, 0.85f) * streakBright * tailFade * timeFade * 2.0f;
       }
     }
   }
