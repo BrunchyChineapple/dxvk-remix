@@ -951,15 +951,23 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   float diskX = dot(toView, moonRight) * normalizedAngle;
   float diskY = dot(toView, moonUp) * normalizedAngle;
   
-  // Phase terminator: the line dividing lit and unlit portions
-  // At phase 0.5 (full), everything is lit
-  // At phase 0.0 (new), nothing is lit
-  // The terminator is an ellipse whose semi-major axis rotates with phase
+  // Phase terminator: lit side faces the sun direction
+  // Project sun direction onto the moon disk plane for consistent terminator
+  vec3 sunDir = normalize(args.sunDirection);
+  float sunOnDiskX = dot(sunDir, moonRight);
+  float sunOnDiskY = dot(sunDir, moonUp);
+  float sunDiskAngle = atan2(sunOnDiskY, sunOnDiskX);
+  
+  // Rotate disk coordinates to align with sun direction
+  float cosA = cos(sunDiskAngle);
+  float sinA = sin(sunDiskAngle);
+  float sunAlignedX = diskX * cosA + diskY * sinA;
+  
+  // Phase controls how much of the disk is lit
   float phaseAngle = args.moonPhase * 2.0f * kPi;
   float terminatorX = cos(phaseAngle);
   
-  // Illumination: positive side of terminator is lit
-  float illumination = smoothstep(-0.15f, 0.15f, diskX * terminatorX + 0.5f * (1.0f - abs(terminatorX)));
+  float illumination = smoothstep(-0.15f, 0.15f, sunAlignedX * terminatorX + 0.5f * (1.0f - abs(terminatorX)));
   
   // For new moon (phase near 0 or 1), almost nothing is lit
   float phaseBrightness = 0.5f + 0.5f * cos(2.0f * kPi * (args.moonPhase - 0.5f));
@@ -1071,10 +1079,19 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
   float diskX = dot(toView, masserRightDir) * normalizedAngle;
   float diskY = dot(toView, masserUpPerp) * normalizedAngle;
 
-  // Phase illumination
+  // Phase illumination — terminator aligned with sun direction (synced with Secunda)
+  vec3 sunDir = normalize(args.sunDirection);
+  float sunOnDiskX = dot(sunDir, masserRightDir);
+  float sunOnDiskY = dot(sunDir, masserUpPerp);
+  float sunDiskAngle = atan2(sunOnDiskY, sunOnDiskX);
+  
+  float cosA = cos(sunDiskAngle);
+  float sinA = sin(sunDiskAngle);
+  float sunAlignedX = diskX * cosA + diskY * sinA;
+  
   float phaseAngle = args.masserPhase * 2.0f * kPi;
   float terminatorX = cos(phaseAngle);
-  float illumination = smoothstep(-0.15f, 0.15f, diskX * terminatorX + 0.5f * (1.0f - abs(terminatorX)));
+  float illumination = smoothstep(-0.15f, 0.15f, sunAlignedX * terminatorX + 0.5f * (1.0f - abs(terminatorX)));
   float phaseBrightness = 0.5f + 0.5f * cos(2.0f * kPi * (args.masserPhase - 0.5f));
   illumination *= phaseBrightness;
 
@@ -1119,10 +1136,10 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
   float surfaceDetail = 1.0f - volcanic - veins - masserCraters + terrain + fineDetail;
   surfaceDetail = clamp(surfaceDetail, 0.35f, 1.1f);
 
-  // Color: darker volcanic areas are deep crimson, lighter areas salmon/rust
+  // Color: darker volcanic areas are deep crimson-purple, lighter areas dusty rose
   vec3 surfaceColor = mix(
-    vec3(0.45f, 0.10f, 0.06f),   // Dark volcanic: deep crimson-brown
-    vec3(0.85f, 0.40f, 0.28f),   // Lighter terrain: salmon-rust
+    vec3(0.30f, 0.08f, 0.12f),   // Dark volcanic: deep crimson-purple
+    vec3(0.70f, 0.28f, 0.32f),   // Lighter terrain: dusty rose
     clamp(surfaceDetail, 0.0f, 1.0f)
   );
 
@@ -1154,19 +1171,35 @@ vec3 evalNightSky(vec3 viewDir, AtmosphereArgs args) {
   float nightFactor = smoothstep(kStarFadeStart, kStarFadeFull, belowHorizon);
   if (nightFactor <= 0.0f) return vec3(0.0f);
 
-  // Atmospheric extinction for stars near horizon
-  // Stars near the horizon are dimmer due to longer atmospheric path
-  float viewElevation = viewDir.y;  // Y-up: positive = above horizon
-  float horizonExtinction = 1.0f;
-  if (viewElevation < 0.15f) {
-    // Exponential extinction increase near horizon
-    float airMass = 1.0f / max(viewElevation + 0.05f, 0.01f);
-    airMass = min(airMass, 40.0f);
-    horizonExtinction = exp(-0.15f * airMass);
-  }
+  // Atmospheric extinction for stars near horizon — gentle fade only
+  float viewElevation = viewDir.y;
+  float horizonExtinction = smoothstep(-0.02f, 0.1f, viewElevation);
 
   // Star field
   vec3 stars = evalStarField(viewDir, args) * horizonExtinction;
+
+  // Nebula / Milky Way band — subtle galactic glow across the sky
+  // The band runs roughly north-south, tilted ~30 degrees
+  vec3 dir = normalize(viewDir);
+  float galacticAngle = dir.x * 0.5f + dir.y * 0.866f;  // ~30° tilt
+  float bandDist = abs(galacticAngle);
+  float nebulaBand = exp(-bandDist * bandDist * 8.0f);  // Gaussian band
+  
+  // Add noise variation to the nebula for wispy structure
+  float nebulaDetail = smoothNoise2D(vec2(
+    atan2(dir.z, dir.x) * 3.0f,
+    dir.y * 5.0f
+  ), 99.0f);
+  float nebulaWisp = smoothNoise2D(vec2(
+    atan2(dir.z, dir.x) * 8.0f + 3.7f,
+    dir.y * 12.0f + 1.3f
+  ), 111.0f);
+  
+  nebulaBand *= (0.5f + 0.5f * nebulaDetail) * (0.7f + 0.3f * nebulaWisp);
+  
+  // Subtle purple-blue nebula color
+  vec3 nebulaColor = vec3(0.12f, 0.08f, 0.18f) * nebulaBand * 0.015f;
+  stars += nebulaColor * horizonExtinction;
 
   // Airglow: faint ambient glow of the night sky
   // Slightly brighter near the horizon (van Rhijn effect)
