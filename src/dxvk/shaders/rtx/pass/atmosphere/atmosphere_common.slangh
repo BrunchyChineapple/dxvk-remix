@@ -839,9 +839,15 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   float theta = acos(clamp(dir.y, -1.0f, 1.0f));  // [0, pi]
   float phi = atan2(dir.z, dir.x);                  // [-pi, pi]
 
+  // Reduce grid density near poles to avoid convergence artifacts
+  // At the poles (theta near 0 or pi), phi changes rapidly causing
+  // grid cells to collapse into visible circles/lines
+  float poleScale = sin(theta);  // 0 at poles, 1 at equator
+  poleScale = max(poleScale, 0.15f);  // prevent complete collapse
+
   // Star layer: fine grid for individual stars
-  float gridScale = 800.0f;  // Controls star density on the sphere
-  vec2 gridUV = vec2(phi * gridScale / kPi, theta * gridScale / kPi);
+  float gridScale = 800.0f;
+  vec2 gridUV = vec2(phi * gridScale * poleScale / kPi, theta * gridScale / kPi);
   vec2 gridCell = floor(gridUV);
   vec2 gridFrac = fract(gridUV);
 
