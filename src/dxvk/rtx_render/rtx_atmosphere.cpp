@@ -99,7 +99,8 @@ void RtxAtmosphere::initialize(Rc<DxvkContext> ctx) {
   }
 
   createLutResources(ctx);
-  loadMoonTextures(ctx);
+  // Note: loadMoonTextures() is NOT called here — it's called lazily on first
+  // computeLuts() call, giving the wrapper time to send moonTextureBasePath first.
   m_initialized = true;
   m_lutsNeedRecompute = true;
 }
@@ -358,6 +359,11 @@ void RtxAtmosphere::loadMoonTextures(Rc<DxvkContext> ctx) {
 }
 
 void RtxAtmosphere::computeLuts(Rc<DxvkContext> ctx) {
+  // Lazy-load moon textures on first call (gives wrapper time to send moonTextureBasePath)
+  if (!m_moonTexturesLoaded && m_initialized) {
+    loadMoonTextures(ctx);
+  }
+
   if (!needsLutRecompute()) {
     return;
   }
