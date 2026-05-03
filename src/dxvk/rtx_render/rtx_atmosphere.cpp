@@ -25,22 +25,14 @@
 #include "rtx_options.h"
 #include "rtx_context.h"
 #include "rtx_render/rtx_shader_manager.h"
-#include "rtx_asset_data_manager.h"
-#include "rtx_texture_manager.h"
 #include <rtx_shaders/transmittance_lut.h>
 #include <rtx_shaders/multiscattering_lut.h>
 #include <rtx_shaders/sky_view_lut.h>
 #include <cmath>
 #include <fstream>
 #include <chrono>
-#include <filesystem>
 
 namespace dxvk {
-  // Verify AtmosphereArgs struct layout hasn't been accidentally reordered.
-  // New fields must always be appended at the END to preserve GPU constant buffer compatibility.
-  // If this assert fires after an intentional change, update the expected size.
-  static_assert(sizeof(AtmosphereArgs) % 16 == 0, "AtmosphereArgs size must be 16-byte aligned");
-
   // Shader definitions for atmosphere LUT generation
   namespace {
     class TransmittanceLutShader : public ManagedShader {
@@ -99,8 +91,6 @@ void RtxAtmosphere::initialize(Rc<DxvkContext> ctx) {
   }
 
   createLutResources(ctx);
-  // Note: loadMoonTextures() is NOT called here — it's called lazily on first
-  // computeLuts() call, giving the wrapper time to send moonTextureBasePath first.
   m_initialized = true;
   m_lutsNeedRecompute = true;
 }
@@ -222,12 +212,6 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.pad6 = 0.0f;
   }
 
-  // Moon texture parameters
-  args.moonTextureEnabled = m_moonTexturesLoaded ? 1.0f : 0.0f;
-  args.padTex1 = 0.0f;
-  args.padTex2 = 0.0f;
-  args.padTex3 = 0.0f;
-
   return args;
 }
 
@@ -291,79 +275,9 @@ void RtxAtmosphere::createLutResources(Rc<DxvkContext> ctx) {
     VkClearColorValue{}, // clearValue
     1 // mipLevels
   );
-
-  // Create 1x1 white placeholder for moon texture fallback
-  VkExtent3D placeholderExtent = { 1, 1, 1 };
-  auto placeholderResource = Resources::createImageResource(
-    ctx,
-    "Moon Texture Placeholder",
-    placeholderExtent,
-    VK_FORMAT_R8G8B8A8_UNORM,
-    1, // numLayers
-    VK_IMAGE_TYPE_2D,
-    VK_IMAGE_VIEW_TYPE_2D,
-    0, // imageCreateFlags
-    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, // extraUsageFlags
-    VkClearColorValue{{1.0f, 1.0f, 1.0f, 1.0f}}, // clearValue = white
-    1 // mipLevels
-  );
-  m_whitePlaceholderView = placeholderResource.view;
-  m_secundaTextureView = m_whitePlaceholderView;
-  m_masserTextureView = m_whitePlaceholderView;
-}
-
-void RtxAtmosphere::loadMoonTextures(Rc<DxvkContext> ctx) {
-  // Resolve texture paths: join base path with individual filenames
-  std::string basePath = RtxOptions::moonTextureBasePath();
-  std::string secundaFile = RtxOptions::secundaTexturePath();
-  std::string masserFile = RtxOptions::masserTexturePath();
-
-  std::string secundaPath = basePath.empty() ? secundaFile : basePath + secundaFile;
-  std::string masserPath = basePath.empty() ? masserFile : basePath + masserFile;
-
-  // Helper: load a DDS file via AssetDataManager and preload into GPU
-  auto loadMoonDDS = [&](const std::string& path, const char* moonName) -> Rc<DxvkImageView> {
-    auto assetData = AssetDataManager::get().findAsset(path);
-    if (assetData == nullptr) {
-      Logger::warn(str::format("RtxAtmosphere: ", moonName, " texture not found: ", path));
-      return nullptr;
-    }
-
-    // Use the texture manager to preload the asset (handles VkImage creation and upload)
-    auto& texManager = ctx->getCommonObjects()->getTextureManager();
-    auto managedTex = texManager.preloadTextureAsset(assetData, ColorSpace::AUTO, true);
-    if (managedTex == nullptr || managedTex->m_state == ManagedTexture::State::kFailed) {
-      Logger::err(str::format("RtxAtmosphere: Failed to load ", moonName, " texture: ", path));
-      return nullptr;
-    }
-
-    // Wait for the texture to be uploaded (it's force-loaded synchronously with forceLoad=true)
-    return managedTex->m_currentMipView;
-  };
-
-  // Load Secunda texture
-  auto secundaView = loadMoonDDS(secundaPath, "Secunda");
-  if (secundaView != nullptr) {
-    m_secundaTextureView = secundaView;
-    Logger::info(str::format("RtxAtmosphere: Loaded Secunda moon texture: ", secundaPath));
-  }
-
-  // Load Masser texture
-  auto masserView = loadMoonDDS(masserPath, "Masser");
-  if (masserView != nullptr) {
-    m_masserTextureView = masserView;
-    Logger::info(str::format("RtxAtmosphere: Loaded Masser moon texture: ", masserPath));
-  }
-
-  m_moonTexturesLoaded = (secundaView != nullptr) || (masserView != nullptr);
 }
 
 void RtxAtmosphere::computeLuts(Rc<DxvkContext> ctx) {
-  // Lazy-load moon textures on first call (gives wrapper time to send moonTextureBasePath)
-  if (!m_moonTexturesLoaded && m_initialized) {
-    loadMoonTextures(ctx);
-  }
-
   if (!needsLutRecompute()) {
     return;
   }

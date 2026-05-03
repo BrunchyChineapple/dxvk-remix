@@ -1248,7 +1248,7 @@ namespace dxvk {
     // Moon parameters (Secunda)
     RTX_OPTION("rtx.atmosphere", bool, moonEnabled, true, "Enable moon rendering in the night sky.");
     RTX_OPTION("rtx.atmosphere", float, moonAngularRadius, 4.0f, "Moon angular diameter in degrees (vanilla Secunda is ~8, Earth's moon is ~0.53).");
-    RTX_OPTION("rtx.atmosphere", float, moonBrightness, 3.0f, "Moon brightness multiplier.");
+    RTX_OPTION("rtx.atmosphere", float, moonBrightness, 4.0f, "Moon brightness multiplier.");
     RTX_OPTION("rtx.atmosphere", Vector3, moonColor, Vector3(0.85f, 0.87f, 0.92f), "Moon surface color/albedo.");
     RTX_OPTION("rtx.atmosphere", float, moonElevation, 45.0f, "Moon elevation in degrees (overridden by game sync when active).");
     RTX_OPTION("rtx.atmosphere", float, moonRotation, 90.0f, "Moon rotation/azimuth in degrees (overridden by game sync when active).");
@@ -1257,16 +1257,11 @@ namespace dxvk {
     // Masser (large red moon) parameters
     RTX_OPTION("rtx.atmosphere", bool, masserEnabled, true, "Enable Masser (large red moon) rendering.");
     RTX_OPTION("rtx.atmosphere", float, masserAngularRadius, 8.0f, "Masser angular diameter in degrees (roughly 2x Secunda).");
-    RTX_OPTION("rtx.atmosphere", float, masserBrightness, 2.5f, "Masser brightness multiplier.");
+    RTX_OPTION("rtx.atmosphere", float, masserBrightness, 3.5f, "Masser brightness multiplier.");
     RTX_OPTION("rtx.atmosphere", Vector3, masserColor, Vector3(0.65f, 0.18f, 0.22f), "Masser surface color (dark crimson-purple).");
     RTX_OPTION("rtx.atmosphere", float, masserElevation, 45.0f, "Masser elevation in degrees (overridden by game sync).");
     RTX_OPTION("rtx.atmosphere", float, masserRotation, 90.0f, "Masser rotation in degrees (overridden by game sync).");
     RTX_OPTION("rtx.atmosphere", float, masserPhase, 0.5f, "Masser phase: 0=new, 0.5=full.");
-
-    // Moon texture parameters
-    RTX_OPTION("rtx.atmosphere", std::string, secundaTexturePath, std::string("tx_secunda_full.dds"), "Filename of the Secunda moon DDS texture.");
-    RTX_OPTION("rtx.atmosphere", std::string, masserTexturePath, std::string("tx_masser_full.dds"), "Filename of the Masser moon DDS texture.");
-    RTX_OPTION("rtx.atmosphere", std::string, moonTextureBasePath, std::string(""), "Base directory for moon texture files. Set by the wrapper to Morrowind's texture directory.");
 
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");

@@ -946,33 +946,42 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   return totalStars * args.starBrightness;
 }
 
-// Compute 2D disk-space phase illumination matching vanilla Morrowind's approach.
-// Uses a vertical terminator line on the disk that moves left/right based on phase.
+// Compute 2D disk-space phase illumination matching vanilla Morrowind's crescent shape.
+// Produces a CURVED terminator (elliptical) like a real sphere shadow, not a straight line.
 // Both moons use the same mapping so shadows are always on the same side.
 // phase: 0=new (dark), 0.5=full (bright), 1.0=new again
-// diskX: horizontal position on disk [-1, 1], negative=left, positive=right
+// diskX, diskY: position on disk [-1, 1]
 // Returns illumination factor [0, 1]
-float getPhaseIllumination(float phase, float diskX) {
-  // Morrowind phases 0..7 map to our [0..1]:
-  //   0 (new)=0.0625, 1 (wax cres)=0.1875, 2 (first q)=0.3125, 3 (wax gib)=0.4375
-  //   4 (full)=0.5625, 5 (wan gib)=0.6875, 6 (third q)=0.8125, 7 (wan cres)=0.9375
+float getPhaseIllumination(float phase, float diskX, float diskY) {
+  // The terminator on a sphere projects as an ellipse on the disk.
+  // At the equator (diskY=0), the terminator is at position terminatorX.
+  // At the poles (diskY=±1), the terminator curves toward the center.
   //
-  // Terminator position: cos maps phase to where the shadow line falls on diskX.
+  // The elliptical terminator equation: x_term(y) = terminatorX * sqrt(1 - y^2)
+  // This produces the classic crescent moon shape.
+  
+  // terminatorX: where the shadow falls at the equator
   // phase 0.5 (full) -> terminatorX = -1 (everything lit)
   // phase 0.0 (new)  -> terminatorX = +1 (everything dark)
-  // phase 0.25 (first quarter) -> terminatorX = 0 (right half lit)
-  // phase 0.75 (last quarter)  -> terminatorX = 0 (left half lit)
   float terminatorX = cos(phase * 2.0f * kPi);
   
-  // Waxing (phase 0..0.5): right side is lit, shadow on left
-  // Waning (phase 0.5..1): left side is lit, shadow on right
+  // Curved terminator: the shadow boundary curves with the sphere
+  float diskR = length(vec2(diskX, diskY));
+  if (diskR > 1.0f) return 0.0f;
+  
+  // Sphere-projected terminator position at this Y coordinate
+  float sphereWidth = sqrt(max(0.0f, 1.0f - diskY * diskY));
+  float localTerminator = terminatorX * sphereWidth;
+  
+  // Waxing (phase 0..0.5): right side is lit
+  // Waning (phase 0.5..1): left side is lit
   bool waxing = (phase < 0.5f);
   
   float illum;
   if (waxing) {
-    illum = smoothstep(terminatorX - 0.05f, terminatorX + 0.05f, diskX);
+    illum = smoothstep(localTerminator - 0.03f, localTerminator + 0.03f, diskX);
   } else {
-    illum = smoothstep(terminatorX + 0.05f, terminatorX - 0.05f, diskX);
+    illum = smoothstep(localTerminator + 0.03f, localTerminator - 0.03f, diskX);
   }
   
   return illum;
@@ -1015,36 +1024,88 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.3f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
   
-  // Build stable local frame for the moon disk.
-  // Use a FIXED reference frame so the texture doesn't rotate as the moon moves.
-  // moonRight is always horizontal (in the XZ plane), moonUp is always toward world Y.
-  // This keeps the texture orientation locked regardless of moon position.
-  vec3 worldUp = vec3(0.0f, 1.0f, 0.0f);
-  vec3 moonRight = normalize(cross(worldUp, moonDir));
-  // Handle degenerate case when moon is directly overhead
-  if (length(moonRight) < 0.001f) {
-    moonRight = vec3(1.0f, 0.0f, 0.0f);
-  }
-  vec3 moonUp = normalize(cross(moonDir, moonRight));
+  // Build stable local frame for the moon disk
+  vec3 upVec = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
+  vec3 moonRight = normalize(cross(upVec, moonDir));
+  vec3 moonUp = cross(moonDir, moonRight);
   
   vec3 toView = normalize(viewDir - moonDir * cosAngle);
   float diskX = dot(toView, moonRight) * normalizedAngle;
   float diskY = dot(toView, moonUp) * normalizedAngle;
   
-  // 2D disk-space phase illumination — vanilla-style vertical terminator
-  float illumination = getPhaseIllumination(args.moonPhase, diskX);
+  // 2D disk-space phase illumination — vanilla-style curved terminator
+  float illumination = getPhaseIllumination(args.moonPhase, diskX, diskY);
   
   // Simple diffuse shading for surface detail
   float diffuse = 0.7f + 0.3f * (1.0f - normalizedAngle);
   
-  // Sample moon texture for surface albedo
-  // Map disk coordinates from [-1,1] to UV [0,1]
-  vec2 diskUV = vec2(diskX, -diskY) * 0.5f + 0.5f;  // Flip Y for texture convention
-#ifdef RAY_PIPELINE
-  vec3 surfaceAlbedo = SecundaMoonTexture.SampleLevel(samplers[0], diskUV, 0).rgb;
-#else
-  vec3 surfaceAlbedo = vec3(0.9f, 0.9f, 0.88f);  // Fallback: light grey (compute shader context)
-#endif
+  // Moon surface: procedural craters, maria, and surface roughness
+  float uvScale = 8.0f;
+  vec2 moonUV = vec2(diskX, diskY) * uvScale;
+
+  // Maria (dark basaltic plains) — smooth multi-octave noise
+  float maria = fbmNoise2D(moonUV * 0.4f + vec2(3.7f, 1.2f), 4, 10.0f);
+  maria = smoothstep(0.25f, 0.55f, maria);
+
+  // Highland base brightness
+  float highland = 1.0f - maria * 0.5f;
+
+  // Large craters — fixed positions with dark interiors and bright rims
+  float craters = 0.0f;
+  vec2 craterPositions[7];
+  craterPositions[0] = vec2(-0.25f, 0.3f);
+  craterPositions[1] = vec2(0.35f, -0.15f);
+  craterPositions[2] = vec2(-0.1f, -0.35f);
+  craterPositions[3] = vec2(0.2f, 0.25f);
+  craterPositions[4] = vec2(-0.3f, -0.1f);
+  craterPositions[5] = vec2(0.15f, -0.3f);
+  craterPositions[6] = vec2(-0.35f, 0.15f);
+  float craterSizes[7];
+  craterSizes[0] = 0.12f;
+  craterSizes[1] = 0.09f;
+  craterSizes[2] = 0.15f;
+  craterSizes[3] = 0.07f;
+  craterSizes[4] = 0.10f;
+  craterSizes[5] = 0.06f;
+  craterSizes[6] = 0.08f;
+
+  for (int ci = 0; ci < 7; ci++) {
+    float crDist = length(vec2(diskX, diskY) - craterPositions[ci]);
+    float craterRadius = craterSizes[ci];
+    
+    // Crater bowl
+    float bowl = 1.0f - smoothstep(craterRadius * 0.3f, craterRadius * 0.9f, crDist);
+    
+    // Simple crater shading based on disk position (phase-independent)
+    float craterShadow = 0.5f;
+    
+    // Bright raised rim
+    float rim = smoothstep(craterRadius * 0.75f, craterRadius * 0.9f, crDist) *
+                (1.0f - smoothstep(craterRadius * 0.9f, craterRadius * 1.15f, crDist));
+    
+    craters += bowl * 0.3f * craterShadow - rim * 0.1f;
+  }
+
+  // Small craters — smooth noise threshold
+  float smallCraterNoise = fbmNoise2D(moonUV * 2.5f + vec2(7.3f, 2.1f), 3, 20.0f);
+  float smallCraters = smoothstep(0.62f, 0.72f, smallCraterNoise) * 0.2f;
+
+  // Surface roughness — fine detail
+  float roughness = fbmNoise2D(moonUV * 4.0f + vec2(11.1f, 5.5f), 2, 30.0f) * 0.15f;
+
+  // Streaks/rays from impacts
+  float rays = fbmNoise2D(moonUV * 1.5f + vec2(2.3f, 8.7f), 2, 40.0f);
+  rays = smoothstep(0.5f, 0.65f, rays) * 0.12f;
+
+  float surfaceDetail = highland - craters - smallCraters + roughness + rays;
+
+  // Color: maria are warm grey-brown, highlands cool light grey
+  vec3 surfaceColor = mix(
+    vec3(0.78f, 0.76f, 0.72f),  // Maria: warm grey-brown
+    vec3(0.95f, 0.94f, 0.92f),  // Highlands: cool light grey
+    1.0f - maria
+  );
+  surfaceDetail = clamp(surfaceDetail, 0.3f, 1.15f);
   
   // Atmospheric transmittance — reduced Rayleigh to keep moon white/silver
   float moonElevation = moonDir.y;
@@ -1052,14 +1113,12 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   moonAirMass = min(moonAirMass, 10.0f);
   vec3 moonTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * moonAirMass * 0.2f);
   
-  // Lit side: texture albedo with limb darkening and atmospheric transmittance
-  // Note: moonColor tint is NOT applied when using textures — the DDS already has correct colors.
-  // moonBrightness still controls overall intensity.
-  vec3 litRadiance = surfaceAlbedo * args.moonBrightness * 
-                      limbDarkening * diffuse * moonTransmittance;
+  // Lit side: full surface detail and color
+  vec3 litRadiance = args.moonColor * surfaceColor * args.moonBrightness * 
+                      limbDarkening * surfaceDetail * diffuse * moonTransmittance;
   
   // Dark side: very dark but not zero (subtle ambient for surface visibility)
-  vec3 darkRadiance = surfaceAlbedo * 0.005f * limbDarkening;
+  vec3 darkRadiance = surfaceColor * 0.005f * limbDarkening;
   
   // Blend between lit and dark using the phase illumination
   vec3 moonRadiance = mix(darkRadiance, litRadiance, illumination);
@@ -1099,33 +1158,68 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
 
-  // Build stable local frame — same approach as Secunda.
-  // Fixed reference frame so texture doesn't rotate as moon moves.
-  vec3 worldUp = vec3(0.0f, 1.0f, 0.0f);
-  vec3 masserRightDir = normalize(cross(worldUp, masserDir));
-  if (length(masserRightDir) < 0.001f) {
-    masserRightDir = vec3(1.0f, 0.0f, 0.0f);
-  }
-  vec3 masserUpPerp = normalize(cross(masserDir, masserRightDir));
+  // Build stable local frame
+  vec3 masserUpDir = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
+  vec3 masserRightDir = normalize(cross(masserUpDir, masserDir));
+  vec3 masserUpPerp = cross(masserDir, masserRightDir);
 
   vec3 toView = normalize(viewDir - masserDir * cosAngle);
   float diskX = dot(toView, masserRightDir) * normalizedAngle;
   float diskY = dot(toView, masserUpPerp) * normalizedAngle;
 
-  // 2D disk-space phase illumination — same approach as Secunda
-  float illumination = getPhaseIllumination(args.masserPhase, diskX);
+  // 2D disk-space phase illumination — same curved approach as Secunda
+  float illumination = getPhaseIllumination(args.masserPhase, diskX, diskY);
   
   // Simple diffuse shading for surface detail
   float diffuse = 0.7f + 0.3f * (1.0f - normalizedAngle);
 
-  // Sample Masser texture for surface albedo
-  // Map disk coordinates from [-1,1] to UV [0,1]
-  vec2 diskUV = vec2(diskX, -diskY) * 0.5f + 0.5f;  // Flip Y for texture convention
-#ifdef RAY_PIPELINE
-  vec3 surfaceAlbedo = MasserMoonTexture.SampleLevel(samplers[0], diskUV, 0).rgb;
-#else
-  vec3 surfaceAlbedo = vec3(0.5f, 0.15f, 0.18f);  // Fallback: dark red (compute shader context)
-#endif
+  // Masser surface: volcanic red terrain with dark regions
+  float uvScale = 6.0f;
+  vec2 masserUV = vec2(diskX, diskY) * uvScale;
+
+  // Large dark volcanic basins — smooth FBM
+  float volcanic = fbmNoise2D(masserUV * 0.5f + vec2(5.1f, 3.3f), 4, 50.0f);
+  volcanic = smoothstep(0.2f, 0.55f, volcanic) * 0.45f;
+
+  // Surface roughness — medium scale terrain
+  float terrain = fbmNoise2D(masserUV * 1.2f + vec2(11.0f, 7.0f), 3, 60.0f) * 0.2f;
+
+  // Dark veins/canyons
+  float veins = fbmNoise2D(masserUV * 2.0f + vec2(7.0f, 3.0f), 3, 70.0f);
+  veins = smoothstep(0.55f, 0.68f, veins) * 0.25f;
+
+  // Fine surface texture
+  float fineDetail = fbmNoise2D(masserUV * 3.5f + vec2(13.0f, 9.0f), 2, 80.0f) * 0.08f;
+
+  // Large impact craters on Masser
+  float masserCraters = 0.0f;
+  vec2 mCraterPos[4];
+  mCraterPos[0] = vec2(-0.2f, -0.25f);
+  mCraterPos[1] = vec2(0.25f, 0.15f);
+  mCraterPos[2] = vec2(-0.15f, 0.3f);
+  mCraterPos[3] = vec2(0.3f, -0.2f);
+  float mCraterSz[4];
+  mCraterSz[0] = 0.15f;
+  mCraterSz[1] = 0.12f;
+  mCraterSz[2] = 0.10f;
+  mCraterSz[3] = 0.08f;
+
+  for (int mci = 0; mci < 4; mci++) {
+    float dist = length(vec2(diskX, diskY) - mCraterPos[mci]);
+    float cr = mCraterSz[mci];
+    float interior = 1.0f - smoothstep(cr * 0.5f, cr * 0.85f, dist);
+    masserCraters += interior * 0.2f;
+  }
+
+  float surfaceDetail = 1.0f - volcanic - veins - masserCraters + terrain + fineDetail;
+  surfaceDetail = clamp(surfaceDetail, 0.35f, 1.1f);
+
+  // Color: darker volcanic areas are deep crimson-purple, lighter areas dusty rose
+  vec3 surfaceColor = mix(
+    vec3(0.30f, 0.08f, 0.12f),   // Dark volcanic: deep crimson-purple
+    vec3(0.70f, 0.28f, 0.32f),   // Lighter terrain: dusty rose
+    clamp(surfaceDetail, 0.0f, 1.0f)
+  );
 
   // Atmospheric transmittance
   float masserElevation = masserDir.y;
@@ -1133,13 +1227,12 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   masserAirMass = min(masserAirMass, 10.0f);
   vec3 masserTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * masserAirMass * 0.2f);
 
-  // Lit side: texture albedo with limb darkening and atmospheric transmittance
-  // Note: masserColor tint is NOT applied when using textures — the DDS already has correct colors.
-  vec3 litRadiance = surfaceAlbedo * args.masserBrightness *
+  // Lit side: full surface detail and color
+  vec3 litRadiance = args.masserColor * surfaceColor * args.masserBrightness *
                       limbDarkening * diffuse * masserTransmittance;
   
   // Dark side: very dark (disk coverage handles opacity)
-  vec3 darkRadiance = surfaceAlbedo * 0.005f * limbDarkening;
+  vec3 darkRadiance = surfaceColor * 0.005f * limbDarkening;
   
   // Blend between lit and dark using the phase illumination
   vec3 masserRadiance = mix(darkRadiance, litRadiance, illumination);
