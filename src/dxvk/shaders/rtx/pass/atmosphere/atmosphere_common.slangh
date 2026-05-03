@@ -946,6 +946,26 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   return totalStars * args.starBrightness;
 }
 
+// Compute a fixed phase light direction from phase value.
+// This direction is constant for a given phase and does NOT depend on the
+// sun's current position, so the terminator stays stable all night long.
+// phase: 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter
+// moonDir: direction to the moon (used to build a stable local frame)
+// moonRight, moonUp: local disk axes (output from caller)
+vec3 getPhaseLightDir(float phase, vec3 moonDir, vec3 moonRight, vec3 moonUp) {
+  // Map phase [0,1] to an angle around the moon.
+  // At phase 0.5 (full), light comes from behind the viewer (toward the moon).
+  // At phase 0.0 (new), light comes from in front (same side as viewer, so moon is dark).
+  // The angle sweeps the light source around the moon's equator in the disk plane.
+  float phaseAngle = (phase - 0.5f) * 2.0f * kPi;  // -π at new, 0 at full, +π at new again
+  
+  // Light direction in the moon's local frame:
+  // At full moon (phaseAngle=0): light comes from behind moon = +moonDir
+  // The light sweeps left/right as phase changes, creating the terminator
+  vec3 lightDir = moonDir * cos(phaseAngle) + moonRight * sin(phaseAngle);
+  return normalize(lightDir);
+}
+
 // Render moon disk with phase
 vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   if (args.moonEnabled < 0.5f) return vec3(0.0f);
@@ -977,12 +997,7 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   float limbDarkening = 1.0f - 0.3f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
   
-  // Moon phase illumination
-  // The phase determines what fraction of the visible disk is lit
-  // phase 0.0 = new moon (dark), 0.5 = full moon (fully lit)
-  // We compute the terminator position based on phase
-  
-  // Get the position on the moon disk in local coordinates
+  // Build stable local frame for the moon disk
   vec3 up = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
   vec3 moonRight = normalize(cross(up, moonDir));
   vec3 moonUp = cross(moonDir, moonRight);
@@ -994,25 +1009,21 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   
   // 3D spherical normal for realistic shading
   float diskR = length(vec2(diskX, diskY));
-  float nz = sqrt(max(0.0f, 1.0f - diskR * diskR));  // sphere normal Z
+  float nz = sqrt(max(0.0f, 1.0f - diskR * diskR));
   vec3 moonNormal = moonRight * diskX + moonUp * diskY + moonDir * nz;
   moonNormal = normalize(moonNormal);
   
-  // Terminator: lit side faces away from the sun (sun is below horizon at night)
-  // Use negated sun direction as the light source direction
-  vec3 lightDir = -normalize(args.sunDirection);
+  // Phase-based terminator: use a FIXED light direction derived from the phase value.
+  // This does NOT depend on the sun's current position, so the terminator stays
+  // rock-stable all night long — matching vanilla Morrowind and real-world behavior.
+  vec3 lightDir = getPhaseLightDir(args.moonPhase, moonDir, moonRight, moonUp);
   float NdotL = dot(moonNormal, lightDir);
   
-  // Soft terminator with phase modulation
-  float phaseBias = (args.moonPhase - 0.5f) * 2.0f;  // -1 to 1
-  float illumination = smoothstep(-0.2f, 0.3f, NdotL + phaseBias * 0.5f);
+  // Illumination: smooth terminator from lit to dark side
+  float illumination = smoothstep(-0.15f, 0.2f, NdotL);
   
-  // For new moon (phase near 0 or 1), reduce overall brightness
-  float phaseBrightness = 0.5f + 0.5f * cos(2.0f * kPi * (args.moonPhase - 0.5f));
-  illumination *= phaseBrightness;
-  
-  // 3D shading: diffuse lighting from the light direction
-  float diffuse = max(NdotL * 0.5f + 0.5f, 0.15f);  // half-lambert for softer look
+  // 3D shading: half-lambert diffuse on the lit side for surface detail
+  float diffuse = max(NdotL * 0.5f + 0.5f, 0.15f);
   
   // Moon surface: procedural craters, maria, and surface roughness
   float uvScale = 8.0f;
@@ -1051,7 +1062,7 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
     // Crater bowl with directional shading
     float bowl = 1.0f - smoothstep(craterRadius * 0.3f, craterRadius * 0.9f, crDist);
     
-    // Shadow direction inside crater
+    // Shadow direction inside crater (uses phase light direction for consistency)
     vec2 toCenter = craterPositions[ci] - vec2(diskX, diskY);
     float tcLen = length(toCenter);
     if (tcLen > 0.001f) toCenter /= tcLen;
@@ -1089,16 +1100,21 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   );
   surfaceDetail = clamp(surfaceDetail, 0.3f, 1.15f);
   
-  // Atmospheric transmittance to the moon — use reduced effect to keep moon
-  // looking white/silver rather than deep orange from Rayleigh scattering
+  // Atmospheric transmittance — reduced Rayleigh to keep moon white/silver
   float moonElevation = moonDir.y;
   float moonAirMass = 1.0f / max(abs(moonElevation) + 0.05f, 0.05f);
-  moonAirMass = min(moonAirMass, 10.0f);  // Limit air mass to prevent extreme reddening
-  // Use only 20% of the Rayleigh extinction to keep the moon mostly white
+  moonAirMass = min(moonAirMass, 10.0f);
   vec3 moonTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * moonAirMass * 0.2f);
   
-  vec3 moonRadiance = args.moonColor * surfaceColor * args.moonBrightness * illumination * 
-                       limbDarkening * surfaceDetail * diffuse * moonTransmittance;
+  // Lit side: full surface detail and color
+  vec3 litRadiance = args.moonColor * surfaceColor * args.moonBrightness * 
+                      limbDarkening * surfaceDetail * diffuse * moonTransmittance;
+  
+  // Dark side: opaque near-black (very faint ambient so it's not pure black)
+  vec3 darkRadiance = args.moonColor * surfaceColor * 0.02f * limbDarkening * moonTransmittance;
+  
+  // Blend between lit and dark using the phase illumination
+  vec3 moonRadiance = mix(darkRadiance, litRadiance, illumination);
   
   return max(moonRadiance, vec3(0.0f));
 }
@@ -1127,6 +1143,7 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
   float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
 
+  // Build stable local frame
   vec3 masserUpDir = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
   vec3 masserRightDir = normalize(cross(masserUpDir, masserDir));
   vec3 masserUpPerp = cross(masserDir, masserRightDir);
@@ -1135,20 +1152,20 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
   float diskX = dot(toView, masserRightDir) * normalizedAngle;
   float diskY = dot(toView, masserUpPerp) * normalizedAngle;
 
-  // Phase illumination — 3D spherical shading synced with Secunda
+  // 3D spherical normal
   float diskR = length(vec2(diskX, diskY));
   float nz = sqrt(max(0.0f, 1.0f - diskR * diskR));
   vec3 masserNormal = masserRightDir * diskX + masserUpPerp * diskY + masserDir * nz;
   masserNormal = normalize(masserNormal);
   
-  vec3 lightDir = -normalize(args.sunDirection);
+  // Phase-based terminator: fixed light direction from phase value (stable all night)
+  vec3 lightDir = getPhaseLightDir(args.masserPhase, masserDir, masserRightDir, masserUpPerp);
   float NdotL = dot(masserNormal, lightDir);
   
-  float phaseBias = (args.masserPhase - 0.5f) * 2.0f;
-  float illumination = smoothstep(-0.2f, 0.3f, NdotL + phaseBias * 0.5f);
-  float phaseBrightness = 0.5f + 0.5f * cos(2.0f * kPi * (args.masserPhase - 0.5f));
-  illumination *= phaseBrightness;
+  // Illumination: smooth terminator
+  float illumination = smoothstep(-0.15f, 0.2f, NdotL);
   
+  // 3D shading: half-lambert diffuse
   float diffuse = max(NdotL * 0.5f + 0.5f, 0.15f);
 
   // Masser surface: volcanic red terrain with dark regions
@@ -1205,8 +1222,15 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
   masserAirMass = min(masserAirMass, 10.0f);
   vec3 masserTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * masserAirMass * 0.2f);
 
-  vec3 masserRadiance = args.masserColor * surfaceColor * args.masserBrightness * illumination *
-                         limbDarkening * diffuse * masserTransmittance;
+  // Lit side: full surface detail and color
+  vec3 litRadiance = args.masserColor * surfaceColor * args.masserBrightness *
+                      limbDarkening * diffuse * masserTransmittance;
+  
+  // Dark side: opaque near-black (very faint ambient)
+  vec3 darkRadiance = args.masserColor * surfaceColor * 0.02f * limbDarkening * masserTransmittance;
+  
+  // Blend between lit and dark using the phase illumination
+  vec3 masserRadiance = mix(darkRadiance, litRadiance, illumination);
 
   return max(masserRadiance, vec3(0.0f));
 }
