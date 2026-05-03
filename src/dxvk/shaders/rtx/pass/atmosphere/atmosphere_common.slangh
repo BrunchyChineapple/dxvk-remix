@@ -946,33 +946,47 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   return totalStars * args.starBrightness;
 }
 
-// Compute a fixed phase light direction in WORLD SPACE.
-// Both moons use this same function so their shadows are cast from the
-// same direction (Nirn blocking the sun), ensuring consistent terminator sides.
-// phase: 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter
-// Returns a world-space light direction that is constant for a given phase.
-vec3 getPhaseLightDirWorld(float phase) {
-  // Map phase [0,1] to an angle that sweeps the light source around.
-  // At phase 0.5 (full): light comes from behind the viewer = +Z in Y-up space
-  // At phase 0.0 (new): light comes from in front = -Z (moon fully dark)
-  // The sweep is in the horizontal (XZ) plane so the terminator is vertical.
-  float phaseAngle = (phase - 0.5f) * 2.0f * kPi;
+// Compute 2D disk-space phase illumination matching vanilla Morrowind's approach.
+// Uses a vertical terminator line on the disk that moves left/right based on phase.
+// Both moons use the same mapping so shadows are always on the same side.
+// phase: 0=new (dark), 0.5=full (bright), 1.0=new again
+// diskX: horizontal position on disk [-1, 1], negative=left, positive=right
+// Returns illumination factor [0, 1]
+float getPhaseIllumination(float phase, float diskX) {
+  // Morrowind phases 0..7 map to our [0..1]:
+  //   0 (new)=0.0625, 1 (wax cres)=0.1875, 2 (first q)=0.3125, 3 (wax gib)=0.4375
+  //   4 (full)=0.5625, 5 (wan gib)=0.6875, 6 (third q)=0.8125, 7 (wan cres)=0.9375
+  //
+  // Terminator position: cos maps phase to where the shadow line falls on diskX.
+  // phase 0.5 (full) -> terminatorX = -1 (everything lit)
+  // phase 0.0 (new)  -> terminatorX = +1 (everything dark)
+  // phase 0.25 (first quarter) -> terminatorX = 0 (right half lit)
+  // phase 0.75 (last quarter)  -> terminatorX = 0 (left half lit)
+  float terminatorX = cos(phase * 2.0f * kPi);
   
-  // World-space light direction: sweeps in the XZ plane
-  // Full moon: light from +Z (behind viewer toward moon)
-  // First quarter (0.25): light from +X (right side lit)
-  // Last quarter (0.75): light from -X (left side lit)
-  vec3 lightDir = vec3(sin(phaseAngle), 0.0f, cos(phaseAngle));
-  return normalize(lightDir);
+  // Waxing (phase 0..0.5): right side is lit, shadow on left
+  // Waning (phase 0.5..1): left side is lit, shadow on right
+  bool waxing = (phase < 0.5f);
+  
+  float illum;
+  if (waxing) {
+    illum = smoothstep(terminatorX - 0.05f, terminatorX + 0.05f, diskX);
+  } else {
+    illum = smoothstep(terminatorX + 0.05f, terminatorX - 0.05f, diskX);
+  }
+  
+  return illum;
 }
 
-// Render moon disk with phase
-vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
+// Render moon disk with phase.
+// diskCoverage: output [0,1] indicating how much this pixel is covered by the moon disk.
+// Used by evalSkyRadiance to REPLACE (not add to) the background behind the moon.
+vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
+  diskCoverage = 0.0f;
   if (args.moonEnabled < 0.5f) return vec3(0.0f);
   
   vec3 moonDir = normalize(args.moonDirection);
   
-  // If moonDirection is zero (not set), use a default high in the sky
   if (dot(moonDir, moonDir) < 0.5f) {
     moonDir = normalize(vec3(0.5f, 0.7f, 0.5f));
   }
@@ -983,47 +997,38 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   float cosAngle = dot(viewDir, moonDir);
   float moonCosRadius = cos(args.moonAngularRadius);
   
-  // Ensure angular radius is reasonable (at least 0.5 degrees)
   if (args.moonAngularRadius < 0.001f) {
     moonCosRadius = cos(0.5f * kPi / 180.0f);
   }
   
   if (cosAngle < moonCosRadius) return vec3(0.0f);
   
-  // We're looking at the moon disk
+  // Inside the moon disk — fully opaque, blocks stars behind it
+  diskCoverage = 1.0f;
+  
   float normalizedAngle = acos(clamp(cosAngle, -1.0f, 1.0f)) / args.moonAngularRadius;
   
-  // Limb darkening (subtle for the moon)
+  // Soft edge at disk boundary to avoid hard aliased circle
+  float edgeSoftness = smoothstep(1.0f, 0.97f, normalizedAngle);
+  diskCoverage *= edgeSoftness;
+  
   float limbDarkening = 1.0f - 0.3f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
   
   // Build stable local frame for the moon disk
-  vec3 up = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
-  vec3 moonRight = normalize(cross(up, moonDir));
+  vec3 upVec = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
+  vec3 moonRight = normalize(cross(upVec, moonDir));
   vec3 moonUp = cross(moonDir, moonRight);
   
-  // Project view direction onto moon disk plane
   vec3 toView = normalize(viewDir - moonDir * cosAngle);
   float diskX = dot(toView, moonRight) * normalizedAngle;
   float diskY = dot(toView, moonUp) * normalizedAngle;
   
-  // 3D spherical normal for realistic shading
-  float diskR = length(vec2(diskX, diskY));
-  float nz = sqrt(max(0.0f, 1.0f - diskR * diskR));
-  vec3 moonNormal = moonRight * diskX + moonUp * diskY + moonDir * nz;
-  moonNormal = normalize(moonNormal);
+  // 2D disk-space phase illumination — vanilla-style vertical terminator
+  float illumination = getPhaseIllumination(args.moonPhase, diskX);
   
-  // Phase-based terminator: use a FIXED world-space light direction derived
-  // from the phase value. Both moons share the same light direction so their
-  // shadows are consistent (Nirn casts shadow from the same side on both).
-  vec3 lightDir = getPhaseLightDirWorld(args.moonPhase);
-  float NdotL = dot(moonNormal, lightDir);
-  
-  // Illumination: tight terminator transition for a crisp shadow edge
-  float illumination = smoothstep(-0.05f, 0.1f, NdotL);
-  
-  // 3D shading: half-lambert diffuse on the lit side for surface detail
-  float diffuse = max(NdotL * 0.5f + 0.5f, 0.2f);
+  // Simple diffuse shading for surface detail
+  float diffuse = 0.7f + 0.3f * (1.0f - normalizedAngle);
   
   // Moon surface: procedural craters, maria, and surface roughness
   float uvScale = 8.0f;
@@ -1059,24 +1064,17 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
     float crDist = length(vec2(diskX, diskY) - craterPositions[ci]);
     float craterRadius = craterSizes[ci];
     
-    // Crater bowl with directional shading
+    // Crater bowl
     float bowl = 1.0f - smoothstep(craterRadius * 0.3f, craterRadius * 0.9f, crDist);
     
-    // Shadow direction inside crater (uses phase light direction for consistency)
-    vec2 toCenter = craterPositions[ci] - vec2(diskX, diskY);
-    float tcLen = length(toCenter);
-    if (tcLen > 0.001f) toCenter /= tcLen;
-    vec2 lightOnDisk = vec2(dot(lightDir, moonRight), dot(lightDir, moonUp));
-    float ldLen = length(lightOnDisk);
-    if (ldLen > 0.001f) lightOnDisk /= ldLen;
-    float craterShadow = dot(toCenter, lightOnDisk) * 0.5f + 0.5f;
+    // Simple crater shading based on disk position (phase-independent)
+    float craterShadow = 0.5f;
     
-    // Bright raised rim (brighter on lit side)
+    // Bright raised rim
     float rim = smoothstep(craterRadius * 0.75f, craterRadius * 0.9f, crDist) *
                 (1.0f - smoothstep(craterRadius * 0.9f, craterRadius * 1.15f, crDist));
-    float rimLight = (1.0f - craterShadow) * 0.5f + 0.5f;
     
-    craters += bowl * 0.3f * craterShadow - rim * 0.15f * rimLight;
+    craters += bowl * 0.3f * craterShadow - rim * 0.1f;
   }
 
   // Small craters — smooth noise threshold
@@ -1110,8 +1108,8 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
   vec3 litRadiance = args.moonColor * surfaceColor * args.moonBrightness * 
                       limbDarkening * surfaceDetail * diffuse * moonTransmittance;
   
-  // Dark side: opaque dark surface (faint ambient so it reads as solid, not transparent)
-  vec3 darkRadiance = args.moonColor * surfaceColor * 0.08f * limbDarkening * moonTransmittance;
+  // Dark side: very dark but not zero (subtle ambient for surface visibility)
+  vec3 darkRadiance = surfaceColor * 0.005f * limbDarkening;
   
   // Blend between lit and dark using the phase illumination
   vec3 moonRadiance = mix(darkRadiance, litRadiance, illumination);
@@ -1120,7 +1118,8 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args) {
 }
 
 // Render Masser (large red moon) disk
-vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
+vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
+  diskCoverage = 0.0f;
   if (args.masserEnabled < 0.5f) return vec3(0.0f);
 
   vec3 masserDir = normalize(args.masserDirection);
@@ -1138,7 +1137,14 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
 
   if (cosAngle < masserCosRadius) return vec3(0.0f);
 
+  // Inside the moon disk — fully opaque
+  diskCoverage = 1.0f;
+
   float normalizedAngle = acos(clamp(cosAngle, -1.0f, 1.0f)) / args.masserAngularRadius;
+
+  // Soft edge at disk boundary
+  float edgeSoftness = smoothstep(1.0f, 0.97f, normalizedAngle);
+  diskCoverage *= edgeSoftness;
 
   float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
@@ -1152,22 +1158,11 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
   float diskX = dot(toView, masserRightDir) * normalizedAngle;
   float diskY = dot(toView, masserUpPerp) * normalizedAngle;
 
-  // 3D spherical normal
-  float diskR = length(vec2(diskX, diskY));
-  float nz = sqrt(max(0.0f, 1.0f - diskR * diskR));
-  vec3 masserNormal = masserRightDir * diskX + masserUpPerp * diskY + masserDir * nz;
-  masserNormal = normalize(masserNormal);
+  // 2D disk-space phase illumination — same approach as Secunda
+  float illumination = getPhaseIllumination(args.masserPhase, diskX);
   
-  // Phase-based terminator: same world-space light direction as Secunda
-  // so both moons have shadows on the same side (Nirn's shadow is consistent)
-  vec3 lightDir = getPhaseLightDirWorld(args.masserPhase);
-  float NdotL = dot(masserNormal, lightDir);
-  
-  // Illumination: tight terminator transition
-  float illumination = smoothstep(-0.05f, 0.1f, NdotL);
-  
-  // 3D shading: half-lambert diffuse
-  float diffuse = max(NdotL * 0.5f + 0.5f, 0.2f);
+  // Simple diffuse shading for surface detail
+  float diffuse = 0.7f + 0.3f * (1.0f - normalizedAngle);
 
   // Masser surface: volcanic red terrain with dark regions
   float uvScale = 6.0f;
@@ -1227,8 +1222,8 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args) {
   vec3 litRadiance = args.masserColor * surfaceColor * args.masserBrightness *
                       limbDarkening * diffuse * masserTransmittance;
   
-  // Dark side: opaque dark surface (faint ambient so it reads as solid)
-  vec3 darkRadiance = args.masserColor * surfaceColor * 0.08f * limbDarkening * masserTransmittance;
+  // Dark side: very dark (disk coverage handles opacity)
+  vec3 darkRadiance = surfaceColor * 0.005f * limbDarkening;
   
   // Blend between lit and dark using the phase illumination
   vec3 masserRadiance = mix(darkRadiance, litRadiance, illumination);
@@ -1342,16 +1337,25 @@ vec3 evalSkyRadiance(
   // During twilight and night, stars and airglow fade in.
   radiance += evalNightSky(viewDirYUp, args);
   
-  // Moons: only visible at night, fade in during twilight
+  // Moons: only visible at night, fade in during twilight.
+  // Moons REPLACE the background (stars/atmosphere) where they cover the sky,
+  // rather than adding to it. This makes the dark side truly opaque.
   float moonFade = smoothstep(0.02f, -0.05f, args.sunDirection.y);
   if (moonFade > 0.001f) {
+    float masserCoverage = 0.0f;
+    float secundaCoverage = 0.0f;
+    
     // Masser renders first (behind Secunda since it's larger and farther)
-    vec3 masserContrib = evalMasserDisk(viewDirYUp, args);
-    radiance += masserContrib * moonFade;
+    vec3 masserContrib = evalMasserDisk(viewDirYUp, args, masserCoverage);
+    masserCoverage *= moonFade;
+    // Replace background with moon where disk covers
+    radiance = mix(radiance, masserContrib, masserCoverage);
 
     // Secunda renders on top (closer, smaller moon)
-    vec3 moonContrib = evalMoonDisk(viewDirYUp, args);
-    radiance += moonContrib * moonFade;
+    vec3 moonContrib = evalMoonDisk(viewDirYUp, args, secundaCoverage);
+    secundaCoverage *= moonFade;
+    // Replace background (including Masser if overlapping) with Secunda
+    radiance = mix(radiance, moonContrib, secundaCoverage);
   }
   
   return max(radiance, vec3(0.0f));
