@@ -1007,9 +1007,17 @@ float getPhaseIllumination(float phase, float diskX, float diskY) {
   float sphereWidth = sqrt(max(0.0f, 1.0f - diskY * diskY));
   float localTerminator = terminatorX * sphereWidth;
   
-  // With sun-oriented diskX (positive = toward sun), the lit side is always
-  // at diskX > localTerminator. No waxing/waning flip needed.
-  float illum = smoothstep(localTerminator - 0.03f, localTerminator + 0.03f, diskX);
+  // With a fixed world-up frame, diskX positive is always the same side.
+  // Waxing (phase 0..0.5): right side lit first, growing
+  // Waning (phase 0.5..1): left side lit, shrinking
+  bool waxing = (phase < 0.5f);
+  
+  float illum;
+  if (waxing) {
+    illum = smoothstep(localTerminator - 0.03f, localTerminator + 0.03f, diskX);
+  } else {
+    illum = smoothstep(localTerminator + 0.03f, localTerminator - 0.03f, diskX);
+  }
   
   return illum;
 }
@@ -1051,31 +1059,25 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.3f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
   
-  // Build sun-oriented local frame for the moon disk.
-  // The "right" axis points from the moon toward the sun (projected onto
-  // the disk plane). This ensures the lit side always faces the sun and
-  // the terminator orientation is physically correct regardless of where
-  // the moon is in the sky.
-  vec3 sunDir = normalize(args.sunDirection);
-  vec3 sunOnDisk = sunDir - moonDir * dot(sunDir, moonDir);  // project sun onto disk plane
-  float sunProjLen = length(sunOnDisk);
-  vec3 moonRight;
-  vec3 moonUp;
-  if (sunProjLen > 0.001f) {
-    moonRight = sunOnDisk / sunProjLen;  // points toward sun on disk
-    moonUp = cross(moonDir, moonRight);
-  } else {
-    // Sun is directly behind/in front of moon — fall back to world up
-    vec3 upVec = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
-    moonRight = normalize(cross(upVec, moonDir));
-    moonUp = cross(moonDir, moonRight);
+  // Build a stable local frame for the moon disk using world-up.
+  // We do NOT use the sun direction — Morrowind's sun position at night
+  // is synthetic and unreliable for terminator orientation. Instead we
+  // use a fixed world-up frame so the terminator is always a clean
+  // vertical crescent (left/right split), matching vanilla behavior.
+  // The daysPassed phase value controls how much is lit.
+  vec3 upVec = vec3(0.0f, 1.0f, 0.0f);  // world up (Y-up space)
+  // If moon is near zenith, fall back to Z axis
+  vec3 moonRight = normalize(cross(upVec, moonDir));
+  if (length(cross(upVec, moonDir)) < 0.001f) {
+    moonRight = normalize(cross(vec3(0.0f, 0.0f, 1.0f), moonDir));
   }
+  vec3 moonUp = cross(moonDir, moonRight);
   
   vec3 toView = normalize(viewDir - moonDir * cosAngle);
   float diskX = dot(toView, moonRight) * normalizedAngle;
   float diskY = dot(toView, moonUp) * normalizedAngle;
   
-  // Phase from daysPassed (stable per night), sun-oriented frame handles direction
+  // Phase from daysPassed — stable per night, follows Morrowind's lunar calendar
   float illumination = getPhaseIllumination(args.moonPhase, diskX, diskY);
   
   // Simple diffuse shading for surface detail
@@ -1200,26 +1202,19 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
 
-  // Build sun-oriented local frame (same approach as Secunda)
-  vec3 sunDir = normalize(args.sunDirection);
-  vec3 sunOnDisk = sunDir - masserDir * dot(sunDir, masserDir);
-  float sunProjLen = length(sunOnDisk);
-  vec3 masserRightDir;
-  vec3 masserUpPerp;
-  if (sunProjLen > 0.001f) {
-    masserRightDir = sunOnDisk / sunProjLen;
-    masserUpPerp = cross(masserDir, masserRightDir);
-  } else {
-    vec3 masserUpDir = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
-    masserRightDir = normalize(cross(masserUpDir, masserDir));
-    masserUpPerp = cross(masserDir, masserRightDir);
+  // Build stable world-up frame (same approach as Secunda)
+  vec3 upVec = vec3(0.0f, 1.0f, 0.0f);
+  vec3 masserRightDir = normalize(cross(upVec, masserDir));
+  if (length(cross(upVec, masserDir)) < 0.001f) {
+    masserRightDir = normalize(cross(vec3(0.0f, 0.0f, 1.0f), masserDir));
   }
+  vec3 masserUpPerp = cross(masserDir, masserRightDir);
 
   vec3 toView = normalize(viewDir - masserDir * cosAngle);
   float diskX = dot(toView, masserRightDir) * normalizedAngle;
   float diskY = dot(toView, masserUpPerp) * normalizedAngle;
 
-  // Phase from daysPassed (stable per night), sun-oriented frame handles direction
+  // Phase from daysPassed — stable per night, follows Morrowind's lunar calendar
   float illumination = getPhaseIllumination(args.masserPhase, diskX, diskY);
   
   // Simple diffuse shading for surface detail
