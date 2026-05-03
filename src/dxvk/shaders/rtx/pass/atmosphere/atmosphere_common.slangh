@@ -1059,18 +1059,21 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.3f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
   
-  // Build a stable local frame for the moon disk using world-up.
-  // We do NOT use the sun direction — Morrowind's sun position at night
-  // is synthetic and unreliable for terminator orientation. Instead we
-  // use a fixed world-up frame so the terminator is always a clean
-  // vertical crescent (left/right split), matching vanilla behavior.
-  // The daysPassed phase value controls how much is lit.
-  vec3 upVec = vec3(0.0f, 1.0f, 0.0f);  // world up (Y-up space)
-  // If moon is near zenith, fall back to Z axis
-  vec3 moonRight = normalize(cross(upVec, moonDir));
-  if (length(cross(upVec, moonDir)) < 0.001f) {
-    moonRight = normalize(cross(vec3(0.0f, 0.0f, 1.0f), moonDir));
+  // Build a fixed local frame for the moon disk.
+  // Use a fixed "east" direction (X-axis in Y-up space) as the disk's right vector,
+  // projected onto the disk plane. This ensures the terminator is always a vertical
+  // crescent facing the same direction for both moons, matching vanilla Morrowind
+  // where the terminator doesn't rotate as the moon orbits.
+  vec3 fixedRight = vec3(1.0f, 0.0f, 0.0f);  // world east
+  // Project fixedRight onto the disk plane (remove component along moonDir)
+  vec3 moonRight = fixedRight - moonDir * dot(fixedRight, moonDir);
+  float rightLen = length(moonRight);
+  if (rightLen < 0.001f) {
+    // Moon is pointing along X axis — fall back to Z
+    moonRight = vec3(0.0f, 0.0f, 1.0f) - moonDir * dot(vec3(0.0f, 0.0f, 1.0f), moonDir);
+    rightLen = length(moonRight);
   }
+  moonRight /= rightLen;
   vec3 moonUp = cross(moonDir, moonRight);
   
   vec3 toView = normalize(viewDir - moonDir * cosAngle);
@@ -1202,12 +1205,16 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
 
-  // Build stable world-up frame (same approach as Secunda)
-  vec3 upVec = vec3(0.0f, 1.0f, 0.0f);
-  vec3 masserRightDir = normalize(cross(upVec, masserDir));
-  if (length(cross(upVec, masserDir)) < 0.001f) {
-    masserRightDir = normalize(cross(vec3(0.0f, 0.0f, 1.0f), masserDir));
+  // Build fixed local frame (same approach as Secunda — identical frame
+  // ensures both moons have terminators facing the same direction)
+  vec3 fixedRight = vec3(1.0f, 0.0f, 0.0f);  // world east
+  vec3 masserRightDir = fixedRight - masserDir * dot(fixedRight, masserDir);
+  float rightLen = length(masserRightDir);
+  if (rightLen < 0.001f) {
+    masserRightDir = vec3(0.0f, 0.0f, 1.0f) - masserDir * dot(vec3(0.0f, 0.0f, 1.0f), masserDir);
+    rightLen = length(masserRightDir);
   }
+  masserRightDir /= rightLen;
   vec3 masserUpPerp = cross(masserDir, masserRightDir);
 
   vec3 toView = normalize(viewDir - masserDir * cosAngle);
