@@ -946,6 +946,34 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   return totalStars * args.starBrightness;
 }
 
+// Sun-oriented phase illumination: computes the terminator from the actual
+// sun-moon angle rather than a discrete phase value. This is physically
+// correct and can't get out of sync with the sun direction.
+//
+// sunMoonDot: dot(sunDir, moonDir)
+//   +1 = sun directly behind moon (new moon, all dark)
+//   -1 = sun directly opposite moon (full moon, all lit)
+//    0 = sun at 90° to moon (quarter moon, half lit)
+// diskX, diskY: position on disk [-1, 1], X axis points toward sun
+float getPhaseIllumination_sunOriented(float sunMoonDot, float diskX, float diskY) {
+  float diskR = length(vec2(diskX, diskY));
+  if (diskR > 1.0f) return 0.0f;
+  
+  // The terminator position on the equator is simply the sun-moon dot product.
+  // This maps directly: full (dot=-1) → terminatorX=-1 → all lit,
+  // new (dot=+1) → terminatorX=+1 → all dark.
+  float terminatorX = sunMoonDot;
+  
+  // Curved terminator: the shadow boundary curves with the sphere
+  float sphereWidth = sqrt(max(0.0f, 1.0f - diskY * diskY));
+  float localTerminator = terminatorX * sphereWidth;
+  
+  // Lit side is at diskX > localTerminator (positive diskX = toward sun)
+  float illum = smoothstep(localTerminator - 0.03f, localTerminator + 0.03f, diskX);
+  
+  return illum;
+}
+
 // Compute 2D disk-space phase illumination matching vanilla Morrowind's crescent shape.
 // Produces a CURVED terminator (elliptical) like a real sphere shadow, not a straight line.
 // Both moons use the same mapping so shadows are always on the same side.
@@ -1029,12 +1057,12 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   // the terminator orientation is physically correct regardless of where
   // the moon is in the sky.
   vec3 sunDir = normalize(args.sunDirection);
-  vec3 sunToMoon = sunDir - moonDir * dot(sunDir, moonDir);  // project sun onto disk plane
-  float sunProjLen = length(sunToMoon);
+  vec3 sunOnDisk = sunDir - moonDir * dot(sunDir, moonDir);  // project sun onto disk plane
+  float sunProjLen = length(sunOnDisk);
   vec3 moonRight;
   vec3 moonUp;
   if (sunProjLen > 0.001f) {
-    moonRight = sunToMoon / sunProjLen;  // points toward sun on disk
+    moonRight = sunOnDisk / sunProjLen;  // points toward sun on disk
     moonUp = cross(moonDir, moonRight);
   } else {
     // Sun is directly behind/in front of moon — fall back to world up
@@ -1047,8 +1075,17 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float diskX = dot(toView, moonRight) * normalizedAngle;
   float diskY = dot(toView, moonUp) * normalizedAngle;
   
-  // 2D disk-space phase illumination — vanilla-style curved terminator
-  float illumination = getPhaseIllumination(args.moonPhase, diskX, diskY);
+  // Phase illumination from the actual sun-moon geometry.
+  // dot(sunDir, moonDir): +1 = sun behind moon (new), -1 = sun opposite (full)
+  // Map to phase [0,1]: phase = acos(dot) / pi  →  0=full, 0.5=quarter, 1=new
+  // Then remap so 0=new, 0.5=full: phase = 1 - acos(dot)/pi  ... no, simpler:
+  // Just use the dot product directly to position the terminator.
+  // terminatorX = dot(sunDir, moonDir) gives us:
+  //   sun behind moon (new):  dot ≈ +1 → terminator at +1 → all dark ✓
+  //   sun opposite (full):    dot ≈ -1 → terminator at -1 → all lit ✓
+  //   sun at 90° (quarter):   dot ≈  0 → terminator at 0  → half lit ✓
+  float sunMoonDot = dot(sunDir, moonDir);
+  float illumination = getPhaseIllumination_sunOriented(sunMoonDot, diskX, diskY);
   
   // Simple diffuse shading for surface detail
   float diffuse = 0.7f + 0.3f * (1.0f - normalizedAngle);
@@ -1174,12 +1211,12 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
 
   // Build sun-oriented local frame (same approach as Secunda)
   vec3 sunDir = normalize(args.sunDirection);
-  vec3 sunToMasser = sunDir - masserDir * dot(sunDir, masserDir);
-  float sunProjLen = length(sunToMasser);
+  vec3 sunOnDisk = sunDir - masserDir * dot(sunDir, masserDir);
+  float sunProjLen = length(sunOnDisk);
   vec3 masserRightDir;
   vec3 masserUpPerp;
   if (sunProjLen > 0.001f) {
-    masserRightDir = sunToMasser / sunProjLen;
+    masserRightDir = sunOnDisk / sunProjLen;
     masserUpPerp = cross(masserDir, masserRightDir);
   } else {
     vec3 masserUpDir = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
@@ -1191,8 +1228,9 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float diskX = dot(toView, masserRightDir) * normalizedAngle;
   float diskY = dot(toView, masserUpPerp) * normalizedAngle;
 
-  // 2D disk-space phase illumination — same curved approach as Secunda
-  float illumination = getPhaseIllumination(args.masserPhase, diskX, diskY);
+  // Phase from sun-moon geometry (same as Secunda)
+  float sunMasserDot = dot(sunDir, masserDir);
+  float illumination = getPhaseIllumination_sunOriented(sunMasserDot, diskX, diskY);
   
   // Simple diffuse shading for surface detail
   float diffuse = 0.7f + 0.3f * (1.0f - normalizedAngle);
