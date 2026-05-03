@@ -1059,26 +1059,32 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.3f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
   
-  // Build a fixed local frame for the moon disk.
-  // Use a fixed "east" direction (X-axis in Y-up space) as the disk's right vector,
-  // projected onto the disk plane. This ensures the terminator is always a vertical
-  // crescent facing the same direction for both moons, matching vanilla Morrowind
-  // where the terminator doesn't rotate as the moon orbits.
-  vec3 fixedRight = vec3(1.0f, 0.0f, 0.0f);  // world east
-  // Project fixedRight onto the disk plane (remove component along moonDir)
-  vec3 moonRight = fixedRight - moonDir * dot(fixedRight, moonDir);
-  float rightLen = length(moonRight);
-  if (rightLen < 0.001f) {
-    // Moon is pointing along X axis — fall back to Z
-    moonRight = vec3(0.0f, 0.0f, 1.0f) - moonDir * dot(vec3(0.0f, 0.0f, 1.0f), moonDir);
-    rightLen = length(moonRight);
-  }
-  moonRight /= rightLen;
-  vec3 moonUp = cross(moonDir, moonRight);
+  // Compute disk coordinates using spherical coordinate differences.
+  // This avoids ALL frame construction issues — no cross products, no
+  // projections, no sign flips. The disk X axis is always aligned with
+  // the azimuth direction (left-right in the sky) and disk Y with
+  // elevation (up-down). Both moons use identical math so terminators
+  // always face the same direction.
+  //
+  // Convert moon center and view direction to spherical coords:
+  //   azimuth = atan2(x, z)  (horizontal angle)
+  //   elevation = asin(y)     (vertical angle, Y-up space)
+  float moonAz = atan2(moonDir.x, moonDir.z);
+  float moonEl = asin(clamp(moonDir.y, -1.0f, 1.0f));
+  float viewAz = atan2(viewDir.x, viewDir.z);
+  float viewEl = asin(clamp(viewDir.y, -1.0f, 1.0f));
   
-  vec3 toView = normalize(viewDir - moonDir * cosAngle);
-  float diskX = dot(toView, moonRight) * normalizedAngle;
-  float diskY = dot(toView, moonUp) * normalizedAngle;
+  // Angular differences, normalized by moon radius
+  float dAz = (viewAz - moonAz);
+  // Wrap azimuth difference to [-pi, pi]
+  if (dAz > kPi) dAz -= 2.0f * kPi;
+  if (dAz < -kPi) dAz += 2.0f * kPi;
+  // Scale by cos(elevation) to account for azimuth compression near poles
+  dAz *= cos(moonEl);
+  float dEl = (viewEl - moonEl);
+  
+  float diskX = dAz / args.moonAngularRadius;
+  float diskY = dEl / args.moonAngularRadius;
   
   // Phase from daysPassed — stable per night, follows Morrowind's lunar calendar
   float illumination = getPhaseIllumination(args.moonPhase, diskX, diskY);
@@ -1205,21 +1211,21 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
 
-  // Build fixed local frame (same approach as Secunda — identical frame
-  // ensures both moons have terminators facing the same direction)
-  vec3 fixedRight = vec3(1.0f, 0.0f, 0.0f);  // world east
-  vec3 masserRightDir = fixedRight - masserDir * dot(fixedRight, masserDir);
-  float rightLen = length(masserRightDir);
-  if (rightLen < 0.001f) {
-    masserRightDir = vec3(0.0f, 0.0f, 1.0f) - masserDir * dot(vec3(0.0f, 0.0f, 1.0f), masserDir);
-    rightLen = length(masserRightDir);
-  }
-  masserRightDir /= rightLen;
-  vec3 masserUpPerp = cross(masserDir, masserRightDir);
-
-  vec3 toView = normalize(viewDir - masserDir * cosAngle);
-  float diskX = dot(toView, masserRightDir) * normalizedAngle;
-  float diskY = dot(toView, masserUpPerp) * normalizedAngle;
+  // Compute disk coordinates using spherical coordinate differences
+  // (identical to Secunda — ensures terminators always match)
+  float masserAz = atan2(masserDir.x, masserDir.z);
+  float masserEl = asin(clamp(masserDir.y, -1.0f, 1.0f));
+  float viewAz = atan2(viewDir.x, viewDir.z);
+  float viewEl = asin(clamp(viewDir.y, -1.0f, 1.0f));
+  
+  float dAz = (viewAz - masserAz);
+  if (dAz > kPi) dAz -= 2.0f * kPi;
+  if (dAz < -kPi) dAz += 2.0f * kPi;
+  dAz *= cos(masserEl);
+  float dEl = (viewEl - masserEl);
+  
+  float diskX = dAz / args.masserAngularRadius;
+  float diskY = dEl / args.masserAngularRadius;
 
   // Phase from daysPassed — stable per night, follows Morrowind's lunar calendar
   float illumination = getPhaseIllumination(args.masserPhase, diskX, diskY);
