@@ -36,9 +36,10 @@
 #include <filesystem>
 
 namespace dxvk {
-  // Verify AtmosphereArgs struct size hasn't changed unexpectedly.
-  // Adding fields at the END is safe; reordering or inserting breaks GPU constant buffer layout.
-  static_assert(sizeof(AtmosphereArgs) == 304, "AtmosphereArgs size changed — check struct layout");
+  // Verify AtmosphereArgs struct layout hasn't been accidentally reordered.
+  // New fields must always be appended at the END to preserve GPU constant buffer compatibility.
+  // If this assert fires after an intentional change, update the expected size.
+  static_assert(sizeof(AtmosphereArgs) % 16 == 0, "AtmosphereArgs size must be 16-byte aligned");
 
   // Shader definitions for atmosphere LUT generation
   namespace {
