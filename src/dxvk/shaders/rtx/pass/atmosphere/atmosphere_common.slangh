@@ -1033,7 +1033,11 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   // Sample moon texture for surface albedo
   // Map disk coordinates from [-1,1] to UV [0,1]
   vec2 diskUV = vec2(diskX, -diskY) * 0.5f + 0.5f;  // Flip Y for texture convention
+#ifdef RAY_PIPELINE
   vec3 surfaceAlbedo = SecundaMoonTexture.SampleLevel(samplers[0], diskUV, 0).rgb;
+#else
+  vec3 surfaceAlbedo = vec3(0.9f, 0.9f, 0.88f);  // Fallback: light grey (compute shader context)
+#endif
   
   // Atmospheric transmittance — reduced Rayleigh to keep moon white/silver
   float moonElevation = moonDir.y;
@@ -1104,7 +1108,11 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   // Sample Masser texture for surface albedo
   // Map disk coordinates from [-1,1] to UV [0,1]
   vec2 diskUV = vec2(diskX, -diskY) * 0.5f + 0.5f;  // Flip Y for texture convention
+#ifdef RAY_PIPELINE
   vec3 surfaceAlbedo = MasserMoonTexture.SampleLevel(samplers[0], diskUV, 0).rgb;
+#else
+  vec3 surfaceAlbedo = vec3(0.5f, 0.15f, 0.18f);  // Fallback: dark red (compute shader context)
+#endif
 
   // Atmospheric transmittance
   float masserElevation = masserDir.y;
