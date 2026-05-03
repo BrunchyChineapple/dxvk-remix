@@ -1015,10 +1015,17 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.3f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
   
-  // Build stable local frame for the moon disk
-  vec3 upVec = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
-  vec3 moonRight = normalize(cross(upVec, moonDir));
-  vec3 moonUp = cross(moonDir, moonRight);
+  // Build stable local frame for the moon disk.
+  // Use a FIXED reference frame so the texture doesn't rotate as the moon moves.
+  // moonRight is always horizontal (in the XZ plane), moonUp is always toward world Y.
+  // This keeps the texture orientation locked regardless of moon position.
+  vec3 worldUp = vec3(0.0f, 1.0f, 0.0f);
+  vec3 moonRight = normalize(cross(worldUp, moonDir));
+  // Handle degenerate case when moon is directly overhead
+  if (length(moonRight) < 0.001f) {
+    moonRight = vec3(1.0f, 0.0f, 0.0f);
+  }
+  vec3 moonUp = normalize(cross(moonDir, moonRight));
   
   vec3 toView = normalize(viewDir - moonDir * cosAngle);
   float diskX = dot(toView, moonRight) * normalizedAngle;
@@ -1045,8 +1052,10 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   moonAirMass = min(moonAirMass, 10.0f);
   vec3 moonTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * moonAirMass * 0.2f);
   
-  // Lit side: texture albedo with moon color tint, limb darkening, and atmospheric transmittance
-  vec3 litRadiance = args.moonColor * surfaceAlbedo * args.moonBrightness * 
+  // Lit side: texture albedo with limb darkening and atmospheric transmittance
+  // Note: moonColor tint is NOT applied when using textures — the DDS already has correct colors.
+  // moonBrightness still controls overall intensity.
+  vec3 litRadiance = surfaceAlbedo * args.moonBrightness * 
                       limbDarkening * diffuse * moonTransmittance;
   
   // Dark side: very dark but not zero (subtle ambient for surface visibility)
@@ -1090,10 +1099,14 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
 
-  // Build stable local frame
-  vec3 masserUpDir = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
-  vec3 masserRightDir = normalize(cross(masserUpDir, masserDir));
-  vec3 masserUpPerp = cross(masserDir, masserRightDir);
+  // Build stable local frame — same approach as Secunda.
+  // Fixed reference frame so texture doesn't rotate as moon moves.
+  vec3 worldUp = vec3(0.0f, 1.0f, 0.0f);
+  vec3 masserRightDir = normalize(cross(worldUp, masserDir));
+  if (length(masserRightDir) < 0.001f) {
+    masserRightDir = vec3(1.0f, 0.0f, 0.0f);
+  }
+  vec3 masserUpPerp = normalize(cross(masserDir, masserRightDir));
 
   vec3 toView = normalize(viewDir - masserDir * cosAngle);
   float diskX = dot(toView, masserRightDir) * normalizedAngle;
@@ -1120,8 +1133,9 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   masserAirMass = min(masserAirMass, 10.0f);
   vec3 masserTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * masserAirMass * 0.2f);
 
-  // Lit side: texture albedo with Masser color tint, limb darkening, and atmospheric transmittance
-  vec3 litRadiance = args.masserColor * surfaceAlbedo * args.masserBrightness *
+  // Lit side: texture albedo with limb darkening and atmospheric transmittance
+  // Note: masserColor tint is NOT applied when using textures — the DDS already has correct colors.
+  vec3 litRadiance = surfaceAlbedo * args.masserBrightness *
                       limbDarkening * diffuse * masserTransmittance;
   
   // Dark side: very dark (disk coverage handles opacity)
