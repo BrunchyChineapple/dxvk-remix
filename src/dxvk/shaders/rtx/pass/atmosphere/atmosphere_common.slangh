@@ -949,20 +949,26 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
 // Compute 2D disk-space phase illumination matching vanilla Morrowind's crescent shape.
 // Produces a CURVED terminator (elliptical) like a real sphere shadow, not a straight line.
 // Both moons use the same mapping so shadows are always on the same side.
+//
+// IMPORTANT: diskX must be oriented so that positive X points toward the sun
+// (the caller builds a sun-oriented local frame). This means the lit side is
+// always at positive diskX, and the terminator sweeps from right to left as
+// the phase goes from new (0) to full (0.5) and back.
+//
 // phase: 0=new (dark), 0.5=full (bright), 1.0=new again
-// diskX, diskY: position on disk [-1, 1]
+// diskX, diskY: position on disk [-1, 1], X axis points toward sun
 // Returns illumination factor [0, 1]
 float getPhaseIllumination(float phase, float diskX, float diskY) {
   // The terminator on a sphere projects as an ellipse on the disk.
   // At the equator (diskY=0), the terminator is at position terminatorX.
   // At the poles (diskY=±1), the terminator curves toward the center.
   //
-  // The elliptical terminator equation: x_term(y) = terminatorX * sqrt(1 - y^2)
-  // This produces the classic crescent moon shape.
-  
-  // terminatorX: where the shadow falls at the equator
-  // phase 0.5 (full) -> terminatorX = -1 (everything lit)
-  // phase 0.0 (new)  -> terminatorX = +1 (everything dark)
+  // terminatorX: where the shadow boundary falls at the equator
+  // phase 0.0 (new)  -> terminatorX = +1 (boundary at right edge = all dark)
+  // phase 0.25 (1Q)  -> terminatorX =  0 (boundary at center = right half lit)
+  // phase 0.5 (full) -> terminatorX = -1 (boundary at left edge = all lit)
+  // phase 0.75 (3Q)  -> terminatorX =  0 (boundary at center = right half lit)
+  // phase 1.0 (new)  -> terminatorX = +1 (back to all dark)
   float terminatorX = cos(phase * 2.0f * kPi);
   
   // Curved terminator: the shadow boundary curves with the sphere
@@ -973,16 +979,9 @@ float getPhaseIllumination(float phase, float diskX, float diskY) {
   float sphereWidth = sqrt(max(0.0f, 1.0f - diskY * diskY));
   float localTerminator = terminatorX * sphereWidth;
   
-  // Waxing (phase 0..0.5): right side is lit
-  // Waning (phase 0.5..1): left side is lit
-  bool waxing = (phase < 0.5f);
-  
-  float illum;
-  if (waxing) {
-    illum = smoothstep(localTerminator - 0.03f, localTerminator + 0.03f, diskX);
-  } else {
-    illum = smoothstep(localTerminator + 0.03f, localTerminator - 0.03f, diskX);
-  }
+  // With sun-oriented diskX (positive = toward sun), the lit side is always
+  // at diskX > localTerminator. No waxing/waning flip needed.
+  float illum = smoothstep(localTerminator - 0.03f, localTerminator + 0.03f, diskX);
   
   return illum;
 }
@@ -1024,10 +1023,25 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.3f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
   
-  // Build stable local frame for the moon disk
-  vec3 upVec = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
-  vec3 moonRight = normalize(cross(upVec, moonDir));
-  vec3 moonUp = cross(moonDir, moonRight);
+  // Build sun-oriented local frame for the moon disk.
+  // The "right" axis points from the moon toward the sun (projected onto
+  // the disk plane). This ensures the lit side always faces the sun and
+  // the terminator orientation is physically correct regardless of where
+  // the moon is in the sky.
+  vec3 sunDir = normalize(args.sunDirection);
+  vec3 sunToMoon = sunDir - moonDir * dot(sunDir, moonDir);  // project sun onto disk plane
+  float sunProjLen = length(sunToMoon);
+  vec3 moonRight;
+  vec3 moonUp;
+  if (sunProjLen > 0.001f) {
+    moonRight = sunToMoon / sunProjLen;  // points toward sun on disk
+    moonUp = cross(moonDir, moonRight);
+  } else {
+    // Sun is directly behind/in front of moon — fall back to world up
+    vec3 upVec = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
+    moonRight = normalize(cross(upVec, moonDir));
+    moonUp = cross(moonDir, moonRight);
+  }
   
   vec3 toView = normalize(viewDir - moonDir * cosAngle);
   float diskX = dot(toView, moonRight) * normalizedAngle;
@@ -1158,10 +1172,20 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
 
-  // Build stable local frame
-  vec3 masserUpDir = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
-  vec3 masserRightDir = normalize(cross(masserUpDir, masserDir));
-  vec3 masserUpPerp = cross(masserDir, masserRightDir);
+  // Build sun-oriented local frame (same approach as Secunda)
+  vec3 sunDir = normalize(args.sunDirection);
+  vec3 sunToMasser = sunDir - masserDir * dot(sunDir, masserDir);
+  float sunProjLen = length(sunToMasser);
+  vec3 masserRightDir;
+  vec3 masserUpPerp;
+  if (sunProjLen > 0.001f) {
+    masserRightDir = sunToMasser / sunProjLen;
+    masserUpPerp = cross(masserDir, masserRightDir);
+  } else {
+    vec3 masserUpDir = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
+    masserRightDir = normalize(cross(masserUpDir, masserDir));
+    masserUpPerp = cross(masserDir, masserRightDir);
+  }
 
   vec3 toView = normalize(viewDir - masserDir * cosAngle);
   float diskX = dot(toView, masserRightDir) * normalizedAngle;
