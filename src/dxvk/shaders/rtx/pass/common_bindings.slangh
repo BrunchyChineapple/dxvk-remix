@@ -128,3 +128,10 @@ Texture2D AtmosphereMultiscatteringLut;
 
 layout(binding = BINDING_ATMOSPHERE_SKY_VIEW_LUT)
 Texture2D AtmosphereSkyViewLut;
+
+// Moon textures - DDS albedo maps for Secunda and Masser
+layout(binding = BINDING_ATMOSPHERE_SECUNDA_TEXTURE)
+Texture2D<float4> SecundaMoonTexture;
+
+layout(binding = BINDING_ATMOSPHERE_MASSER_TEXTURE)
+Texture2D<float4> MasserMoonTexture;

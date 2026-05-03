@@ -1263,6 +1263,11 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", float, masserRotation, 90.0f, "Masser rotation in degrees (overridden by game sync).");
     RTX_OPTION("rtx.atmosphere", float, masserPhase, 0.5f, "Masser phase: 0=new, 0.5=full.");
 
+    // Moon texture parameters
+    RTX_OPTION("rtx.atmosphere", std::string, secundaTexturePath, std::string("tx_secunda_full.dds"), "Filename of the Secunda moon DDS texture.");
+    RTX_OPTION("rtx.atmosphere", std::string, masserTexturePath, std::string("tx_masser_full.dds"), "Filename of the Masser moon DDS texture.");
+    RTX_OPTION("rtx.atmosphere", std::string, moonTextureBasePath, std::string(""), "Base directory for moon texture files. Set by the wrapper to Morrowind's texture directory.");
+
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");
 

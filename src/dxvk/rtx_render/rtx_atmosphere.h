@@ -79,12 +79,28 @@ public:
   Resources::Resource getSkyViewLut() const { return m_skyViewLut; }
 
   /**
+   * \brief Get Secunda moon texture view
+   */
+  Rc<DxvkImageView> getSecundaTextureView() const { return m_secundaTextureView; }
+
+  /**
+   * \brief Get Masser moon texture view
+   */
+  Rc<DxvkImageView> getMasserTextureView() const { return m_masserTextureView; }
+
+  /**
+   * \brief Check if real moon textures were loaded (not placeholders)
+   */
+  bool areMoonTexturesLoaded() const { return m_moonTexturesLoaded; }
+
+  /**
    * \brief Get current atmosphere parameters
    */
   AtmosphereArgs getAtmosphereArgs() const;
 
 private:
   void createLutResources(Rc<DxvkContext> ctx);
+  void loadMoonTextures(Rc<DxvkContext> ctx);
   void dispatchTransmittanceLut(Rc<DxvkContext> ctx);
   void dispatchMultiscatteringLut(Rc<DxvkContext> ctx);
   void dispatchSkyViewLut(Rc<DxvkContext> ctx);
@@ -103,6 +119,12 @@ private:
   Resources::Resource m_transmittanceLut;
   Resources::Resource m_multiscatteringLut;
   Resources::Resource m_skyViewLut;
+  
+  // Moon texture resources (loaded from DDS files)
+  Rc<DxvkImageView> m_secundaTextureView;  // Secunda moon DDS texture view (or white placeholder)
+  Rc<DxvkImageView> m_masserTextureView;   // Masser moon DDS texture view (or white placeholder)
+  Rc<DxvkImageView> m_whitePlaceholderView; // 1x1 white fallback texture view
+  bool m_moonTexturesLoaded = false;        // True if at least one real texture loaded
   
   Rc<DxvkBuffer> m_constantsBuffer;
 

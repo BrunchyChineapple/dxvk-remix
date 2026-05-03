@@ -89,4 +89,10 @@ struct AtmosphereArgs {
   float masserEnabled;      // 1.0 if Masser should be rendered
   float pad5;
   float pad6;
+
+  // Moon texture parameters (appended at END — do not reorder)
+  float moonTextureEnabled;  // 1.0 = valid textures loaded, 0.0 = placeholder/fallback
+  float padTex1;
+  float padTex2;
+  float padTex3;
 };

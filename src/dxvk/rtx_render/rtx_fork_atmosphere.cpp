@@ -126,6 +126,16 @@ namespace fork_hooks {
     if (skyViewLut.isValid()) {
       ctx.bindResourceView(BINDING_ATMOSPHERE_SKY_VIEW_LUT, skyViewLut.view, nullptr);
     }
+
+    // Bind moon textures (always bound since declared in common_bindings.slangh)
+    auto secundaView = ctx.m_atmosphere->getSecundaTextureView();
+    auto masserView  = ctx.m_atmosphere->getMasserTextureView();
+    if (secundaView != nullptr) {
+      ctx.bindResourceView(BINDING_ATMOSPHERE_SECUNDA_TEXTURE, secundaView, nullptr);
+    }
+    if (masserView != nullptr) {
+      ctx.bindResourceView(BINDING_ATMOSPHERE_MASSER_TEXTURE, masserView, nullptr);
+    }
   }
 
   // ---------------------------------------------------------------------------

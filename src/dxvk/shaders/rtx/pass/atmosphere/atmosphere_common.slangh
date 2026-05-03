@@ -1030,73 +1030,10 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   // Simple diffuse shading for surface detail
   float diffuse = 0.7f + 0.3f * (1.0f - normalizedAngle);
   
-  // Moon surface: procedural craters, maria, and surface roughness
-  float uvScale = 8.0f;
-  vec2 moonUV = vec2(diskX, diskY) * uvScale;
-
-  // Maria (dark basaltic plains) — smooth multi-octave noise
-  float maria = fbmNoise2D(moonUV * 0.4f + vec2(3.7f, 1.2f), 4, 10.0f);
-  maria = smoothstep(0.25f, 0.55f, maria);
-
-  // Highland base brightness
-  float highland = 1.0f - maria * 0.5f;
-
-  // Large craters — fixed positions with dark interiors and bright rims
-  float craters = 0.0f;
-  vec2 craterPositions[7];
-  craterPositions[0] = vec2(-0.25f, 0.3f);
-  craterPositions[1] = vec2(0.35f, -0.15f);
-  craterPositions[2] = vec2(-0.1f, -0.35f);
-  craterPositions[3] = vec2(0.2f, 0.25f);
-  craterPositions[4] = vec2(-0.3f, -0.1f);
-  craterPositions[5] = vec2(0.15f, -0.3f);
-  craterPositions[6] = vec2(-0.35f, 0.15f);
-  float craterSizes[7];
-  craterSizes[0] = 0.12f;
-  craterSizes[1] = 0.09f;
-  craterSizes[2] = 0.15f;
-  craterSizes[3] = 0.07f;
-  craterSizes[4] = 0.10f;
-  craterSizes[5] = 0.06f;
-  craterSizes[6] = 0.08f;
-
-  for (int ci = 0; ci < 7; ci++) {
-    float crDist = length(vec2(diskX, diskY) - craterPositions[ci]);
-    float craterRadius = craterSizes[ci];
-    
-    // Crater bowl
-    float bowl = 1.0f - smoothstep(craterRadius * 0.3f, craterRadius * 0.9f, crDist);
-    
-    // Simple crater shading based on disk position (phase-independent)
-    float craterShadow = 0.5f;
-    
-    // Bright raised rim
-    float rim = smoothstep(craterRadius * 0.75f, craterRadius * 0.9f, crDist) *
-                (1.0f - smoothstep(craterRadius * 0.9f, craterRadius * 1.15f, crDist));
-    
-    craters += bowl * 0.3f * craterShadow - rim * 0.1f;
-  }
-
-  // Small craters — smooth noise threshold
-  float smallCraterNoise = fbmNoise2D(moonUV * 2.5f + vec2(7.3f, 2.1f), 3, 20.0f);
-  float smallCraters = smoothstep(0.62f, 0.72f, smallCraterNoise) * 0.2f;
-
-  // Surface roughness — fine detail
-  float roughness = fbmNoise2D(moonUV * 4.0f + vec2(11.1f, 5.5f), 2, 30.0f) * 0.15f;
-
-  // Streaks/rays from impacts
-  float rays = fbmNoise2D(moonUV * 1.5f + vec2(2.3f, 8.7f), 2, 40.0f);
-  rays = smoothstep(0.5f, 0.65f, rays) * 0.12f;
-
-  float surfaceDetail = highland - craters - smallCraters + roughness + rays;
-
-  // Color: maria are warm grey-brown, highlands cool light grey
-  vec3 surfaceColor = mix(
-    vec3(0.78f, 0.76f, 0.72f),  // Maria: warm grey-brown
-    vec3(0.95f, 0.94f, 0.92f),  // Highlands: cool light grey
-    1.0f - maria
-  );
-  surfaceDetail = clamp(surfaceDetail, 0.3f, 1.15f);
+  // Sample moon texture for surface albedo
+  // Map disk coordinates from [-1,1] to UV [0,1]
+  vec2 diskUV = vec2(diskX, -diskY) * 0.5f + 0.5f;  // Flip Y for texture convention
+  vec3 surfaceAlbedo = SecundaMoonTexture.SampleLevel(samplers[0], diskUV, 0).rgb;
   
   // Atmospheric transmittance — reduced Rayleigh to keep moon white/silver
   float moonElevation = moonDir.y;
@@ -1104,12 +1041,12 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   moonAirMass = min(moonAirMass, 10.0f);
   vec3 moonTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * moonAirMass * 0.2f);
   
-  // Lit side: full surface detail and color
-  vec3 litRadiance = args.moonColor * surfaceColor * args.moonBrightness * 
-                      limbDarkening * surfaceDetail * diffuse * moonTransmittance;
+  // Lit side: texture albedo with moon color tint, limb darkening, and atmospheric transmittance
+  vec3 litRadiance = args.moonColor * surfaceAlbedo * args.moonBrightness * 
+                      limbDarkening * diffuse * moonTransmittance;
   
   // Dark side: very dark but not zero (subtle ambient for surface visibility)
-  vec3 darkRadiance = surfaceColor * 0.005f * limbDarkening;
+  vec3 darkRadiance = surfaceAlbedo * 0.005f * limbDarkening;
   
   // Blend between lit and dark using the phase illumination
   vec3 moonRadiance = mix(darkRadiance, litRadiance, illumination);
@@ -1164,53 +1101,10 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   // Simple diffuse shading for surface detail
   float diffuse = 0.7f + 0.3f * (1.0f - normalizedAngle);
 
-  // Masser surface: volcanic red terrain with dark regions
-  float uvScale = 6.0f;
-  vec2 masserUV = vec2(diskX, diskY) * uvScale;
-
-  // Large dark volcanic basins — smooth FBM
-  float volcanic = fbmNoise2D(masserUV * 0.5f + vec2(5.1f, 3.3f), 4, 50.0f);
-  volcanic = smoothstep(0.2f, 0.55f, volcanic) * 0.45f;
-
-  // Surface roughness — medium scale terrain
-  float terrain = fbmNoise2D(masserUV * 1.2f + vec2(11.0f, 7.0f), 3, 60.0f) * 0.2f;
-
-  // Dark veins/canyons
-  float veins = fbmNoise2D(masserUV * 2.0f + vec2(7.0f, 3.0f), 3, 70.0f);
-  veins = smoothstep(0.55f, 0.68f, veins) * 0.25f;
-
-  // Fine surface texture
-  float fineDetail = fbmNoise2D(masserUV * 3.5f + vec2(13.0f, 9.0f), 2, 80.0f) * 0.08f;
-
-  // Large impact craters on Masser
-  float masserCraters = 0.0f;
-  vec2 mCraterPos[4];
-  mCraterPos[0] = vec2(-0.2f, -0.25f);
-  mCraterPos[1] = vec2(0.25f, 0.15f);
-  mCraterPos[2] = vec2(-0.15f, 0.3f);
-  mCraterPos[3] = vec2(0.3f, -0.2f);
-  float mCraterSz[4];
-  mCraterSz[0] = 0.15f;
-  mCraterSz[1] = 0.12f;
-  mCraterSz[2] = 0.10f;
-  mCraterSz[3] = 0.08f;
-
-  for (int mci = 0; mci < 4; mci++) {
-    float dist = length(vec2(diskX, diskY) - mCraterPos[mci]);
-    float cr = mCraterSz[mci];
-    float interior = 1.0f - smoothstep(cr * 0.5f, cr * 0.85f, dist);
-    masserCraters += interior * 0.2f;
-  }
-
-  float surfaceDetail = 1.0f - volcanic - veins - masserCraters + terrain + fineDetail;
-  surfaceDetail = clamp(surfaceDetail, 0.35f, 1.1f);
-
-  // Color: darker volcanic areas are deep crimson-purple, lighter areas dusty rose
-  vec3 surfaceColor = mix(
-    vec3(0.30f, 0.08f, 0.12f),   // Dark volcanic: deep crimson-purple
-    vec3(0.70f, 0.28f, 0.32f),   // Lighter terrain: dusty rose
-    clamp(surfaceDetail, 0.0f, 1.0f)
-  );
+  // Sample Masser texture for surface albedo
+  // Map disk coordinates from [-1,1] to UV [0,1]
+  vec2 diskUV = vec2(diskX, -diskY) * 0.5f + 0.5f;  // Flip Y for texture convention
+  vec3 surfaceAlbedo = MasserMoonTexture.SampleLevel(samplers[0], diskUV, 0).rgb;
 
   // Atmospheric transmittance
   float masserElevation = masserDir.y;
@@ -1218,12 +1112,12 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   masserAirMass = min(masserAirMass, 10.0f);
   vec3 masserTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * masserAirMass * 0.2f);
 
-  // Lit side: full surface detail and color
-  vec3 litRadiance = args.masserColor * surfaceColor * args.masserBrightness *
+  // Lit side: texture albedo with Masser color tint, limb darkening, and atmospheric transmittance
+  vec3 litRadiance = args.masserColor * surfaceAlbedo * args.masserBrightness *
                       limbDarkening * diffuse * masserTransmittance;
   
   // Dark side: very dark (disk coverage handles opacity)
-  vec3 darkRadiance = surfaceColor * 0.005f * limbDarkening;
+  vec3 darkRadiance = surfaceAlbedo * 0.005f * limbDarkening;
   
   // Blend between lit and dark using the phase illumination
   vec3 masserRadiance = mix(darkRadiance, litRadiance, illumination);
