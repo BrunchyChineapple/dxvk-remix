@@ -1374,6 +1374,17 @@ vec3 evalSkyRadiance(
     32  // numSamples hint (now using fixed physical step size)
   );
   
+  // Suppress residual atmosphere glow at deep night.
+  // The ray marching and multiscattering approximation produce small non-zero
+  // values even when the sun is well below the horizon. These wash out dim stars
+  // and create view-dependent dark blobs in the star field. Fade the atmosphere
+  // contribution to zero once the sun is more than ~5° below the horizon.
+  {
+    float sunElev = args.sunDirection.y;  // positive = above horizon
+    float atmosphereFade = smoothstep(-0.09f, 0.0f, sunElev);  // 0 at -5°, 1 at horizon
+    radiance *= atmosphereFade;
+  }
+  
   // Add night sky contribution (stars + airglow)
   // This is additive — during daytime, nightFactor is 0 so this adds nothing.
   // During twilight and night, stars and airglow fade in.
