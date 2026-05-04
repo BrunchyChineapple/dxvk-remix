@@ -1585,9 +1585,13 @@ namespace {
       return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
     }
 
+    // Route through getTargetLayer so NoSave options go to the Derived layer
+    // instead of polluting the User config file.
+    const dxvk::RtxOptionLayer* targetLayer = option->getTargetLayer(dxvk::RtxOptionLayer::getUserLayer());
+
     dxvk::Config newSetting;
     newSetting.setOptionMove(std::move(strKey), std::string{ value });
-    option->readOption(newSetting, dxvk::RtxOptionLayer::getUserLayer());
+    option->readOption(newSetting, targetLayer);
 
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }

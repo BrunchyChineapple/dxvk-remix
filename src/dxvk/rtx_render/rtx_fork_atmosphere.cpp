@@ -316,6 +316,39 @@ namespace fork_hooks {
           ImGui::TreePop();
         }
 
+        if (ImGui::TreeNode("Night Sky")) {
+          RemixGui::DragFloat("Star Brightness", &RtxOptions::starBrightnessObject(), 0.1f, 0.0f, 50.0f, "%.1f", sliderFlags);
+          RemixGui::DragFloat("Star Density", &RtxOptions::starDensityObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+          RemixGui::SetTooltipToLastWidgetOnHover("Threshold: 0 = all stars visible, 1 = no stars");
+          RemixGui::DragFloat("Star Twinkle Speed", &RtxOptions::starTwinkleSpeedObject(), 0.1f, 0.0f, 10.0f, "%.1f", sliderFlags);
+          RemixGui::DragFloat("Night Sky Brightness", &RtxOptions::nightSkyBrightnessObject(), 0.001f, 0.0f, 0.1f, "%.4f", sliderFlags);
+          RemixGui::SetTooltipToLastWidgetOnHover("Airglow / ambient night sky brightness");
+          RemixGui::DragFloat3("Night Sky Color", &RtxOptions::nightSkyColorObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+          ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Secunda (Moon)")) {
+          RemixGui::Checkbox("Enabled", &RtxOptions::moonEnabledObject());
+          RemixGui::DragFloat("Angular Radius", &RtxOptions::moonAngularRadiusObject(), 0.1f, 0.1f, 20.0f, "%.1f°", sliderFlags);
+          RemixGui::DragFloat("Brightness", &RtxOptions::moonBrightnessObject(), 0.1f, 0.0f, 20.0f, "%.1f", sliderFlags);
+          RemixGui::DragFloat3("Color", &RtxOptions::moonColorObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+          ImGui::Text("Elevation: %.1f°  Rotation: %.1f°  Phase: %.2f",
+            RtxOptions::moonElevation(), RtxOptions::moonRotation(), RtxOptions::moonPhase());
+          RemixGui::SetTooltipToLastWidgetOnHover("Driven by game sync (read-only)");
+          ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Masser (Red Moon)")) {
+          RemixGui::Checkbox("Enabled", &RtxOptions::masserEnabledObject());
+          RemixGui::DragFloat("Angular Radius", &RtxOptions::masserAngularRadiusObject(), 0.1f, 0.1f, 30.0f, "%.1f°", sliderFlags);
+          RemixGui::DragFloat("Brightness", &RtxOptions::masserBrightnessObject(), 0.1f, 0.0f, 20.0f, "%.1f", sliderFlags);
+          RemixGui::DragFloat3("Color", &RtxOptions::masserColorObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+          ImGui::Text("Elevation: %.1f°  Rotation: %.1f°  Phase: %.2f",
+            RtxOptions::masserElevation(), RtxOptions::masserRotation(), RtxOptions::masserPhase());
+          RemixGui::SetTooltipToLastWidgetOnHover("Driven by game sync (read-only)");
+          ImGui::TreePop();
+        }
+
         ImGui::TreePop();
       }
     }

@@ -1218,8 +1218,8 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", bool, sunDisc, true, "Include the sun itself in the output.");
     RTX_OPTION("rtx.atmosphere", float, sunSize, 0.545f, "Size of sun disc in degrees.");
     RTX_OPTION("rtx.atmosphere", float, sunIntensity, 1.0f, "Strength of Sun.");
-    RTX_OPTION("rtx.atmosphere", float, sunElevation, 15.0f, "Sun angle from horizon in degrees.");
-    RTX_OPTION("rtx.atmosphere", float, sunRotation, 0.0f, "Rotation of sun around zenith in degrees.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, sunElevation, 15.0f, RtxOptionFlags::NoSave, "Sun angle from horizon in degrees. Driven by game sync every frame.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, sunRotation, 0.0f, RtxOptionFlags::NoSave, "Rotation of sun around zenith in degrees. Driven by game sync every frame.");
     RTX_OPTION("rtx.atmosphere", float, altitude, 100.0f, "Height from sea level in meters.");
     RTX_OPTION("rtx.atmosphere", float, airDensity, 1.0f, "Density of air molecules multiplier (1.0 = clear sky).");
     RTX_OPTION("rtx.atmosphere", float, aerosolDensity, 1.0f, "Density of aerosols/dust multiplier (1.0 = typical).");
@@ -1250,18 +1250,18 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", float, moonAngularRadius, 3.5f, "Moon angular diameter in degrees (vanilla Secunda ~3.5).");
     RTX_OPTION("rtx.atmosphere", float, moonBrightness, 4.0f, "Moon brightness multiplier.");
     RTX_OPTION("rtx.atmosphere", Vector3, moonColor, Vector3(0.85f, 0.87f, 0.92f), "Moon surface color/albedo.");
-    RTX_OPTION("rtx.atmosphere", float, moonElevation, 45.0f, "Moon elevation in degrees (overridden by game sync when active).");
-    RTX_OPTION("rtx.atmosphere", float, moonRotation, 90.0f, "Moon rotation/azimuth in degrees (overridden by game sync when active).");
-    RTX_OPTION("rtx.atmosphere", float, moonPhase, 0.5f, "Moon phase: 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, moonElevation, 45.0f, RtxOptionFlags::NoSave, "Moon elevation in degrees. Driven by game sync every frame.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, moonRotation, 90.0f, RtxOptionFlags::NoSave, "Moon rotation/azimuth in degrees. Driven by game sync every frame.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, moonPhase, 0.5f, RtxOptionFlags::NoSave, "Moon phase: 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter. Driven by game sync.");
 
     // Masser (large red moon) parameters
     RTX_OPTION("rtx.atmosphere", bool, masserEnabled, true, "Enable Masser (large red moon) rendering.");
     RTX_OPTION("rtx.atmosphere", float, masserAngularRadius, 10.0f, "Masser angular diameter in degrees (roughly 3x Secunda).");
     RTX_OPTION("rtx.atmosphere", float, masserBrightness, 3.5f, "Masser brightness multiplier.");
     RTX_OPTION("rtx.atmosphere", Vector3, masserColor, Vector3(0.65f, 0.18f, 0.22f), "Masser surface color (dark crimson-purple).");
-    RTX_OPTION("rtx.atmosphere", float, masserElevation, 45.0f, "Masser elevation in degrees (overridden by game sync).");
-    RTX_OPTION("rtx.atmosphere", float, masserRotation, 90.0f, "Masser rotation in degrees (overridden by game sync).");
-    RTX_OPTION("rtx.atmosphere", float, masserPhase, 0.5f, "Masser phase: 0=new, 0.5=full.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, masserElevation, 45.0f, RtxOptionFlags::NoSave, "Masser elevation in degrees. Driven by game sync every frame.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, masserRotation, 90.0f, RtxOptionFlags::NoSave, "Masser rotation in degrees. Driven by game sync every frame.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, masserPhase, 0.5f, RtxOptionFlags::NoSave, "Masser phase: 0=new, 0.5=full. Driven by game sync.");
 
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");
