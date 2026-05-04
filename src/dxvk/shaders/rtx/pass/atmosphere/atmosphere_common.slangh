@@ -831,6 +831,31 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   vec3 totalStars = vec3(0.0f);
   vec3 dir = normalize(viewDir);
 
+  // Sidereal rotation: rotate the sample direction around the celestial pole
+  // by args.starRotation degrees, then continue with the rotated direction
+  // for galactic-band placement, cube-face indexing, and twinkle phase. The
+  // whole pattern (band, individual stars, color temperatures) rotates as
+  // one rigid body, matching real-sky behavior.
+  //
+  // Default axis (elevation 90, azimuth 0) places the celestial pole at +Y
+  // (zenith). Combined with starRotation = 0, the Rodrigues formula below
+  // reduces to the identity, so unrotated callers see the original pattern
+  // unchanged.
+  {
+    const float kDegToRad = 3.14159265358979323846f / 180.0f;
+    float poleElev = args.starAxisElevation * kDegToRad;
+    float poleAzi  = args.starAxisRotation  * kDegToRad;
+    vec3 axis = vec3(cos(poleElev) * sin(poleAzi),
+                     sin(poleElev),
+                     cos(poleElev) * cos(poleAzi));
+
+    float rotRad = args.starRotation * kDegToRad;
+    float c = cos(rotRad);
+    float s = sin(rotRad);
+    // Rodrigues' rotation: v_rot = v*c + (k × v)*s + k*(k·v)*(1 - c)
+    dir = dir * c + cross(axis, dir) * s + axis * dot(axis, dir) * (1.0f - c);
+  }
+
   float theta = acos(clamp(dir.y, -1.0f, 1.0f));
   float phi = atan2(dir.z, dir.x);
 
