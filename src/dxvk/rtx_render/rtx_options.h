@@ -1242,12 +1242,18 @@ namespace dxvk {
 
     // ----- Night-sky shading (fork) -----
     // Stars, Milky Way, shooting stars, airglow. Active when skyMode == PhysicalAtmosphere.
-    RTX_OPTION("rtx.atmosphere", float, starBrightness, 8.0f,
-               "Overall brightness multiplier for stars.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, starBrightness, 8.0f, RtxOptionFlags::NoSave,
+                    "Overall brightness multiplier for stars. Game-driven so plugins can fade stars in/out around sunset/sunrise without polluting user.conf at frame rate.");
     RTX_OPTION("rtx.atmosphere", float, starDensity, 0.98f,
                "Star density threshold (0.0 = all stars, 1.0 = no stars). Higher = fewer, brighter stars.");
     RTX_OPTION("rtx.atmosphere", float, starTwinkleSpeed, 1.0f,
                "Speed of star twinkling animation (0 = no twinkle).");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, starRotation, 0.0f, RtxOptionFlags::NoSave,
+                    "Sidereal sky rotation angle in degrees, 0-360. Game-driven every frame.");
+    RTX_OPTION("rtx.atmosphere", float, starAxisElevation, 90.0f,
+               "Celestial pole elevation from horizon in degrees. 90 = pole at zenith (default, matches pre-rotation behavior).");
+    RTX_OPTION("rtx.atmosphere", float, starAxisRotation, 0.0f,
+               "Celestial pole azimuth in degrees (0 = North). Only relevant when starAxisElevation != 90.");
     RTX_OPTION("rtx.atmosphere", float, nightSkyBrightness, 0.008f,
                "Ambient night-sky brightness from airglow and zodiacal light.");
     RTX_OPTION("rtx.atmosphere", Vector3, nightSkyColor, Vector3(0.15f, 0.2f, 0.4f),
