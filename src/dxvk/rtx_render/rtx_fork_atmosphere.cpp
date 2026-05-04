@@ -189,7 +189,9 @@ namespace fork_hooks {
       RtxOption<float>*    pNoiseScale      = nullptr;
       RtxOption<float>*    pDarkSide        = nullptr;
       RtxOption<float>*    pRoughness       = nullptr;
-      float elevDeg = 0.0f, rotDeg = 0.0f, phaseVal = 0.0f;
+      RtxOption<float>*    pElevation       = nullptr;
+      RtxOption<float>*    pRotation        = nullptr;
+      RtxOption<float>*    pPhase           = nullptr;
 
       switch (idx) {
 #define MOON_PTRS(N)                                                         \
@@ -204,9 +206,9 @@ namespace fork_hooks {
           pNoiseScale      = &RtxOptions::surfaceNoiseScale##N##Object();    \
           pDarkSide        = &RtxOptions::darkSideBrightness##N##Object();   \
           pRoughness       = &RtxOptions::roughnessAmount##N##Object();      \
-          elevDeg          = RtxOptions::elevation##N();                     \
-          rotDeg           = RtxOptions::rotation##N();                      \
-          phaseVal         = RtxOptions::phase##N();                         \
+          pElevation       = &RtxOptions::elevation##N##Object();            \
+          pRotation        = &RtxOptions::rotation##N##Object();             \
+          pPhase           = &RtxOptions::phase##N##Object();                \
           break
         MOON_PTRS(0);
         MOON_PTRS(1);
@@ -226,8 +228,12 @@ namespace fork_hooks {
         RemixGui::DragFloat("Brightness",     pBrightness,    0.1f, 0.0f, 20.0f, "%.1f",         sliderFlags);
         RemixGui::DragFloat3("Color",         pColor,         0.01f, 0.0f, 1.0f, "%.2f",         sliderFlags);
 
-        ImGui::Text("Elevation: %.1f\xc2\xb0  Rotation: %.1f\xc2\xb0  Phase: %.2f", elevDeg, rotDeg, phaseVal);
-        RemixGui::SetTooltipToLastWidgetOnHover("Pose is driven by game sync (read-only). Set elevation/rotation/phase in rtx.conf for static moons.");
+        RemixGui::DragFloat("Elevation", pElevation, 0.1f, -90.0f, 90.0f, "%.1f\xc2\xb0", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Moon elevation in degrees. Game-drivable per-frame; slider edits go to the Derived layer and don't persist to rtx.conf.");
+        RemixGui::DragFloat("Rotation",  pRotation,  0.1f, 0.0f, 360.0f, "%.1f\xc2\xb0", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Moon rotation/azimuth in degrees. Same persistence rules as Elevation.");
+        RemixGui::DragFloat("Phase",     pPhase,     0.005f, 0.0f, 1.0f, "%.3f",  sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Moon phase: 0 = new, 0.25 = first quarter, 0.5 = full, 0.75 = third quarter. Same persistence rules as Elevation.");
 
         if (ImGui::TreeNode("Appearance")) {
           static const char* kStyleNames[] = { "Rocky", "Volcanic" };
