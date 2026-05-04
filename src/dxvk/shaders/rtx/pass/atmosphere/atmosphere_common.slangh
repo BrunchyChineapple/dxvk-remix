@@ -1007,17 +1007,14 @@ float getPhaseIllumination(float phase, float diskX, float diskY) {
   float sphereWidth = sqrt(max(0.0f, 1.0f - diskY * diskY));
   float localTerminator = terminatorX * sphereWidth;
   
-  // With a fixed world-up frame, diskX positive is always the same side.
-  // Waxing (phase 0..0.5): right side lit first, growing
-  // Waning (phase 0.5..1): left side lit, shrinking
-  bool waxing = (phase < 0.5f);
-  
-  float illum;
-  if (waxing) {
-    illum = smoothstep(localTerminator - 0.03f, localTerminator + 0.03f, diskX);
-  } else {
-    illum = smoothstep(localTerminator + 0.03f, localTerminator - 0.03f, diskX);
-  }
+  // Single smoothstep — no waxing/waning conditional.
+  // cos(phase * 2π) naturally handles the full cycle:
+  //   phase 0.0 (new):  terminatorX = +1 → all dark
+  //   phase 0.25 (1Q):  terminatorX =  0 → half lit (right side)
+  //   phase 0.5 (full): terminatorX = -1 → all lit
+  //   phase 0.75 (3Q):  terminatorX =  0 → half lit (right side again)
+  // The lit side is always diskX > localTerminator.
+  float illum = smoothstep(localTerminator - 0.03f, localTerminator + 0.03f, diskX);
   
   return illum;
 }
@@ -1065,15 +1062,6 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   vec3 upVec = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
   vec3 moonRight = normalize(cross(upVec, moonDir));
   vec3 moonUp = cross(moonDir, moonRight);
-  
-  // Force moonRight to always point in a consistent world direction.
-  // If it points "west" (negative Z in Y-up space), flip it so it always
-  // points "east". This prevents the terminator from flipping between moons
-  // that are on different sides of the sky.
-  if (dot(moonRight, vec3(0.0f, 0.0f, -1.0f)) < 0.0f) {
-    moonRight = -moonRight;
-    moonUp = -moonUp;
-  }
   
   vec3 toView = normalize(viewDir - moonDir * cosAngle);
   float diskX = dot(toView, moonRight) * normalizedAngle;
@@ -1204,16 +1192,9 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
 
-  // Disk coordinates with consistent frame (identical to Secunda)
   vec3 upVec = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
   vec3 masserRightDir = normalize(cross(upVec, masserDir));
   vec3 masserUpPerp = cross(masserDir, masserRightDir);
-  
-  // Force same direction as Secunda — flip if pointing wrong way
-  if (dot(masserRightDir, vec3(0.0f, 0.0f, -1.0f)) < 0.0f) {
-    masserRightDir = -masserRightDir;
-    masserUpPerp = -masserUpPerp;
-  }
 
   vec3 toView = normalize(viewDir - masserDir * cosAngle);
   float diskX = dot(toView, masserRightDir) * normalizedAngle;
