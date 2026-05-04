@@ -833,30 +833,44 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   float theta = acos(clamp(dir.y, -1.0f, 1.0f));
   float phi = atan2(dir.z, dir.x);
 
-  // Pole compensation
-  float poleScale = sin(theta);
-  poleScale = max(poleScale, 0.15f);
-
   // Galactic plane: compute distance from the galactic band
   // Band tilted ~60° from vertical, meandering slightly
   float galacticLat = dir.x * 0.866f + dir.y * 0.5f;
-  // Add meander to the band using noise
   float meander = smoothNoise2D(vec2(phi * 2.0f, theta * 0.5f), 200.0f) * 0.08f;
   galacticLat += meander;
   float galacticDist = abs(galacticLat);
   
   // Galactic density: more stars near the galactic plane
-  // Tighter core + narrow halo for a well-defined band
-  float galacticCore = exp(-galacticDist * galacticDist * 300.0f);  // Tight bright core
-  float galacticHalo = exp(-galacticDist * galacticDist * 80.0f);   // Narrower halo
+  float galacticCore = exp(-galacticDist * galacticDist * 300.0f);
+  float galacticHalo = exp(-galacticDist * galacticDist * 80.0f);
   float galacticDensity = galacticCore * 0.5f + galacticHalo * 0.25f;
   
-  // Vary density along the band (denser in some regions, sparser in others)
   float bandVariation = smoothNoise2D(vec2(phi * 3.0f + 1.5f, galacticLat * 10.0f), 210.0f);
   galacticDensity *= (0.5f + 0.5f * bandVariation);
 
-  float gridScale = 800.0f;
-  vec2 gridUV = vec2(phi * gridScale * poleScale / kPi, theta * gridScale / kPi);
+  // 3D cube-face grid: project direction onto the dominant axis face of a cube,
+  // then use the other two axes as a 2D grid. This gives uniform cell sizes
+  // across the entire sphere with no pole singularities or view-dependent artifacts.
+  vec3 absDir = abs(dir);
+  float maxComp = max(absDir.x, max(absDir.y, absDir.z));
+  
+  // Determine which cube face we're on and get 2D coordinates
+  vec2 faceUV;
+  float faceId;
+  if (maxComp == absDir.x) {
+    faceUV = dir.yz / absDir.x;
+    faceId = dir.x > 0.0f ? 0.0f : 1.0f;
+  } else if (maxComp == absDir.y) {
+    faceUV = dir.xz / absDir.y;
+    faceId = dir.y > 0.0f ? 2.0f : 3.0f;
+  } else {
+    faceUV = dir.xy / absDir.z;
+    faceId = dir.z > 0.0f ? 4.0f : 5.0f;
+  }
+  
+  // Scale to grid resolution (faceUV ranges from -1 to 1, so 400 gives ~800 cells across)
+  float gridScale = 400.0f;
+  vec2 gridUV = faceUV * gridScale;
   vec2 gridCell = floor(gridUV);
   vec2 gridFrac = fract(gridUV);
 
@@ -866,8 +880,8 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
       vec2 neighbor = vec2(float(dx), float(dy));
       vec2 cell = gridCell + neighbor;
 
-      // Random position within cell
-      vec3 cellHash = hash33(vec3(cell, 0.0f));
+      // Include faceId in hash to avoid star patterns repeating across cube faces
+      vec3 cellHash = hash33(vec3(cell, faceId));
       vec2 starPos = neighbor + cellHash.xy - gridFrac;
 
       // Distance to star center
