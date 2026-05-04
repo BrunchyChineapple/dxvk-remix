@@ -1060,31 +1060,24 @@ vec3 evalMoonDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   limbDarkening = max(limbDarkening, 0.0f);
   
   // Compute disk coordinates using spherical coordinate differences.
-  // This avoids ALL frame construction issues — no cross products, no
-  // projections, no sign flips. The disk X axis is always aligned with
-  // the azimuth direction (left-right in the sky) and disk Y with
-  // elevation (up-down). Both moons use identical math so terminators
-  // always face the same direction.
-  //
-  // Convert moon center and view direction to spherical coords:
-  //   azimuth = atan2(x, z)  (horizontal angle)
-  //   elevation = asin(y)     (vertical angle, Y-up space)
-  float moonAz = atan2(moonDir.x, moonDir.z);
-  float moonEl = asin(clamp(moonDir.y, -1.0f, 1.0f));
-  float viewAz = atan2(viewDir.x, viewDir.z);
-  float viewEl = asin(clamp(viewDir.y, -1.0f, 1.0f));
+  // diskX = azimuth (left-right), diskY = elevation (up-down).
+  // Both moons use identical math so terminators always face the same direction.
+  vec3 upVec = abs(moonDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
+  vec3 moonRight = normalize(cross(upVec, moonDir));
+  vec3 moonUp = cross(moonDir, moonRight);
   
-  // Angular differences, normalized by moon radius
-  float dAz = (viewAz - moonAz);
-  // Wrap azimuth difference to [-pi, pi]
-  if (dAz > kPi) dAz -= 2.0f * kPi;
-  if (dAz < -kPi) dAz += 2.0f * kPi;
-  // Scale by cos(elevation) to account for azimuth compression near poles
-  dAz *= cos(moonEl);
-  float dEl = (viewEl - moonEl);
+  // Force moonRight to always point in a consistent world direction.
+  // If it points "west" (negative Z in Y-up space), flip it so it always
+  // points "east". This prevents the terminator from flipping between moons
+  // that are on different sides of the sky.
+  if (dot(moonRight, vec3(0.0f, 0.0f, -1.0f)) < 0.0f) {
+    moonRight = -moonRight;
+    moonUp = -moonUp;
+  }
   
-  float diskX = dAz / args.moonAngularRadius;
-  float diskY = dEl / args.moonAngularRadius;
+  vec3 toView = normalize(viewDir - moonDir * cosAngle);
+  float diskX = dot(toView, moonRight) * normalizedAngle;
+  float diskY = dot(toView, moonUp) * normalizedAngle;
   
   // Phase from daysPassed — stable per night, follows Morrowind's lunar calendar
   float illumination = getPhaseIllumination(args.moonPhase, diskX, diskY);
@@ -1211,21 +1204,20 @@ vec3 evalMasserDisk(vec3 viewDir, AtmosphereArgs args, out float diskCoverage) {
   float limbDarkening = 1.0f - 0.4f * normalizedAngle * normalizedAngle;
   limbDarkening = max(limbDarkening, 0.0f);
 
-  // Compute disk coordinates using spherical coordinate differences
-  // (identical to Secunda — ensures terminators always match)
-  float masserAz = atan2(masserDir.x, masserDir.z);
-  float masserEl = asin(clamp(masserDir.y, -1.0f, 1.0f));
-  float viewAz = atan2(viewDir.x, viewDir.z);
-  float viewEl = asin(clamp(viewDir.y, -1.0f, 1.0f));
+  // Disk coordinates with consistent frame (identical to Secunda)
+  vec3 upVec = abs(masserDir.y) < 0.999f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
+  vec3 masserRightDir = normalize(cross(upVec, masserDir));
+  vec3 masserUpPerp = cross(masserDir, masserRightDir);
   
-  float dAz = (viewAz - masserAz);
-  if (dAz > kPi) dAz -= 2.0f * kPi;
-  if (dAz < -kPi) dAz += 2.0f * kPi;
-  dAz *= cos(masserEl);
-  float dEl = (viewEl - masserEl);
-  
-  float diskX = dAz / args.masserAngularRadius;
-  float diskY = dEl / args.masserAngularRadius;
+  // Force same direction as Secunda — flip if pointing wrong way
+  if (dot(masserRightDir, vec3(0.0f, 0.0f, -1.0f)) < 0.0f) {
+    masserRightDir = -masserRightDir;
+    masserUpPerp = -masserUpPerp;
+  }
+
+  vec3 toView = normalize(viewDir - masserDir * cosAngle);
+  float diskX = dot(toView, masserRightDir) * normalizedAngle;
+  float diskY = dot(toView, masserUpPerp) * normalizedAngle;
 
   // Phase from daysPassed — stable per night, follows Morrowind's lunar calendar
   float illumination = getPhaseIllumination(args.masserPhase, diskX, diskY);
