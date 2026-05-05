@@ -1570,15 +1570,15 @@ vec3 evalSkyRadiance(
       vec3 moonDir = normalize(m.direction);
       float cosAngle = dot(viewDirYUp, moonDir);
       float angularDist = acos(clamp(cosAngle, -1.0f, 1.0f));
-      // Glow extends to ~3x the moon radius with soft Gaussian falloff
-      float glowRadius = m.angularRadius * 3.0f;
+      // Glow extends to ~2.5x the moon radius with tight Gaussian falloff
+      float glowRadius = m.angularRadius * 2.5f;
       if (angularDist < glowRadius) {
         float glowFalloff = angularDist / glowRadius;
-        float glow = exp(-glowFalloff * glowFalloff * 4.0f);  // Gaussian
+        float glow = exp(-glowFalloff * glowFalloff * 6.0f);  // Tighter Gaussian
         // Scale by brightness and phase (fuller = brighter glow)
         float phaseGlow = 1.0f - abs(cos(m.phase * 2.0f * kPi));
-        phaseGlow = max(phaseGlow, 0.1f);  // minimum glow even at new moon
-        vec3 glowColor = m.color * m.brightness * 0.03f * glow * phaseGlow * moonFade;
+        phaseGlow = max(phaseGlow, 0.05f);  // minimal glow at new moon
+        vec3 glowColor = m.color * m.brightness * 0.003f * glow * phaseGlow * moonFade;
         radiance += glowColor;
       }
     }
