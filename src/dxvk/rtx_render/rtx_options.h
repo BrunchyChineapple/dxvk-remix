@@ -416,7 +416,9 @@ namespace dxvk {
 
     struct ViewModel {
       friend class ImGUI;
-      RTX_OPTION("rtx.viewModel", bool, enable, false, "If true, try to resolve view models (e.g. first-person weapons). World geometry doesn't have shadows / reflections / etc from the view models.");
+      public: static void enableOnChange(DxvkDevice* device);
+      RTX_OPTION_ARGS("rtx.viewModel", bool, enable, false, "If true, try to resolve view models (e.g. first-person weapons). World geometry doesn't have shadows / reflections / etc from the view models.",
+                       args.onChangeCallback = &enableOnChange);
       RTX_OPTION("rtx.viewModel", float, rangeMeters, 1.0f, "[meters] Max distance at which to find a portal for view model virtual instances. If rtx.viewModel.separateRays is true, this is also max length of view model rays.");
       RTX_OPTION("rtx.viewModel", float, scale, 1.0f, "Scale for view models. Minimize to prevent clipping.");
       RTX_OPTION("rtx.viewModel", bool, enableVirtualInstances, true, "If true, virtual instances are created to render the view models behind a portal.");
@@ -549,6 +551,10 @@ namespace dxvk {
     RTX_OPTION_ARGS("rtx", bool, restoreCursorPosition, false,
                     "If true, the game's mouse cursor position will be restored when the Remix UI is closed.\n"
                     "This should fix the issue where the game camera suddenly turns when closing the UI.\n",
+                    args.flags = RtxOptionFlags::UserSetting);
+    RTX_OPTION_ARGS("rtx", bool, autoUnblockOptionEdits, false,
+                    "If true, editing an RtxOption in the Remix UI that is overridden by a stronger config layer clears the stronger value immediately instead of showing a confirmation dialog.",
+                    args.environment = "RTX_IMGUI_AUTO_UNBLOCK_OPTION_EDITS",
                     args.flags = RtxOptionFlags::UserSetting);
 
     inline static const VirtualKeys kDefaultRemixMenuKeyBinds{ VirtualKey{VK_MENU},VirtualKey{'X'} };
@@ -819,6 +825,12 @@ namespace dxvk {
     RTX_OPTION("rtx", bool, rngSeedWithFrameIndex, true,
                "Indicates that pseudo-random number generator should be seeded with the frame number of the application every frame, otherwise seed with 0.\n"
                "This should generally always be enabled as without the frame index each frame will typically be identical in the random values that are produced which will result in incorrect rendering. Only meant as a debugging tool.");
+    // declare onAdvanceTimeChanged
+    static void onAdvanceTimeChanged(DxvkDevice* device);
+    RTX_OPTION_ARGS("rtx", bool, advanceTime, true,
+               "A flag to enable or disable advancing time used by Remix subsystems (particle effects, animations, etc.).\n",
+                    args.environment = "RTX_ADVANCE_TIME",
+                    args.onChangeCallback = &RtxOptions::onAdvanceTimeChanged);
     RTX_OPTION_ARGS("rtx", bool, enableFirstBounceLobeProbabilityDithering, true,
                "A flag to enable or disable screen-space probability dithering on the first indirect lobe sampled.\n"
                "Generally sampling a diffuse, specular or other lobe relies on a random number generated against the probability of sampling each lobe, effectively focusing more rays/paths on lobes which matter more.\n"
@@ -1317,6 +1329,9 @@ namespace dxvk {
       RTX_OPTION_FLAG_ENV("rtx.automation", bool, suppressAssetLoadingErrors, false, RtxOptionFlags::NoSave, "RTX_AUTOMATION_SUPPRESS_ASSET_LOADING_ERRORS",
                           "Suppresses asset loading errors by turning them into warnings.\n"
                           "This option is typically meant for automation of tests for which acceptable asset loading issues are known.");
+      RTX_OPTION_FLAG_ENV("rtx.automation", bool, enableTestTrace, false, RtxOptionFlags::NoSave, "RTX_TEST_TRACE",
+                          "Enables opt-in frame trace artifacts for automation-driven image tests.\n"
+                          "When enabled, Remix records a bounded frame window around the configured screenshot frame, writes frame_trace.jsonl, and appends dxvk_trace_* summary fields to metrics.txt.");
     };
 
   public:

@@ -59,7 +59,7 @@
 
 #include "../util/log/metrics.h"
 #include "../util/util_defer.h"
-#include "../util/util_globaltime.h"
+#include "../util/util_global_time.h"
 
 #include "rtx_imgui.h"
 #include "dxvk_scoped_annotation.h"
@@ -186,6 +186,13 @@ namespace dxvk {
       m_triggerDelayedTerminate = true;
     }
 
+    Metrics::TestTraceConfig testTraceConfig;
+    testTraceConfig.enabled = RtxOptions::Automation::enableTestTrace();
+    testTraceConfig.screenshotFrameEnabled = m_screenshotFrameEnabled;
+    testTraceConfig.screenshotFrameNum = m_screenshotFrameNum;
+    testTraceConfig.terminateAppFrameNum = m_terminateAppFrameNum;
+    Metrics::configureTestTrace(testTraceConfig);
+
     m_prevRunningTime = std::chrono::steady_clock::now();
 
     checkOpacityMicromapSupport();
@@ -193,7 +200,8 @@ namespace dxvk {
     checkNeuralRadianceCacheSupport();
     reportCpuSimdSupport();
 
-    GlobalTime::get().init(RtxOptions::timeDeltaBetweenFrames());
+    GlobalTime::get().init(RtxOptions::timeDeltaBetweenFrames() * 0.001f);
+    GlobalTime::get().setAdvanceTime(RtxOptions::advanceTime());
 
     fork_hooks::initAtmosphere(*this);
   }
@@ -204,6 +212,7 @@ namespace dxvk {
     if (m_screenshotFrameNum != -1 || m_terminateAppFrameNum != -1) {
       Metrics::serialize();
     }
+
   }
 
   SceneManager& RtxContext::getSceneManager() {
@@ -216,6 +225,14 @@ namespace dxvk {
   // Returns GPU idle time between calls to this in milliseconds
   float RtxContext::getGpuIdleTimeSinceLastCall() {
     uint64_t currGpuIdleTicks = m_device->getStatCounters().getCtr(DxvkStatCounter::GpuIdleTicks);
+    if (!m_prevGpuIdleTicksInitialized) {
+      // DxvkSubmissionQueue::gpuIdleTicks() is a monotonic accumulator, so the
+      // only invalid sample here is the first one before we've established a baseline.
+      m_prevGpuIdleTicks = currGpuIdleTicks;
+      m_prevGpuIdleTicksInitialized = true;
+      return 0.0f;
+    }
+
     uint64_t delta = currGpuIdleTicks - m_prevGpuIdleTicks;
     m_prevGpuIdleTicks = currGpuIdleTicks;
 
@@ -521,6 +538,22 @@ namespace dxvk {
     common->getTextureManager().processAllHotReloadRequests();
 
     const float gpuIdleTimeMilliseconds = getGpuIdleTimeSinceLastCall();
+    Metrics::TestTraceSample testTraceSample;
+    testTraceSample.frameId = m_device->getCurrentFrameId();
+    testTraceSample.effectiveDeltaMs = GlobalTime::get().deltaTimeMs();
+    testTraceSample.realWallDeltaMs = GlobalTime::get().realDeltaTimeMs();
+    testTraceSample.gpuIdleTimeMs = gpuIdleTimeMilliseconds;
+    testTraceSample.surfaceCount = getSceneManager().getAccelManager().getSurfaceCount();
+    testTraceSample.shaderCompileInflightCount = getCommonObjects()->pipelineManager().remixShaderCompilationCount();
+    testTraceSample.debugViewMode = m_common->metaDebugView().getDebugViewIndex();
+    testTraceSample.compositeDebugViewMode = m_common->metaDebugView().getCompositeDebugViewIndex();
+    testTraceSample.raytracingEnabled = isRaytracingEnabled;
+    testTraceSample.cameraValid = isCameraValid;
+    testTraceSample.asyncShaderPrewarming = RtxInitializer::asyncShaderPrewarming();
+    testTraceSample.asyncCompilationEnabled = RtxOptions::Shader::enableAsyncCompilation();
+    testTraceSample.asyncCompilationActive = asyncShaderCompilationActive;
+    testTraceSample.surfaceBufferAvailable = getSceneManager().getSurfaceBuffer() != nullptr;
+    Metrics::recordTestTrace(testTraceSample);
 
     bool raytracedThisFrame = false;
 
@@ -549,6 +582,7 @@ namespace dxvk {
         Logger::info(str::format("RTX: Use nis ", RtxOptions::isNISEnabled()));
         if (!s_capturePrePresentTestScreenshot) {
           m_screenshotFrameEnabled = false;
+          Metrics::setTestTraceScreenshotFrameEnabled(false);
         }
       }
 
@@ -824,7 +858,7 @@ namespace dxvk {
 
   void RtxContext::updateMetrics(const float gpuIdleTimeMilliseconds) const {
     ScopedCpuProfileZone();
-    Metrics::logRollingAverage(Metric::dxvk_average_frame_time_ms, GlobalTime::get().deltaTimeMs()); // In milliseconds
+    Metrics::logRollingAverage(Metric::dxvk_average_frame_time_ms, GlobalTime::get().realDeltaTimeMs()); // In milliseconds
     Metrics::logRollingAverage(Metric::dxvk_gpu_idle_time_ms, gpuIdleTimeMilliseconds); // In milliseconds
     uint64_t vidUsageMib = 0;
     uint64_t sysUsageMib = 0;
