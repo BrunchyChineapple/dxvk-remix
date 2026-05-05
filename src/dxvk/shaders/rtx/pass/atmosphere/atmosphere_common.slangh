@@ -960,44 +960,13 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   return totalStars * args.starBrightness;
 }
 
-// Sun-oriented phase illumination: computes the terminator from the actual
-// sun-moon angle rather than a discrete phase value. This is physically
-// correct and can't get out of sync with the sun direction.
-//
-// sunMoonDot: dot(sunDir, moonDir)
-//   +1 = sun directly behind moon (new moon, all dark)
-//   -1 = sun directly opposite moon (full moon, all lit)
-//    0 = sun at 90° to moon (quarter moon, half lit)
-// diskX, diskY: position on disk [-1, 1], X axis points toward sun
-float getPhaseIllumination_sunOriented(float sunMoonDot, float diskX, float diskY) {
-  float diskR = length(vec2(diskX, diskY));
-  if (diskR > 1.0f) return 0.0f;
-  
-  // The terminator position on the equator is simply the sun-moon dot product.
-  // This maps directly: full (dot=-1) → terminatorX=-1 → all lit,
-  // new (dot=+1) → terminatorX=+1 → all dark.
-  float terminatorX = sunMoonDot;
-  
-  // Curved terminator: the shadow boundary curves with the sphere
-  float sphereWidth = sqrt(max(0.0f, 1.0f - diskY * diskY));
-  float localTerminator = terminatorX * sphereWidth;
-  
-  // Lit side is at diskX > localTerminator (positive diskX = toward sun)
-  float illum = smoothstep(localTerminator - 0.03f, localTerminator + 0.03f, diskX);
-  
-  return illum;
-}
-
 // Compute 2D disk-space phase illumination matching vanilla Morrowind's crescent shape.
 // Produces a CURVED terminator (elliptical) like a real sphere shadow, not a straight line.
 // Both moons use the same mapping so shadows are always on the same side.
 //
-// IMPORTANT: diskX must be oriented so that positive X points toward the sun
-// (the caller builds a sun-oriented local frame). This means the lit side is
-// always at positive diskX, and the terminator sweeps from right to left as
-// the phase goes from new (0) to full (0.5) and back.
-//
 // phase: 0=new (dark), 0.5=full (bright), 1.0=new again
+// diskX, diskY: position on disk [-1, 1]
+// Returns illumination factor [0, 1]
 // diskX, diskY: position on disk [-1, 1], X axis points toward sun
 // Returns illumination factor [0, 1]
 float getPhaseIllumination(float phase, float diskX, float diskY) {
