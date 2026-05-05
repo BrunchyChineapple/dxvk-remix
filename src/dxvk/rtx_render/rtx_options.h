@@ -1312,7 +1312,7 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", float, cloudAnisotropy, 0.6f, "Henyey-Greenstein g for cloud forward-scatter (silver lining).");
 
     // Cloud volumetric / appearance enhancements
-    RTX_OPTION("rtx.atmosphere", uint32_t, cloudViewSamples, 12,
+    RTX_OPTION("rtx.atmosphere", uint32_t, cloudViewSamples, 5,
                "Number of ray-march steps through the cloud slab. Higher = better quality, more cost. Range 1..32.");
     RTX_OPTION("rtx.atmosphere", float, cloudThickness, 1.0f,
                "Vertical depth of the cloud slab in km.");
