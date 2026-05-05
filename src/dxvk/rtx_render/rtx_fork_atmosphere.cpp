@@ -457,6 +457,8 @@ namespace fork_hooks {
         RemixGui::SetTooltipToLastWidgetOnHover("Strength of high-frequency detail. Auto-fades at low Scale to avoid visible noise.");
         RemixGui::DragFloat("Vertical Profile", &RtxOptions::cloudVerticalProfileObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover("0 = flat 2D extrusion. 1 = rounded cumulus bottoms with wispy tops + wind-shear lateral shift. Integral normalized so opacity stays consistent.");
+        RemixGui::DragFloat("Curvature", &RtxOptions::cloudCurvatureObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Sky-dome curvature: 0 = real-planet radius (nearly flat ceiling), 1 = tight dome. Only affects cloud sphere geometry — atmosphere math is untouched.");
 
         ImGui::Separator();
         ImGui::TextDisabled("Color polish");

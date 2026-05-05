@@ -457,12 +457,24 @@ vec3 evalAtmosphereRadiance(
 // altitude, sample the noise at that point, and then composite (alpha, color).
 // Returns cloud radiance premultiplied by coverage in .rgb and coverage in .a.
 
+// Effective planet radius for the cloud sphere. cloudCurvature=0 reproduces
+// the real planet radius (very subtle dome at Earth scale). Higher values
+// shrink the effective radius exponentially so clouds visibly curve down
+// toward the horizon. Atmospheric scattering math still uses the real
+// planet radius — only cloud sphere intersections are affected.
+float cloudPlanetRadius(AtmosphereArgs args) {
+  const float kMinRadius = 100.0f;  // km, floor at maximum curvature
+  return max(kMinRadius, args.planetRadius * exp(-args.cloudCurvature * 5.0f));
+}
+
 // Compute height fraction within the cloud slab from a world-space sample
 // position. hf=0 at slab base (cloudAltitude); hf=1 at slab top
-// (cloudAltitude + cloudThickness). Saturates outside the slab.
+// (cloudAltitude + cloudThickness). Saturates outside the slab. Uses the
+// effective cloud planet radius so geometry is consistent with curvature.
 float computeCloudHeightFraction(vec3 samplePos, AtmosphereArgs args) {
-  vec3 planetCenter = vec3(0.0f, -args.planetRadius, 0.0f);
-  float altitudeAboveSea = length(samplePos - planetCenter) - args.planetRadius;
+  float cloudR = cloudPlanetRadius(args);
+  vec3 planetCenter = vec3(0.0f, -cloudR, 0.0f);
+  float altitudeAboveSea = length(samplePos - planetCenter) - cloudR;
   return saturate((altitudeAboveSea - args.cloudAltitude) / max(args.cloudThickness, 0.001f));
 }
 
@@ -524,8 +536,8 @@ float sampleCloudDensity(vec2 worldPosKm, float heightFraction, AtmosphereArgs a
 
 // Intersect view ray with the cloud shell. Returns true and the hit distance
 // if we hit the upward-looking cloud sphere at altitude args.cloudAltitude.
-// Ray origin is at the camera (0,0,0) in Y-up space where planet center =
-// (0, -planetRadius, 0).
+// Ray origin is at the camera (0,0,0) in Y-up space; the cloud sphere uses
+// the effective curvature-adjusted planet radius (see cloudPlanetRadius).
 bool intersectCloudLayer(vec3 rayDir, AtmosphereArgs args, out float t, out vec3 hitPos) {
   t = -1.0f;
   hitPos = vec3(0.0f);
@@ -533,8 +545,9 @@ bool intersectCloudLayer(vec3 rayDir, AtmosphereArgs args, out float t, out vec3
   // Looking below the horizon: no cloud layer hit above us.
   if (rayDir.y <= 0.001f) return false;
 
-  vec3 planetCenter = vec3(0.0f, -args.planetRadius, 0.0f);
-  float cloudSphereRadius = args.planetRadius + args.cloudAltitude;
+  float cloudR = cloudPlanetRadius(args);
+  vec3 planetCenter = vec3(0.0f, -cloudR, 0.0f);
+  float cloudSphereRadius = cloudR + args.cloudAltitude;
 
   float t0, t1;
   if (!intersectSphere(vec3(0.0f), rayDir, planetCenter, cloudSphereRadius, t0, t1)) {
@@ -1499,10 +1512,12 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args) {
   // Looking below the horizon: no cloud layer above us.
   if (viewDir.y <= 0.001f) return vec4(0.0f);
 
-  // Slab geometry
-  vec3 planetCenter = vec3(0.0f, -args.planetRadius, 0.0f);
-  float baseRadius = args.planetRadius + args.cloudAltitude;
-  float topRadius  = args.planetRadius + args.cloudAltitude + args.cloudThickness;
+  // Slab geometry — uses the curvature-adjusted cloud planet radius so the
+  // dome tightens as cloudCurvature increases. Atmosphere math is unaffected.
+  float cloudR = cloudPlanetRadius(args);
+  vec3 planetCenter = vec3(0.0f, -cloudR, 0.0f);
+  float baseRadius = cloudR + args.cloudAltitude;
+  float topRadius  = cloudR + args.cloudAltitude + args.cloudThickness;
 
   float t0base, t1base, t0top, t1top;
   if (!intersectSphere(vec3(0.0f), viewDir, planetCenter, baseRadius, t0base, t1base)) return vec4(0.0f);
@@ -1561,15 +1576,18 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args) {
   // Horizon fade applied uniformly per ray
   float horizonFade = smoothstep(0.02f, 0.15f, viewDir.y);
 
-  // Ray-march
+  // Ray-march. Per-pixel hash jitter on the fractional step offset breaks
+  // the visible band-rings at low sample counts into noise that DLSS / temporal
+  // averaging blurs out — much cheaper than bumping cloudViewSamples.
   float stepLen = (tExit - tEntry) / float(args.cloudViewSamples);
+  float jitter = hash31(viewDir);  // [0, 1) per pixel
   vec3 accumRadiance = vec3(0.0f);
   float transmittance = 1.0f;
 
   for (uint i = 0u; i < args.cloudViewSamples; ++i) {
     if (transmittance < 0.01f) break;  // early-exit (free perf win)
 
-    float t = tEntry + stepLen * (float(i) + 0.5f);  // sample at center of step
+    float t = tEntry + stepLen * (float(i) + jitter);
     vec3 samplePos = viewDir * t;
 
     float hf = computeCloudHeightFraction(samplePos, sampleArgs);

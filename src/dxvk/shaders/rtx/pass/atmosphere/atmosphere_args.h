@@ -129,5 +129,5 @@ struct AtmosphereArgs {
   float cloudVariance;         // 0..1
   float cloudVarianceScale;    // Variance noise scale
   float cloudVerticalProfile;  // 0 = flat extrude, 1 = bell + perturb
-  float pad8;
+  float cloudCurvature;        // 0 = Earth-scale dome, 1 = tight dome
 };
