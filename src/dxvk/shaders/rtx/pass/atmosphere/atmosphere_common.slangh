@@ -1381,6 +1381,43 @@ vec3 evalSkyRadiance(
     float masserCoverage = 0.0f;
     float secundaCoverage = 0.0f;
     
+    // Moon glow/halo: soft radial falloff around each moon, additive.
+    // Added before the opaque disk so the disk cleanly replaces it.
+    {
+      // Secunda glow
+      if (args.moonEnabled > 0.5f) {
+        vec3 moonDir = normalize(args.moonDirection);
+        float cosAngle = dot(viewDirYUp, moonDir);
+        float angularDist = acos(clamp(cosAngle, -1.0f, 1.0f));
+        // Glow extends to ~3x the moon radius with soft Gaussian falloff
+        float glowRadius = args.moonAngularRadius * 3.0f;
+        if (angularDist < glowRadius) {
+          float glowFalloff = angularDist / glowRadius;
+          float glow = exp(-glowFalloff * glowFalloff * 4.0f);  // Gaussian
+          // Scale by brightness and phase (fuller = brighter glow)
+          float phaseGlow = 1.0f - abs(cos(args.moonPhase * 2.0f * kPi));
+          phaseGlow = max(phaseGlow, 0.1f);  // minimum glow even at new moon
+          vec3 glowColor = args.moonColor * args.moonBrightness * 0.03f * glow * phaseGlow * moonFade;
+          radiance += glowColor;
+        }
+      }
+      // Masser glow
+      if (args.masserEnabled > 0.5f) {
+        vec3 masserDir = normalize(args.masserDirection);
+        float cosAngle = dot(viewDirYUp, masserDir);
+        float angularDist = acos(clamp(cosAngle, -1.0f, 1.0f));
+        float glowRadius = args.masserAngularRadius * 2.5f;
+        if (angularDist < glowRadius) {
+          float glowFalloff = angularDist / glowRadius;
+          float glow = exp(-glowFalloff * glowFalloff * 4.0f);
+          float phaseGlow = 1.0f - abs(cos(args.masserPhase * 2.0f * kPi));
+          phaseGlow = max(phaseGlow, 0.1f);
+          vec3 glowColor = args.masserColor * args.masserBrightness * 0.02f * glow * phaseGlow * moonFade;
+          radiance += glowColor;
+        }
+      }
+    }
+
     // Masser renders first (behind Secunda since it's larger and farther)
     vec3 masserContrib = evalMasserDisk(viewDirYUp, args, masserCoverage);
     masserCoverage *= moonFade;
