@@ -280,6 +280,20 @@ initializer list and can't be lifted into a separate TU.
 
 ---
 
+## src/dxvk/rtx_render/rtx_atmosphere.cpp
+
+**Pre-refactor fork footprint:** +0 / -0 LOC (file is fork-introduced; no upstream content modified at fork-point audit 2026-04-18)
+**Current fork footprint:** +9 / -5 net LOC (cloud spatial-variation mirror block, 2026-05-06)
+
+**Category:** index-only
+
+**Rationale:** `rtx_atmosphere.cpp` is entirely fork-introduced (no upstream original exists at fork-point), so only the host-side mirror block that copies RTX_OPTIONs into `AtmosphereArgs` is tracked here. The mirror assignments are structurally inseparable from `RtxAtmosphere::getAtmosphereArgs()` and cannot be extracted.
+
+- **Inline tweak** at cloud-mirror block in `RtxAtmosphere::getAtmosphereArgs()` (cloud spatial-variation host-side mirroring) — +9 / -5 net LOC.
+  *Mirrors the seven new spatial-variation RTX_OPTIONs (`cloudTypeMean`, `cloudTypeSpread`, `cloudTypeNoiseScale`, `cloudCoverageMean`, `cloudCoverageSpread`, `cloudCoverageNoiseScale`, `cloudAnvilBias`) plus a `pad4 = 0.0f` alignment slot into `AtmosphereArgs`. Removes mirroring for the four retired options (`cloudCoverage`, `cloudVariance`, `cloudVarianceScale`, `cloudVerticalProfile`). Spec 2026-05-06.*
+
+---
+
 ## src/dxvk/rtx_render/rtx_camera_manager.cpp
 
 **Pre-refactor fork footprint:** +10 / -10 LOC (audit 2026-04-18)
@@ -514,6 +528,9 @@ initializer list and can't be lifted into a separate TU.
 
 - **Inline tweak** at `RtxOptions` class body (atmosphere RTX_OPTIONs block) — ~25 LOC for the original 17 options + ~5 LOC for night-sky + ~52 LOC for the `DECLARE_MOON_OPTIONS(N)` macro and 4 invocations + ~11 LOC for the cloud block + ~13 LOC for the cloud-enhancement block (including `cloudVerticalProfile`, `cloudCurvature`). `sunElevation` and `sunRotation` flipped from `RTX_OPTION` → `RTX_OPTION_FLAG` with `NoSave` so the game can drive them per-frame without polluting the user config. Cloud defaults tuned from artist iteration.
   *Declares the original 17 atmosphere tuning options under the `rtx.atmosphere` prefix (`sunDisc`, `sunSize`, `sunIntensity`, `sunElevation`, `sunRotation`, `altitude`, `airDensity`, `aerosolDensity`, `ozoneDensity`, `planetRadius`, `atmosphereThickness`, `mieAnisotropy`, `rayleighScattering`, `mieScattering`, `ozoneAbsorption`, `ozoneLayerAltitude`, `ozoneLayerWidth`, `sunIlluminance`), plus the night-sky block (`starBrightness`, `starDensity`, `starTwinkleSpeed`, `nightSkyBrightness`, `nightSkyColor`), plus a per-moon block declared via the `DECLARE_MOON_OPTIONS(N)` macro for `N` in `0..MAX_MOONS-1` (each block: `enabledN`, `angularRadiusN`, `brightnessN`, `colorN`, `surfaceStyleN`, `craterDensityN`, `surfaceContrastN`, `surfaceNoiseScaleN`, `darkSideBrightnessN`, `roughnessAmountN`, plus NoSave-flagged `elevationN`/`rotationN`/`phaseN`), plus a cloud block (`cloudEnabled`, `cloudDensity`, `cloudAltitude`, `cloudScale`, `cloudColor`, `cloudWindSpeed`, `cloudWindDirection`, `cloudShadowStrength`, `cloudAnisotropy`, plus NoSave-flagged `cloudCoverage` for game-driven weather), plus a cloud-enhancement block (`cloudViewSamples`, `cloudThickness`, `cloudDetailWeight`, `cloudShadowTint`, `cloudShadowTintStrength`, `cloudSunsetWarmth`, `cloudVariance`, `cloudVarianceScale`, `cloudVerticalProfile`, `cloudCurvature`) for volumetric ray-march tuning, color polish, vertical-shape character, and sky-dome curvature. All consumed by `RtxAtmosphere::getAtmosphereArgs()` and the atmosphere UI hook in `rtx_fork_atmosphere.cpp`.*
+
+- **Inline tweak** at `RtxOptions` class body (cloud spatial-variation block) — +17 / -11 net LOC.
+  *Adds `cloudTypeMean`, `cloudTypeSpread`, `cloudTypeNoiseScale`, `cloudCoverageMean`, `cloudCoverageSpread`, `cloudCoverageNoiseScale`, `cloudAnvilBias` RTX_OPTIONs (Nubis-style spatial variation, spec 2026-05-06). Replaces retired `cloudCoverage`, `cloudVariance`, `cloudVarianceScale`, `cloudVerticalProfile`.*
 
 - **Inline tweak** — remove `rtx.useLegacyACES` + `rtx.showLegacyACESOption` RtxOptions (superseded by `TonemapOperator::ACESLegacy` enum value).
   *Both options live at the `rtx` namespace (not `rtx.tonemap`); removed in the enum refactor.*
