@@ -402,56 +402,9 @@ namespace fork_hooks {
           ImGui::TreePop();
         }
 
-        if (ImGui::TreeNode("Night Sky")) {
-          RemixGui::DragFloat("Star Brightness", &RtxOptions::starBrightnessObject(), 0.1f, 0.0f, 50.0f, "%.1f", sliderFlags);
-          RemixGui::DragFloat("Star Density", &RtxOptions::starDensityObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
-          RemixGui::SetTooltipToLastWidgetOnHover("Threshold: 0 = all stars visible, 1 = no stars");
-          RemixGui::DragFloat("Star Twinkle Speed", &RtxOptions::starTwinkleSpeedObject(), 0.1f, 0.0f, 10.0f, "%.1f", sliderFlags);
-          RemixGui::DragFloat("Night Sky Brightness", &RtxOptions::nightSkyBrightnessObject(), 0.001f, 0.0f, 0.1f, "%.4f", sliderFlags);
-          RemixGui::SetTooltipToLastWidgetOnHover("Airglow / ambient night sky brightness");
-          RemixGui::DragFloat3("Night Sky Color", &RtxOptions::nightSkyColorObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
-          ImGui::TreePop();
-        }
-
-        if (ImGui::TreeNode("Secunda (Moon)")) {
-          RemixGui::Checkbox("Enabled", &RtxOptions::moonEnabledObject());
-          RemixGui::DragFloat("Angular Radius", &RtxOptions::moonAngularRadiusObject(), 0.1f, 0.1f, 20.0f, "%.1f°", sliderFlags);
-          RemixGui::DragFloat("Brightness", &RtxOptions::moonBrightnessObject(), 0.1f, 0.0f, 20.0f, "%.1f", sliderFlags);
-          RemixGui::DragFloat3("Color", &RtxOptions::moonColorObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
-          ImGui::Text("Elevation: %.1f°  Rotation: %.1f°  Phase: %.2f",
-            RtxOptions::moonElevation(), RtxOptions::moonRotation(), RtxOptions::moonPhase());
-          RemixGui::SetTooltipToLastWidgetOnHover("Driven by game sync (read-only)");
-          ImGui::TreePop();
-        }
-
-        if (ImGui::TreeNode("Masser (Red Moon)")) {
-          RemixGui::Checkbox("Enabled", &RtxOptions::masserEnabledObject());
-          RemixGui::DragFloat("Angular Radius", &RtxOptions::masserAngularRadiusObject(), 0.1f, 0.1f, 30.0f, "%.1f°", sliderFlags);
-          RemixGui::DragFloat("Brightness", &RtxOptions::masserBrightnessObject(), 0.1f, 0.0f, 20.0f, "%.1f", sliderFlags);
-          RemixGui::DragFloat3("Color", &RtxOptions::masserColorObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
-          ImGui::Text("Elevation: %.1f°  Rotation: %.1f°  Phase: %.2f",
-            RtxOptions::masserElevation(), RtxOptions::masserRotation(), RtxOptions::masserPhase());
-          RemixGui::SetTooltipToLastWidgetOnHover("Driven by game sync (read-only)");
-          ImGui::TreePop();
-        }
-
-        if (ImGui::TreeNode("Clouds")) {
-          RemixGui::Checkbox("Enabled", &RtxOptions::cloudEnabledObject());
-          RemixGui::DragFloat("Coverage", &RtxOptions::cloudCoverageObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
-          RemixGui::SetTooltipToLastWidgetOnHover("0 = clear sky, 1 = overcast. Normally driven by game weather.");
-          RemixGui::DragFloat("Density", &RtxOptions::cloudDensityObject(), 0.05f, 0.0f, 4.0f, "%.2f", sliderFlags);
-          RemixGui::DragFloat("Altitude", &RtxOptions::cloudAltitudeObject(), 0.1f, 0.5f, 12.0f, "%.1f km", sliderFlags);
-          RemixGui::DragFloat("Scale", &RtxOptions::cloudScaleObject(), 0.005f, 0.005f, 1.0f, "%.3f", sliderFlags);
-          RemixGui::SetTooltipToLastWidgetOnHover("Horizontal noise scale. Smaller values = larger cloud clumps.");
-          RemixGui::DragFloat3("Color", &RtxOptions::cloudColorObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
-          RemixGui::DragFloat("Wind Speed", &RtxOptions::cloudWindSpeedObject(), 0.005f, 0.0f, 1.0f, "%.3f km/s", sliderFlags);
-          RemixGui::DragFloat("Wind Direction", &RtxOptions::cloudWindDirectionObject(), 1.0f, 0.0f, 360.0f, "%.1f°", sliderFlags);
-          RemixGui::DragFloat("Shadow Strength", &RtxOptions::cloudShadowStrengthObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
-          RemixGui::SetTooltipToLastWidgetOnHover("How much overcast cover dims ground and atmosphere lighting.");
-          RemixGui::DragFloat("Anisotropy", &RtxOptions::cloudAnisotropyObject(), 0.01f, 0.0f, 0.99f, "%.2f", sliderFlags);
-          RemixGui::SetTooltipToLastWidgetOnHover("Henyey-Greenstein g for forward-scatter silver lining.");
-          ImGui::TreePop();
-        }
+        // Night Sky, Moons, and Clouds now live as top-level tree nodes
+        // immediately below (from the remixplus/main merge). The old nested
+        // blocks here duplicated their RTX_OPTIONs and have been removed.
 
         ImGui::TreePop();
       }
