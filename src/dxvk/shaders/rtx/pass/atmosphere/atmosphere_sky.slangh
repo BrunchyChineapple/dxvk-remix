@@ -627,7 +627,7 @@ float sampleCloudSunTransmittance(vec3 cloudHitPos, vec3 sunDir,
 //     to modulate effective coverage (creates non-uniform sky).
 //  3. Step through the slab cloudViewSamples times. At each sample:
 //       - Sample density (with effective coverage)
-//       - Compute sun illumination (4-tap shadow + atmospheric transmittance)
+//       - Compute sun illumination (2-tap shadow + atmospheric transmittance)
 //       - Add ambient + sky-bounce shadow tint + sun-coupled warm tint
 //       - Accumulate using analytical Beer-Lambert
 //  4. Early-exit when transmittance drops below 0.01.
@@ -711,10 +711,13 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args) {
   //     response gated by phaseGlow and cloudMoonBrightness. Same shape
   //     as the sun's per-ray lightResponse * sunIlluminance product.
   //   - moonShadow (per-sample, computed in the march loop below):
-  //     4-tap density march along moon direction via the same
+  //     ONE 2-tap density march along the brightness-weighted combined
+  //     moon direction (combinedMoonDir, computed below) via the same
   //     sampleCloudSunTransmittance helper the sun uses. Multiplies
-  //     moonCoeff[mi] per sample so the cumulus moon-facing side reads
-  //     bright while the far side darkens — mirrors sun behavior.
+  //     combinedMoonCoeff per sample so the cumulus moon-facing side reads
+  //     bright while the far side darkens — mirrors sun behavior. The
+  //     combined-direction approximation replaces N independent per-moon
+  //     shadow marches; see Lever 4 rationale near the precompute below.
   vec3 nightLight = vec3(0.0f);
   vec3 moonCoeff[MAX_MOONS];
   vec3 moonDirNorm[MAX_MOONS];
@@ -862,6 +865,9 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args) {
                                                   typeLocal, coverageLocal, args);
         cachedMoonShadow = moonShadow;
       }
+      // Approximation: (Σ moonCoeff_i) * shadow_combined replaces the original
+      // Σ(moonCoeff_i * shadow_i). Equal iff per-moon shadow values are uniform,
+      // which holds at cloud scale where direction is a perceptual cue only.
       moonDirectLight = combinedMoonCoeff * moonShadow;
     }
 
