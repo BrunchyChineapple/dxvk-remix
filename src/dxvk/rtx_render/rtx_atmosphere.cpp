@@ -95,6 +95,90 @@ void RtxAtmosphere::initialize(Rc<DxvkContext> ctx) {
   m_lutsNeedRecompute = true;
 }
 
+namespace {
+  // Helper: populate one MoonParams from the indexed RTX_OPTIONs for moon `i`.
+  // RTX_OPTION accessors are static methods generated per-option, so we dispatch
+  // by index with an inline switch. MAX_MOONS is small (4); deliberate simple
+  // repetition is clearer than an indirection layer here.
+  void populateMoonParams(MoonParams& m, uint32_t i) {
+    constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
+
+    bool     enabled         = false;
+    float    elevationDeg    = 0.0f;
+    float    rotationDeg     = 0.0f;
+    float    angularDiamDeg  = 0.0f;
+    Vector3  color           = Vector3(1.0f, 1.0f, 1.0f);
+    float    brightness      = 1.0f;
+    uint32_t surfaceStyle    = 0u;
+    float    phase           = 0.5f;
+    float    craterDensity   = 1.0f;
+    float    surfaceContrast = 1.0f;
+    float    noiseScale      = 1.0f;
+    float    darkSide        = 0.05f;
+    float    roughness       = 1.0f;
+
+    switch (i) {
+    case 0:
+      enabled         = RtxOptions::enabled0();         elevationDeg    = RtxOptions::elevation0();
+      rotationDeg     = RtxOptions::rotation0();        angularDiamDeg  = RtxOptions::angularRadius0();
+      color           = RtxOptions::color0();           brightness      = RtxOptions::brightness0();
+      surfaceStyle    = RtxOptions::surfaceStyle0();    phase           = RtxOptions::phase0();
+      craterDensity   = RtxOptions::craterDensity0();   surfaceContrast = RtxOptions::surfaceContrast0();
+      noiseScale      = RtxOptions::surfaceNoiseScale0(); darkSide      = RtxOptions::darkSideBrightness0();
+      roughness       = RtxOptions::roughnessAmount0();
+      break;
+    case 1:
+      enabled         = RtxOptions::enabled1();         elevationDeg    = RtxOptions::elevation1();
+      rotationDeg     = RtxOptions::rotation1();        angularDiamDeg  = RtxOptions::angularRadius1();
+      color           = RtxOptions::color1();           brightness      = RtxOptions::brightness1();
+      surfaceStyle    = RtxOptions::surfaceStyle1();    phase           = RtxOptions::phase1();
+      craterDensity   = RtxOptions::craterDensity1();   surfaceContrast = RtxOptions::surfaceContrast1();
+      noiseScale      = RtxOptions::surfaceNoiseScale1(); darkSide      = RtxOptions::darkSideBrightness1();
+      roughness       = RtxOptions::roughnessAmount1();
+      break;
+    case 2:
+      enabled         = RtxOptions::enabled2();         elevationDeg    = RtxOptions::elevation2();
+      rotationDeg     = RtxOptions::rotation2();        angularDiamDeg  = RtxOptions::angularRadius2();
+      color           = RtxOptions::color2();           brightness      = RtxOptions::brightness2();
+      surfaceStyle    = RtxOptions::surfaceStyle2();    phase           = RtxOptions::phase2();
+      craterDensity   = RtxOptions::craterDensity2();   surfaceContrast = RtxOptions::surfaceContrast2();
+      noiseScale      = RtxOptions::surfaceNoiseScale2(); darkSide      = RtxOptions::darkSideBrightness2();
+      roughness       = RtxOptions::roughnessAmount2();
+      break;
+    case 3:
+      enabled         = RtxOptions::enabled3();         elevationDeg    = RtxOptions::elevation3();
+      rotationDeg     = RtxOptions::rotation3();        angularDiamDeg  = RtxOptions::angularRadius3();
+      color           = RtxOptions::color3();           brightness      = RtxOptions::brightness3();
+      surfaceStyle    = RtxOptions::surfaceStyle3();    phase           = RtxOptions::phase3();
+      craterDensity   = RtxOptions::craterDensity3();   surfaceContrast = RtxOptions::surfaceContrast3();
+      noiseScale      = RtxOptions::surfaceNoiseScale3(); darkSide      = RtxOptions::darkSideBrightness3();
+      roughness       = RtxOptions::roughnessAmount3();
+      break;
+    default:
+      enabled = false; // out-of-range — leave defaults
+      break;
+    }
+
+    const float elevRad = elevationDeg * kDegToRad;
+    const float aziRad  = rotationDeg  * kDegToRad;
+    m.direction.x = std::cos(elevRad) * std::sin(aziRad);
+    m.direction.y = std::sin(elevRad);
+    m.direction.z = std::cos(elevRad) * std::cos(aziRad);
+
+    m.angularRadius      = (angularDiamDeg * kDegToRad) * 0.5f;
+    m.color              = color;
+    m.brightness         = brightness;
+    m.surfaceStyle       = surfaceStyle;
+    m.phase              = phase;
+    m.enabled            = enabled ? 1.0f : 0.0f;
+    m.craterDensity      = craterDensity;
+    m.surfaceContrast    = surfaceContrast;
+    m.surfaceNoiseScale  = noiseScale;
+    m.darkSideBrightness = darkSide;
+    m.roughnessAmount    = roughness;
+  }
+} // anonymous namespace
+
 AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   AtmosphereArgs args = {};
 
@@ -158,58 +242,30 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.mieScaleHeight = kMieScaleHeight;
   args.pad2 = 0;
 
-  // Night sky parameters
-  args.starBrightness = RtxOptions::starBrightness();
-  args.starDensity = RtxOptions::starDensity();
-  args.starTwinkleSpeed = RtxOptions::starTwinkleSpeed();
+  // ----- Night-sky shading (fork) -----
+  args.starBrightness     = RtxOptions::starBrightness();
+  args.starDensity        = RtxOptions::starDensity();
+  args.starTwinkleSpeed   = RtxOptions::starTwinkleSpeed();
   args.nightSkyBrightness = RtxOptions::nightSkyBrightness();
-  args.nightSkyColor = RtxOptions::nightSkyColor();
+  args.nightSkyColor      = RtxOptions::nightSkyColor();
 
-  // Time for animation (monotonic seconds)
-  static auto startTime = std::chrono::steady_clock::now();
-  auto now = std::chrono::steady_clock::now();
-  args.timeSeconds = std::chrono::duration<float>(now - startTime).count();
+  // Monotonic time origin for star-twinkle animation.
+  static const auto kStartTime = std::chrono::steady_clock::now();
+  args.timeSeconds = std::chrono::duration<float>(
+                        std::chrono::steady_clock::now() - kStartTime).count();
 
-  // Moon parameters (Secunda)
-  {
-    constexpr float kDegToRadLocal = 3.14159265358979323846f / 180.0f;
-    float moonElev = RtxOptions::moonElevation() * kDegToRadLocal;
-    float moonAzim = RtxOptions::moonRotation() * kDegToRadLocal;
-    
-    args.moonDirection.x = std::cos(moonElev) * std::sin(moonAzim);
-    args.moonDirection.y = std::sin(moonElev);
-    args.moonDirection.z = std::cos(moonElev) * std::cos(moonAzim);
-    
-    float moonSizeRad = RtxOptions::moonAngularRadius() * kDegToRadLocal;
-    args.moonAngularRadius = moonSizeRad * 0.5f;
-    
-    args.moonColor = RtxOptions::moonColor();
-    args.moonBrightness = RtxOptions::moonBrightness();
-    args.moonPhase = RtxOptions::moonPhase();
-    args.moonEnabled = RtxOptions::moonEnabled() ? 1.0f : 0.0f;
-    args.pad3 = 0.0f;
-    args.pad4 = 0.0f;
-  }
+  // Sidereal sky rotation. Default axis (elevation 90, rotation 0) keeps the
+  // pre-rotation behavior; non-default values come from rtx.conf or game
+  // plugin pushes. starRotation is the only field expected to change frame-
+  // to-frame, so it is the only one flagged NoSave.
+  args.starRotation      = RtxOptions::starRotation();
+  args.starAxisElevation = RtxOptions::starAxisElevation();
+  args.starAxisRotation  = RtxOptions::starAxisRotation();
+  args.pad3              = 0.0f;
 
-  // Masser parameters (large red moon)
-  {
-    constexpr float kDegToRadLocal = 3.14159265358979323846f / 180.0f;
-    float masserElev = RtxOptions::masserElevation() * kDegToRadLocal;
-    float masserAzim = RtxOptions::masserRotation() * kDegToRadLocal;
-
-    args.masserDirection.x = std::cos(masserElev) * std::sin(masserAzim);
-    args.masserDirection.y = std::sin(masserElev);
-    args.masserDirection.z = std::cos(masserElev) * std::cos(masserAzim);
-
-    float masserSizeRad = RtxOptions::masserAngularRadius() * kDegToRadLocal;
-    args.masserAngularRadius = masserSizeRad * 0.5f;
-
-    args.masserColor = RtxOptions::masserColor();
-    args.masserBrightness = RtxOptions::masserBrightness();
-    args.masserPhase = RtxOptions::masserPhase();
-    args.masserEnabled = RtxOptions::masserEnabled() ? 1.0f : 0.0f;
-    args.pad5 = 0.0f;
-    args.pad6 = 0.0f;
+  // ----- Per-moon parameters (fork) -----
+  for (uint32_t i = 0; i < MAX_MOONS; ++i) {
+    populateMoonParams(args.moons[i], i);
   }
 
   // Cloud parameters
@@ -232,6 +288,20 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
 
     args.cloudShadowStrength = RtxOptions::cloudShadowStrength();
     args.cloudAnisotropy = RtxOptions::cloudAnisotropy();
+  }
+
+  // Cloud volumetric / appearance enhancements
+  {
+    args.cloudShadowTint = RtxOptions::cloudShadowTint();
+    args.cloudShadowTintStrength = RtxOptions::cloudShadowTintStrength();
+    args.cloudThickness = RtxOptions::cloudThickness();
+    args.cloudDetailWeight = RtxOptions::cloudDetailWeight();
+    args.cloudSunsetWarmth = RtxOptions::cloudSunsetWarmth();
+    args.cloudViewSamples = RtxOptions::cloudViewSamples();
+    args.cloudVariance = RtxOptions::cloudVariance();
+    args.cloudVarianceScale = RtxOptions::cloudVarianceScale();
+    args.cloudVerticalProfile = RtxOptions::cloudVerticalProfile();
+    args.cloudCurvature = RtxOptions::cloudCurvature();
   }
 
   return args;

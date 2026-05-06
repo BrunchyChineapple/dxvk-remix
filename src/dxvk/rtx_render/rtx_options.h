@@ -1230,8 +1230,10 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", bool, sunDisc, true, "Include the sun itself in the output.");
     RTX_OPTION("rtx.atmosphere", float, sunSize, 0.545f, "Size of sun disc in degrees.");
     RTX_OPTION("rtx.atmosphere", float, sunIntensity, 1.0f, "Strength of Sun.");
-    RTX_OPTION_FLAG("rtx.atmosphere", float, sunElevation, 15.0f, RtxOptionFlags::NoSave, "Sun angle from horizon in degrees. Driven by game sync every frame.");
-    RTX_OPTION_FLAG("rtx.atmosphere", float, sunRotation, 0.0f, RtxOptionFlags::NoSave, "Rotation of sun around zenith in degrees. Driven by game sync every frame.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, sunElevation, 15.0f, RtxOptionFlags::NoSave,
+                    "Sun angle from horizon in degrees. Game-driven every frame.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, sunRotation, 0.0f, RtxOptionFlags::NoSave,
+                    "Rotation of sun around zenith in degrees. Game-driven every frame.");
     RTX_OPTION("rtx.atmosphere", float, altitude, 100.0f, "Height from sea level in meters.");
     RTX_OPTION("rtx.atmosphere", float, airDensity, 1.0f, "Density of air molecules multiplier (1.0 = clear sky).");
     RTX_OPTION("rtx.atmosphere", float, aerosolDensity, 1.0f, "Density of aerosols/dust multiplier (1.0 = typical).");
@@ -1250,43 +1252,112 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", float, ozoneLayerWidth, 15.0f, "Width of the ozone layer in kilometers.");
     RTX_OPTION("rtx.atmosphere", Vector3, sunIlluminance, Vector3(20.0f, 20.0f, 20.0f), "Base Sun illuminance color/intensity.");
 
-    // Night sky parameters
-    RTX_OPTION("rtx.atmosphere", float, starBrightness, 8.0f, "Overall brightness multiplier for stars.");
-    RTX_OPTION("rtx.atmosphere", float, starDensity, 0.98f, "Star density threshold (0.0 = all stars, 1.0 = no stars). Higher values show fewer, brighter stars.");
-    RTX_OPTION("rtx.atmosphere", float, starTwinkleSpeed, 1.0f, "Speed of star twinkling animation (0 = no twinkle).");
-    RTX_OPTION("rtx.atmosphere", float, nightSkyBrightness, 0.008f, "Ambient night sky brightness from airglow and zodiacal light.");
-    RTX_OPTION("rtx.atmosphere", Vector3, nightSkyColor, Vector3(0.15f, 0.2f, 0.4f), "Base color tint of the night sky airglow.");
+    // ----- Night-sky shading (fork) -----
+    // Stars, Milky Way, shooting stars, airglow. Active when skyMode == PhysicalAtmosphere.
+    RTX_OPTION_FLAG("rtx.atmosphere", float, starBrightness, 8.0f, RtxOptionFlags::NoSave,
+                    "Overall brightness multiplier for stars. Game-driven so plugins can fade stars in/out around sunset/sunrise without polluting user.conf at frame rate.");
+    RTX_OPTION("rtx.atmosphere", float, starDensity, 0.98f,
+               "Star density threshold (0.0 = all stars, 1.0 = no stars). Higher = fewer, brighter stars.");
+    RTX_OPTION("rtx.atmosphere", float, starTwinkleSpeed, 1.0f,
+               "Speed of star twinkling animation (0 = no twinkle).");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, starRotation, 0.0f, RtxOptionFlags::NoSave,
+                    "Sidereal sky rotation angle in degrees, 0-360. Game-driven every frame.");
+    RTX_OPTION("rtx.atmosphere", float, starAxisElevation, 90.0f,
+               "Celestial pole elevation from horizon in degrees. 90 = pole at zenith (default, matches pre-rotation behavior).");
+    RTX_OPTION("rtx.atmosphere", float, starAxisRotation, 0.0f,
+               "Celestial pole azimuth in degrees (0 = North). Only relevant when starAxisElevation != 90.");
+    RTX_OPTION("rtx.atmosphere", float, nightSkyBrightness, 0.008f,
+               "Ambient night-sky brightness from airglow and zodiacal light.");
+    RTX_OPTION("rtx.atmosphere", Vector3, nightSkyColor, Vector3(0.15f, 0.2f, 0.4f),
+               "Base color tint of the night-sky airglow.");
 
-    // Moon parameters (Secunda)
-    RTX_OPTION("rtx.atmosphere", bool, moonEnabled, true, "Enable moon rendering in the night sky.");
-    RTX_OPTION("rtx.atmosphere", float, moonAngularRadius, 3.5f, "Moon angular diameter in degrees (vanilla Secunda ~3.5).");
-    RTX_OPTION("rtx.atmosphere", float, moonBrightness, 4.0f, "Moon brightness multiplier.");
-    RTX_OPTION("rtx.atmosphere", Vector3, moonColor, Vector3(0.85f, 0.87f, 0.92f), "Moon surface color/albedo.");
-    RTX_OPTION_FLAG("rtx.atmosphere", float, moonElevation, 45.0f, RtxOptionFlags::NoSave, "Moon elevation in degrees. Driven by game sync every frame.");
-    RTX_OPTION_FLAG("rtx.atmosphere", float, moonRotation, 90.0f, RtxOptionFlags::NoSave, "Moon rotation/azimuth in degrees. Driven by game sync every frame.");
-    RTX_OPTION_FLAG("rtx.atmosphere", float, moonPhase, 0.5f, RtxOptionFlags::NoSave, "Moon phase: 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter. Driven by game sync.");
+    // ----- Per-moon parameters (fork) -----
+    // MAX_MOONS in atmosphere_args.h must equal the number of DECLARE_MOON_OPTIONS
+    // invocations below. Morrowind override: moon 0 (Secunda) and moon 1 (Masser)
+    // are enabled by default so fresh installs show both vanilla moons. Moons 2
+    // and 3 remain disabled/opt-in for other games. Pose fields
+    // (elevation/rotation/phase) are NoSave because the wrapper pushes them
+    // every frame from Morrowind's scenegraph; appearance knobs persist
+    // normally in user config.
+#define DECLARE_MOON_OPTIONS(N, DEFAULT_ENABLED, DEFAULT_RADIUS, DEFAULT_BRIGHTNESS, DEFAULT_COLOR, DEFAULT_STYLE) \
+    RTX_OPTION("rtx.atmosphere.moon" #N, bool, enabled##N, DEFAULT_ENABLED,                     \
+               "Enable moon " #N " rendering.");                                                \
+    RTX_OPTION("rtx.atmosphere.moon" #N, float, angularRadius##N, DEFAULT_RADIUS,               \
+               "Moon " #N " angular diameter in degrees.");                                     \
+    RTX_OPTION("rtx.atmosphere.moon" #N, float, brightness##N, DEFAULT_BRIGHTNESS,              \
+               "Moon " #N " brightness multiplier.");                                           \
+    RTX_OPTION("rtx.atmosphere.moon" #N, Vector3, color##N, DEFAULT_COLOR,                      \
+               "Moon " #N " base color/albedo.");                                               \
+    RTX_OPTION("rtx.atmosphere.moon" #N, uint32_t, surfaceStyle##N, DEFAULT_STYLE,              \
+               "Moon " #N " surface preset: 0 = Rocky, 1 = Volcanic.");                         \
+    RTX_OPTION("rtx.atmosphere.moon" #N, float, craterDensity##N, 1.0f,                         \
+               "Moon " #N " crater density multiplier [0,1].");                                 \
+    RTX_OPTION("rtx.atmosphere.moon" #N, float, surfaceContrast##N, 1.0f,                       \
+               "Moon " #N " surface light/dark contrast multiplier.");                          \
+    RTX_OPTION("rtx.atmosphere.moon" #N, float, surfaceNoiseScale##N, 1.0f,                     \
+               "Moon " #N " surface feature size multiplier.");                                 \
+    RTX_OPTION("rtx.atmosphere.moon" #N, float, darkSideBrightness##N, 0.005f,                  \
+               "Moon " #N " dark-side brightness as fraction of lit side.");                    \
+    RTX_OPTION("rtx.atmosphere.moon" #N, float, roughnessAmount##N, 1.0f,                       \
+               "Moon " #N " micro-detail surface roughness amplitude.");                        \
+    RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, float, elevation##N, 45.0f, RtxOptionFlags::NoSave,\
+                    "Moon " #N " elevation in degrees. Game-driven every frame.");              \
+    RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, float, rotation##N, 90.0f, RtxOptionFlags::NoSave, \
+                    "Moon " #N " rotation in degrees. Game-driven every frame.");               \
+    RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, float, phase##N, 0.5f, RtxOptionFlags::NoSave,    \
+                    "Moon " #N " phase [0,1]. Game-driven every frame.")
 
-    // Masser (large red moon) parameters
-    RTX_OPTION("rtx.atmosphere", bool, masserEnabled, true, "Enable Masser (large red moon) rendering.");
-    RTX_OPTION("rtx.atmosphere", float, masserAngularRadius, 10.0f, "Masser angular diameter in degrees (roughly 3x Secunda).");
-    RTX_OPTION("rtx.atmosphere", float, masserBrightness, 3.5f, "Masser brightness multiplier.");
-    RTX_OPTION("rtx.atmosphere", Vector3, masserColor, Vector3(0.65f, 0.18f, 0.22f), "Masser surface color (dark crimson-purple).");
-    RTX_OPTION_FLAG("rtx.atmosphere", float, masserElevation, 45.0f, RtxOptionFlags::NoSave, "Masser elevation in degrees. Driven by game sync every frame.");
-    RTX_OPTION_FLAG("rtx.atmosphere", float, masserRotation, 90.0f, RtxOptionFlags::NoSave, "Masser rotation in degrees. Driven by game sync every frame.");
-    RTX_OPTION_FLAG("rtx.atmosphere", float, masserPhase, 0.5f, RtxOptionFlags::NoSave, "Masser phase: 0=new, 0.5=full. Driven by game sync.");
+    // Moon 0: Secunda (Morrowind's small silver-white moon, ~3.5° diameter, rocky surface)
+    DECLARE_MOON_OPTIONS(0, true,  3.5f,  4.0f, Vector3(0.85f, 0.87f, 0.92f), 0u);
+    // Moon 1: Masser (Morrowind's large red-purple moon, ~10° diameter, volcanic surface)
+    DECLARE_MOON_OPTIONS(1, true,  10.0f, 3.5f, Vector3(0.65f, 0.18f, 0.22f), 1u);
+    // Moons 2 and 3 disabled by default (opt-in for non-Morrowind games)
+    DECLARE_MOON_OPTIONS(2, false, 3.5f,  4.0f, Vector3(0.85f, 0.87f, 0.92f), 0u);
+    DECLARE_MOON_OPTIONS(3, false, 3.5f,  4.0f, Vector3(0.85f, 0.87f, 0.92f), 0u);
+#undef DECLARE_MOON_OPTIONS
 
     // Cloud parameters (procedural FBM cloud layer)
+    // Morrowind override: cloudEnabled stays true because the wrapper drives
+    // cloudCoverage from GetCurrentWeather every frame; coverage=0 on Clear
+    // weather already hides the clouds.
     RTX_OPTION("rtx.atmosphere", bool, cloudEnabled, true, "Enable procedural cloud rendering.");
     RTX_OPTION_FLAG("rtx.atmosphere", float, cloudCoverage, 0.0f, RtxOptionFlags::NoSave,
                     "Cloud coverage [0,1]: 0=clear sky, 1=overcast. Driven by game weather every frame.");
-    RTX_OPTION("rtx.atmosphere", float, cloudDensity, 1.0f, "Cloud opacity/density multiplier.");
-    RTX_OPTION("rtx.atmosphere", float, cloudAltitude, 3.0f, "Cloud layer altitude in kilometers.");
-    RTX_OPTION("rtx.atmosphere", float, cloudScale, 0.08f, "Horizontal noise scale — smaller values produce larger clouds.");
+    RTX_OPTION("rtx.atmosphere", float, cloudDensity, 1.55f, "Cloud opacity/density multiplier.");
+    RTX_OPTION("rtx.atmosphere", float, cloudAltitude, 2.4f, "Cloud layer altitude in kilometers.");
+    RTX_OPTION("rtx.atmosphere", float, cloudScale, 0.010f, "Horizontal noise scale — smaller values produce larger clouds.");
     RTX_OPTION("rtx.atmosphere", Vector3, cloudColor, Vector3(1.0f, 1.0f, 1.0f), "Base cloud color (albedo).");
     RTX_OPTION("rtx.atmosphere", float, cloudWindSpeed, 0.02f, "Cloud drift speed in km/s. Clouds scroll with this velocity.");
     RTX_OPTION("rtx.atmosphere", float, cloudWindDirection, 45.0f, "Cloud wind direction in degrees (0 = +X, 90 = +Z).");
-    RTX_OPTION("rtx.atmosphere", float, cloudShadowStrength, 0.6f, "How strongly overcast clouds dim ground and atmosphere lighting [0..1].");
+    RTX_OPTION("rtx.atmosphere", float, cloudShadowStrength, 0.7f, "How strongly overcast clouds dim ground and atmosphere lighting [0..1].");
     RTX_OPTION("rtx.atmosphere", float, cloudAnisotropy, 0.6f, "Henyey-Greenstein g for cloud forward-scatter (silver lining).");
+
+    // Cloud volumetric / appearance enhancements
+    RTX_OPTION("rtx.atmosphere", uint32_t, cloudViewSamples, 5,
+               "Number of ray-march steps through the cloud slab. Higher = better quality, more cost. Range 1..32.");
+    RTX_OPTION("rtx.atmosphere", float, cloudThickness, 1.0f,
+               "Vertical depth of the cloud slab in km.");
+    RTX_OPTION("rtx.atmosphere", float, cloudDetailWeight, 1.0f,
+               "Weight of the high-frequency detail FBM term [0..1]. Auto-fades at low cloudScale to avoid visible noise.");
+    RTX_OPTION("rtx.atmosphere", Vector3, cloudShadowTint, Vector3(0.55f, 0.65f, 0.85f),
+               "Sky-blue bounce color applied on the shadow side of clouds.");
+    RTX_OPTION("rtx.atmosphere", float, cloudShadowTintStrength, 0.15f,
+               "How strongly the shadow tint contributes [0..1].");
+    RTX_OPTION("rtx.atmosphere", float, cloudSunsetWarmth, 1.0f,
+               "Strength of low-sun warm tint on sunward side. 0 = disabled.");
+    RTX_OPTION("rtx.atmosphere", float, cloudVariance, 0.19f,
+               "Density variation across the sky [0..1]. 0 = uniform, 1 = patchy.");
+    RTX_OPTION("rtx.atmosphere", float, cloudVarianceScale, 0.048f,
+               "Scale of variance noise. Smaller = bigger cloud groups.");
+    RTX_OPTION("rtx.atmosphere", float, cloudVerticalProfile, 0.83f,
+               "Volumetric cloud character: 0 = flat 2D extrusion, 1 = rounded "
+               "cumulus bottoms with wispy tops + wind-shear lateral shift. "
+               "Integral normalized so total opacity stays roughly constant.");
+    RTX_OPTION("rtx.atmosphere", float, cloudCurvature, 0.3f,
+               "Sky-dome curvature for the cloud layer: 0 = real-planet radius "
+               "(nearly flat ceiling), 1 = tight dome (clouds visibly curve down "
+               "to the horizon). Only affects cloud sphere intersections; "
+               "atmospheric scattering still uses the real planet radius.");
 
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");

@@ -4,7 +4,7 @@
 // for the RtxAtmosphere subsystem (Hillaire physically-based sky), lifted
 // from rtx_context.cpp during the 2026-04-18 fork touchpoint-pattern refactor.
 //
-// See agent_docs/fork-touchpoints.md for the full fork-hooks catalogue.
+// See docs/fork-touchpoints.md for the full fork-hooks catalogue.
 //
 // NOTE: initAtmosphere, updateAtmosphereConstants, and bindAtmosphereLuts
 // access private members of RtxContext (m_atmosphere, m_lastSkyMode,
@@ -19,8 +19,10 @@
 #include "rtx_options.h"
 #include "rtx/pass/raytrace_args.h"
 #include "rtx/pass/common_binding_indices.h"
+#include "rtx/pass/atmosphere/atmosphere_args.h" // MAX_MOONS (showAtmosphereUI moon loop)
 #include "imgui/imgui.h"              // ImGui::Button, ImGui::Text, etc. (showAtmosphereUI)
 #include "rtx_imgui.h"                // RemixGui::DragFloat, ComboWithKey (showAtmosphereUI)
+#include <cstdio>                     // std::snprintf (renderMoonUI label)
 
 namespace dxvk {
 namespace fork_hooks {
@@ -168,6 +170,90 @@ namespace fork_hooks {
           {SkyMode::PhysicalAtmosphere, "Physical Atmosphere"}
       } }
     };
+
+    // Per-moon UI block. RTX_OPTION accessors are static-named per index
+    // (enabled0, enabled1, ...), so we dispatch via a small macro that fans
+    // the index into one set of pointers, then drive a single index-agnostic
+    // ImGui body off those pointers. MAX_MOONS = 4; the macro expands four
+    // times — deliberate simple repetition over a fixed cap.
+    void renderMoonUI(int idx) {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+
+      RtxOption<bool>*     pEnabled         = nullptr;
+      RtxOption<float>*    pAngularRadius   = nullptr;
+      RtxOption<float>*    pBrightness      = nullptr;
+      RtxOption<Vector3>*  pColor           = nullptr;
+      RtxOption<uint32_t>* pSurfaceStyle    = nullptr;
+      RtxOption<float>*    pCraterDensity   = nullptr;
+      RtxOption<float>*    pSurfaceContrast = nullptr;
+      RtxOption<float>*    pNoiseScale      = nullptr;
+      RtxOption<float>*    pDarkSide        = nullptr;
+      RtxOption<float>*    pRoughness       = nullptr;
+      RtxOption<float>*    pElevation       = nullptr;
+      RtxOption<float>*    pRotation        = nullptr;
+      RtxOption<float>*    pPhase           = nullptr;
+
+      switch (idx) {
+#define MOON_PTRS(N)                                                         \
+        case N:                                                              \
+          pEnabled         = &RtxOptions::enabled##N##Object();              \
+          pAngularRadius   = &RtxOptions::angularRadius##N##Object();        \
+          pBrightness      = &RtxOptions::brightness##N##Object();           \
+          pColor           = &RtxOptions::color##N##Object();                \
+          pSurfaceStyle    = &RtxOptions::surfaceStyle##N##Object();         \
+          pCraterDensity   = &RtxOptions::craterDensity##N##Object();        \
+          pSurfaceContrast = &RtxOptions::surfaceContrast##N##Object();      \
+          pNoiseScale      = &RtxOptions::surfaceNoiseScale##N##Object();    \
+          pDarkSide        = &RtxOptions::darkSideBrightness##N##Object();   \
+          pRoughness       = &RtxOptions::roughnessAmount##N##Object();      \
+          pElevation       = &RtxOptions::elevation##N##Object();            \
+          pRotation        = &RtxOptions::rotation##N##Object();             \
+          pPhase           = &RtxOptions::phase##N##Object();                \
+          break
+        MOON_PTRS(0);
+        MOON_PTRS(1);
+        MOON_PTRS(2);
+        MOON_PTRS(3);
+#undef MOON_PTRS
+      default:
+        return;
+      }
+
+      char headerLabel[16];
+      std::snprintf(headerLabel, sizeof(headerLabel), "Moon %d", idx);
+
+      if (ImGui::TreeNode(headerLabel)) {
+        RemixGui::Checkbox("Enabled", pEnabled);
+        RemixGui::DragFloat("Angular Radius", pAngularRadius, 0.1f, 0.1f, 30.0f, "%.1f\xc2\xb0", sliderFlags);
+        RemixGui::DragFloat("Brightness",     pBrightness,    0.1f, 0.0f, 20.0f, "%.1f",         sliderFlags);
+        RemixGui::DragFloat3("Color",         pColor,         0.01f, 0.0f, 1.0f, "%.2f",         sliderFlags);
+
+        RemixGui::DragFloat("Elevation", pElevation, 0.1f, -90.0f, 90.0f, "%.1f\xc2\xb0", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Moon elevation in degrees. Game-drivable per-frame; slider edits go to the Derived layer and don't persist to rtx.conf.");
+        RemixGui::DragFloat("Rotation",  pRotation,  0.1f, 0.0f, 360.0f, "%.1f\xc2\xb0", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Moon rotation/azimuth in degrees. Same persistence rules as Elevation.");
+        RemixGui::DragFloat("Phase",     pPhase,     0.005f, 0.0f, 1.0f, "%.3f",  sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Moon phase: 0 = new, 0.25 = first quarter, 0.5 = full, 0.75 = third quarter. Same persistence rules as Elevation.");
+
+        if (ImGui::TreeNode("Appearance")) {
+          static const char* kStyleNames[] = { "Rocky", "Volcanic" };
+          int styleInt = static_cast<int>(pSurfaceStyle->get());
+          if (ImGui::Combo("Surface Style", &styleInt, kStyleNames, IM_ARRAYSIZE(kStyleNames))) {
+            pSurfaceStyle->setImmediately(static_cast<uint32_t>(styleInt));
+          }
+          RemixGui::SetTooltipToLastWidgetOnHover("Procedural surface preset. Knobs below tune the chosen style.");
+
+          RemixGui::DragFloat("Crater Density",      pCraterDensity,   0.01f, 0.0f, 2.0f, "%.2f", sliderFlags);
+          RemixGui::DragFloat("Surface Contrast",    pSurfaceContrast, 0.01f, 0.0f, 3.0f, "%.2f", sliderFlags);
+          RemixGui::DragFloat("Surface Noise Scale", pNoiseScale,      0.01f, 0.1f, 5.0f, "%.2f", sliderFlags);
+          RemixGui::DragFloat("Dark Side Brightness",pDarkSide,        0.005f,0.0f, 1.0f, "%.3f", sliderFlags);
+          RemixGui::DragFloat("Roughness",           pRoughness,       0.01f, 0.0f, 3.0f, "%.2f", sliderFlags);
+          ImGui::TreePop();
+        }
+
+        ImGui::TreePop();
+      }
+    }
   } // anonymous namespace
 
   void showAtmosphereUI() {
@@ -366,6 +452,80 @@ namespace fork_hooks {
           RemixGui::SetTooltipToLastWidgetOnHover("Henyey-Greenstein g for forward-scatter silver lining.");
           ImGui::TreePop();
         }
+
+        ImGui::TreePop();
+      }
+
+      // ----- Night Sky tree (fork) -----
+      if (ImGui::TreeNode("Night Sky")) {
+        RemixGui::DragFloat("Star Brightness",      &RtxOptions::starBrightnessObject(),
+                            0.1f, 0.0f, 50.0f, "%.1f", sliderFlags);
+        RemixGui::DragFloat("Star Density",         &RtxOptions::starDensityObject(),
+                            0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Threshold: 0 = all stars visible, 1 = no stars.");
+        RemixGui::DragFloat("Star Twinkle Speed",   &RtxOptions::starTwinkleSpeedObject(),
+                            0.1f, 0.0f, 10.0f, "%.1f", sliderFlags);
+        RemixGui::DragFloat("Night Sky Brightness", &RtxOptions::nightSkyBrightnessObject(),
+                            0.001f, 0.0f, 0.1f, "%.4f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Airglow / ambient night-sky brightness.");
+        RemixGui::DragFloat3("Night Sky Color",     &RtxOptions::nightSkyColorObject(),
+                            0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        ImGui::TreePop();
+      }
+
+      // ----- Moons tree (fork) -----
+      if (ImGui::TreeNode("Moons")) {
+        for (int i = 0; i < static_cast<int>(MAX_MOONS); ++i) {
+          renderMoonUI(i);
+        }
+        ImGui::TreePop();
+      }
+
+      // ----- Clouds tree (fork) -----
+      if (ImGui::TreeNode("Clouds")) {
+        RemixGui::Checkbox("Enabled", &RtxOptions::cloudEnabledObject());
+        RemixGui::DragFloat("Coverage", &RtxOptions::cloudCoverageObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("0 = clear sky, 1 = overcast. Normally driven by game weather.");
+        RemixGui::DragFloat("Density", &RtxOptions::cloudDensityObject(), 0.05f, 0.0f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::DragFloat("Altitude", &RtxOptions::cloudAltitudeObject(), 0.1f, 0.5f, 12.0f, "%.1f km", sliderFlags);
+        RemixGui::DragFloat("Scale", &RtxOptions::cloudScaleObject(), 0.005f, 0.005f, 1.0f, "%.3f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Horizontal noise scale. Smaller values = larger cloud clumps.");
+        RemixGui::DragFloat3("Color", &RtxOptions::cloudColorObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::DragFloat("Wind Speed", &RtxOptions::cloudWindSpeedObject(), 0.005f, 0.0f, 1.0f, "%.3f km/s", sliderFlags);
+        RemixGui::DragFloat("Wind Direction", &RtxOptions::cloudWindDirectionObject(), 1.0f, 0.0f, 360.0f, "%.1f°", sliderFlags);
+        RemixGui::DragFloat("Shadow Strength", &RtxOptions::cloudShadowStrengthObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("How much overcast cover dims ground and atmosphere lighting.");
+        RemixGui::DragFloat("Anisotropy", &RtxOptions::cloudAnisotropyObject(), 0.01f, 0.0f, 0.99f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Henyey-Greenstein g for forward-scatter silver lining.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Volumetric");
+        RemixGui::DragInt("View Samples", &RtxOptions::cloudViewSamplesObject(), 1.0f, 1, 32, "%d", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Ray-march steps through the cloud slab. Higher = better quality, more cost. Default 5.");
+        RemixGui::DragFloat("Thickness", &RtxOptions::cloudThicknessObject(), 0.05f, 0.1f, 4.0f, "%.2f km", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Vertical depth of the cloud layer in km.");
+        RemixGui::DragFloat("Detail Weight", &RtxOptions::cloudDetailWeightObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Strength of high-frequency detail. Auto-fades at low Scale to avoid visible noise.");
+        RemixGui::DragFloat("Vertical Profile", &RtxOptions::cloudVerticalProfileObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("0 = flat 2D extrusion. 1 = rounded cumulus bottoms with wispy tops + wind-shear lateral shift. Integral normalized so opacity stays consistent.");
+        RemixGui::DragFloat("Curvature", &RtxOptions::cloudCurvatureObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Sky-dome curvature: 0 = real-planet radius (nearly flat ceiling), 1 = tight dome. Only affects cloud sphere geometry — atmosphere math is untouched.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Color polish");
+        RemixGui::DragFloat3("Shadow Tint", &RtxOptions::cloudShadowTintObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Sky-blue bounce color applied to the shadow side of clouds.");
+        RemixGui::DragFloat("Shadow Tint Strength", &RtxOptions::cloudShadowTintStrengthObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("How strongly the shadow tint contributes.");
+        RemixGui::DragFloat("Sunset Warmth", &RtxOptions::cloudSunsetWarmthObject(), 0.05f, 0.0f, 2.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Strength of low-sun warm tint on the sunward side. 0 = disabled.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Variance");
+        RemixGui::DragFloat("Variance", &RtxOptions::cloudVarianceObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Density variation across the sky. 0 = uniform, 1 = patchy clouds.");
+        RemixGui::DragFloat("Variance Scale", &RtxOptions::cloudVarianceScaleObject(), 0.001f, 0.001f, 0.5f, "%.4f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Scale of variance noise. Smaller = bigger cloud groups.");
 
         ImGui::TreePop();
       }

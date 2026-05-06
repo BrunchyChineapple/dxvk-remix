@@ -30,7 +30,11 @@ namespace dxvk {
     , m_enableDrawCallConversion(enableDrawCallConversion)
     , m_pGeometryWorkers(enableDrawCallConversion ? std::make_unique<GeometryProcessor>(numGeometryProcessingThreads(), "geometry-processing") : nullptr) {
 
-    // Add space for 256 objects skinned with 256 bones each.
+    // Add space for 2048 objects skinned with 2048 bones each.
+    // Morrowind + MGE-XE open-world scenes produce very large per-frame
+    // skinned-draw counts; the tighter 2048 x 256 default that upstream
+    // Remix Plus uses is not enough and triggers downstream renderer
+    // asserts. See patches/rtxdll/backups/2026-04-23_0754_stagedbones-resize.
     m_stagedBones.resize(2048 * 2048);
   }
 
