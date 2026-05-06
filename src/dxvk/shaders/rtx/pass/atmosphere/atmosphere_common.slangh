@@ -556,7 +556,7 @@ float sampleCloudDensity(vec2 worldPosKm, float heightFraction,
 // (sun + combined-moon shadow march). Justification: high-frequency detail
 // integrates out along the 1.6km sun-direction shadow path -- the dominant
 // signal is the coverage-threshold-shaped large-scale shape, captured by 2
-// octaves. Saves ~22 hashes per shadow tap (28 → 6).
+// octaves. Saves ~20 hashes per shadow tap (28 → 8).
 float sampleCloudDensityShadow(vec2 worldPosKm, float heightFraction,
                                float typeLocal, float coverageLocal,
                                AtmosphereArgs args) {
