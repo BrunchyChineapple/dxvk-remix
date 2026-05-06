@@ -476,6 +476,29 @@ namespace fork_hooks {
         RemixGui::DragFloat("Variance Scale", &RtxOptions::cloudVarianceScaleObject(), 0.001f, 0.001f, 0.5f, "%.4f", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover("Scale of variance noise. Smaller = bigger cloud groups.");
 
+        ImGui::Separator();
+        ImGui::TextDisabled("Spatial Variation — Type");
+        RemixGui::DragFloat("Type Mean", &RtxOptions::cloudTypeMeanObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("0=stratus, 0.5=stratocumulus, 1=cumulus. Mean type across the sky.");
+        RemixGui::DragFloat("Type Spread", &RtxOptions::cloudTypeSpreadObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Spatial variation amplitude. 0=uniform type everywhere, 1=full range across the sky.");
+        RemixGui::DragFloat("Type Noise Scale", &RtxOptions::cloudTypeNoiseScaleObject(), 0.0001f, 0.0001f, 0.005f, "%.4f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Region size for type variation. Smaller = larger patches of one cloud type.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Spatial Variation — Coverage");
+        RemixGui::DragFloat("Coverage Mean", &RtxOptions::cloudCoverageMeanObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Mean coverage. 0=clear sky, 1=overcast.");
+        RemixGui::DragFloat("Coverage Spread", &RtxOptions::cloudCoverageSpreadObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Spatial variation amplitude for coverage.");
+        RemixGui::DragFloat("Coverage Noise Scale", &RtxOptions::cloudCoverageNoiseScaleObject(), 0.0001f, 0.0001f, 0.005f, "%.4f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Region size for coverage variation. Independent from type noise.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Anvil");
+        RemixGui::DragFloat("Anvil Bias", &RtxOptions::cloudAnvilBiasObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Cumulus top inflation. 0=flat tops, 1=fully spread mushroom-cap anvils. Nubis pow trick.");
+
         ImGui::TreePop();
       }
     }

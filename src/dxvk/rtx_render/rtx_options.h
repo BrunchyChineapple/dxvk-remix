@@ -1338,6 +1338,22 @@ namespace dxvk {
                "to the horizon). Only affects cloud sphere intersections; "
                "atmospheric scattering still uses the real planet radius.");
 
+    // Cloud spatial variation (Nubis-style — spec 2026-05-06)
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeMean, 0.5f,
+               "Mean cloud type across the sky [0,1]: 0=stratus, 0.5=stratocumulus, 1=cumulus.");
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeSpread, 0.4f,
+               "Spatial variation amplitude for cloud type [0,1]. 0=uniform, 1=full range across the sky.");
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeNoiseScale, 0.0005f,
+               "Region size frequency for type noise. Numerically smaller = larger spatial features.");
+    RTX_OPTION("rtx.atmosphere", float, cloudCoverageMean, 0.6f,
+               "Mean cloud coverage across the sky [0,1]: 0=clear, 1=overcast.");
+    RTX_OPTION("rtx.atmosphere", float, cloudCoverageSpread, 0.4f,
+               "Spatial variation amplitude for coverage [0,1]. 0=uniform, 1=full range.");
+    RTX_OPTION("rtx.atmosphere", float, cloudCoverageNoiseScale, 0.0005f,
+               "Region size frequency for coverage noise. Independent from type noise scale.");
+    RTX_OPTION("rtx.atmosphere", float, cloudAnvilBias, 0.3f,
+               "Cumulus top inflation strength [0,1]. 0=flat tops, 1=fully spread mushroom-cap anvils.");
+
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");
 
