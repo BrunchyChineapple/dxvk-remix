@@ -302,6 +302,13 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.cloudVarianceScale = RtxOptions::cloudVarianceScale();
     args.cloudVerticalProfile = RtxOptions::cloudVerticalProfile();
     args.cloudCurvature = RtxOptions::cloudCurvature();
+    args.cloudTypeMean = RtxOptions::cloudTypeMean();
+    args.cloudTypeSpread = RtxOptions::cloudTypeSpread();
+    args.cloudTypeNoiseScale = RtxOptions::cloudTypeNoiseScale();
+    args.cloudCoverageMean = RtxOptions::cloudCoverageMean();
+    args.cloudCoverageSpread = RtxOptions::cloudCoverageSpread();
+    args.cloudCoverageNoiseScale = RtxOptions::cloudCoverageNoiseScale();
+    args.cloudAnvilBias = RtxOptions::cloudAnvilBias();
   }
 
   return args;
