@@ -1318,11 +1318,9 @@ namespace dxvk {
 
     // Cloud parameters (procedural FBM cloud layer)
     // Morrowind override: cloudEnabled stays true because the wrapper drives
-    // cloudCoverage from GetCurrentWeather every frame; coverage=0 on Clear
-    // weather already hides the clouds.
+    // cloudCoverageMean from GetCurrentWeather every frame (see distantland.cpp).
+    // Low coverage on Clear weather already hides the clouds.
     RTX_OPTION("rtx.atmosphere", bool, cloudEnabled, true, "Enable procedural cloud rendering.");
-    RTX_OPTION_FLAG("rtx.atmosphere", float, cloudCoverage, 0.0f, RtxOptionFlags::NoSave,
-                    "Cloud coverage [0,1]: 0=clear sky, 1=overcast. Driven by game weather every frame.");
     RTX_OPTION("rtx.atmosphere", float, cloudDensity, 1.55f, "Cloud opacity/density multiplier.");
     RTX_OPTION("rtx.atmosphere", float, cloudAltitude, 2.4f, "Cloud layer altitude in kilometers.");
     RTX_OPTION("rtx.atmosphere", float, cloudScale, 0.010f, "Horizontal noise scale — smaller values produce larger clouds.");
@@ -1345,19 +1343,41 @@ namespace dxvk {
                "How strongly the shadow tint contributes [0..1].");
     RTX_OPTION("rtx.atmosphere", float, cloudSunsetWarmth, 1.0f,
                "Strength of low-sun warm tint on sunward side. 0 = disabled.");
-    RTX_OPTION("rtx.atmosphere", float, cloudVariance, 0.19f,
-               "Density variation across the sky [0..1]. 0 = uniform, 1 = patchy.");
-    RTX_OPTION("rtx.atmosphere", float, cloudVarianceScale, 0.048f,
-               "Scale of variance noise. Smaller = bigger cloud groups.");
-    RTX_OPTION("rtx.atmosphere", float, cloudVerticalProfile, 0.83f,
-               "Volumetric cloud character: 0 = flat 2D extrusion, 1 = rounded "
-               "cumulus bottoms with wispy tops + wind-shear lateral shift. "
-               "Integral normalized so total opacity stays roughly constant.");
     RTX_OPTION("rtx.atmosphere", float, cloudCurvature, 0.3f,
                "Sky-dome curvature for the cloud layer: 0 = real-planet radius "
                "(nearly flat ceiling), 1 = tight dome (clouds visibly curve down "
                "to the horizon). Only affects cloud sphere intersections; "
                "atmospheric scattering still uses the real planet radius.");
+
+    // Cloud spatial variation (Nubis-style — spec 2026-05-06)
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeMean, 0.5f,
+               "Mean cloud type across the sky [0,1]: 0=stratus, 0.5=stratocumulus, 1=cumulus.");
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeSpread, 0.4f,
+               "Spatial variation amplitude for cloud type [0,1]. 0=uniform, 1=full range across the sky.");
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeNoiseScale, 0.0005f,
+               "Region size frequency for type noise. Numerically smaller = larger spatial features.");
+    // Morrowind override: cloudCoverageMean is NoSave because the wrapper drives
+    // it from GetCurrentWeather every frame. Upstream declares this as a plain
+    // RTX_OPTION (0.6 default); we route it through the Derived layer so
+    // per-frame writes don't pollute the user config file.
+    RTX_OPTION_FLAG("rtx.atmosphere", float, cloudCoverageMean, 0.6f, RtxOptionFlags::NoSave,
+                    "Mean cloud coverage across the sky [0,1]: 0=clear, 1=overcast. Game-driven every frame.");
+    RTX_OPTION("rtx.atmosphere", float, cloudCoverageSpread, 0.4f,
+               "Spatial variation amplitude for coverage [0,1]. 0=uniform, 1=full range.");
+    RTX_OPTION("rtx.atmosphere", float, cloudCoverageNoiseScale, 0.0005f,
+               "Region size frequency for coverage noise. Independent from type noise scale.");
+    RTX_OPTION("rtx.atmosphere", float, cloudAnvilBias, 0.3f,
+               "Cumulus top inflation strength [0,1]. 0=flat tops, 1=fully spread mushroom-cap anvils.");
+    RTX_OPTION("rtx.atmosphere", float, cloudWindShearStrength, 0.5f,
+               "Lateral cloud-top displacement along wind direction, scaled by cloud type [0,1+]. "
+               "0=cloud tops vertical above base, 1=tops offset by ~thickness*type along wind. "
+               "Reduces the visible per-cumulus 45-degree lean at default settings.");
+    RTX_OPTION("rtx.atmosphere", float, cloudMoonBrightness, 0.3f,
+               "Strength of directional moon lighting on clouds [0,1+]. "
+               "0=moonlit-cloud feature off (only nightSkyColor airglow + per-moon ambient remain), "
+               "1=full strength. Each enabled, above-horizon moon contributes Lambert+HG response "
+               "scaled by its phaseGlow (full at full moon, zero at new moon). No per-sample shadow "
+               "march — single-bounce only.");
 
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");
