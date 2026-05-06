@@ -135,8 +135,10 @@ struct AtmosphereArgs {
   float cloudTypeMean;             // [0,1] mean cloud type. 0=stratus, 0.5=stratocumulus, 1=cumulus.
   float cloudTypeSpread;           // [0,1] amplitude of type variation around mean.
   float cloudTypeNoiseScale;       // Region size frequency for type noise.
-  float cloudCoverageMean;         // [0,1] mean coverage. Replaces old cloudCoverage role.
+  float cloudCoverageMean;         // [0,1] mean coverage across the sky.
+
   float cloudCoverageSpread;       // [0,1] amplitude of coverage variation around mean.
   float cloudCoverageNoiseScale;   // Region size frequency for coverage noise (independent of type).
   float cloudAnvilBias;            // [0,1] cumulus top inflation strength (Nubis anvil pow trick).
+  float pad4;                      // 16-byte alignment
 };
