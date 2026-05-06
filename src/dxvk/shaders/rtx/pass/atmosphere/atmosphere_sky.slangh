@@ -723,8 +723,15 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args) {
           float moonCosTheta = dot(viewDir, moonDir);
           float moonPhase = hgPhase(moonCosTheta, args.cloudAnisotropy);
           float moonResponse = kDiffuseGain * moonLambert + kPhaseGain * moonPhase;
+          // Convert m.brightness from disk-rendering units (where m.brightness=4
+          // makes a visible moon disk against the dark sky, multiplied by ~100
+          // in evalMoonDisk) to cloud-illumination units. Without this scale,
+          // moon-lit clouds at night render as bright as overcast daytime
+          // clouds (roughly 16% of sun's contribution), which reads as "way
+          // too bright" — real moonlight is ~1-3% of sun perceptually.
+          const float kMoonIllumScale = 0.05f;
           moonCoeff[mi]   = m.color * m.brightness * moonResponse * phaseGlow
-                          * args.cloudMoonBrightness * nightFactor;
+                          * args.cloudMoonBrightness * kMoonIllumScale * nightFactor;
           moonDirNorm[mi] = moonDir;
         }
       }
