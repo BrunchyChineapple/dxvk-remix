@@ -1365,6 +1365,10 @@ namespace dxvk {
                "1=full strength. Each enabled, above-horizon moon contributes Lambert+HG response "
                "scaled by its phaseGlow (full at full moon, zero at new moon). No per-sample shadow "
                "march — single-bounce only.");
+    RTX_OPTION("rtx.atmosphere", float, cloudNoiseTileKm, 12.0f,
+               "World-space tile period (km) for the prebaked 3D cloud noise texture. "
+               "Smaller = more visible repetition; larger = lower-frequency cloud detail. "
+               "Default 12.0; viable range 6-24.");
 
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");

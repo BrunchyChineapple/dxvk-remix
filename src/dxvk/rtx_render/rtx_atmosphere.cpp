@@ -310,6 +310,10 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.pad5 = 0.0f;
     args.pad6 = 0.0f;
     args.pad7 = 0.0f;
+    args.cloudNoiseTileKm = RtxOptions::cloudNoiseTileKm();
+    args.padCloudC0 = 0.0f;
+    args.padCloudC1 = 0.0f;
+    args.padCloudC2 = 0.0f;
   }
 
   return args;
