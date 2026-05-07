@@ -1005,6 +1005,81 @@ float fbmNoise3D(vec3 p, int octaves, float seed) {
   return value;
 }
 
+// Periodic 3D Perlin gradient noise — same dot-product math as perlinNoise3D
+// but with each of the 8 corner lattice positions wrapped to `period` before
+// hashing. Sampling perlinNoise3DPeriodic(p, period) at p and at p + period
+// produces identical values, which is the precondition for a tilable bake:
+// the texture's left-edge voxel matches its right-edge voxel and the runtime
+// frac()-wraparound at tile boundaries reads as continuous, not seamed.
+//
+// `period` MUST be a positive integer vector. Non-integer periods break the
+// integer-lattice tilability invariant. The bake passes integer values
+// derived from cloudNoiseTileKm × the per-octave frequency pre-scale.
+//
+// Used only by the cloud-noise bake compute pass; per-frame paths sample the
+// prebaked Texture3D and do not touch this function.
+float perlinNoise3DPeriodic(vec3 p, vec3 period) {
+  vec3 pi = floor(p);
+  vec3 pf = p - pi;
+  vec3 f  = pf * pf * (3.0f - 2.0f * pf);
+
+  // Wrap each corner's lattice position into [0, period). The dot-product
+  // offset (pf - corner) stays in the original [0,1] cube — only the hash
+  // input is wrapped, so the gradient interpolation remains continuous.
+  vec3 c000 = mod(pi + vec3(0, 0, 0), period);
+  vec3 c100 = mod(pi + vec3(1, 0, 0), period);
+  vec3 c010 = mod(pi + vec3(0, 1, 0), period);
+  vec3 c110 = mod(pi + vec3(1, 1, 0), period);
+  vec3 c001 = mod(pi + vec3(0, 0, 1), period);
+  vec3 c101 = mod(pi + vec3(1, 0, 1), period);
+  vec3 c011 = mod(pi + vec3(0, 1, 1), period);
+  vec3 c111 = mod(pi + vec3(1, 1, 1), period);
+
+  float n000 = dot(perlinGradient3D(c000), pf - vec3(0, 0, 0));
+  float n100 = dot(perlinGradient3D(c100), pf - vec3(1, 0, 0));
+  float n010 = dot(perlinGradient3D(c010), pf - vec3(0, 1, 0));
+  float n110 = dot(perlinGradient3D(c110), pf - vec3(1, 1, 0));
+  float n001 = dot(perlinGradient3D(c001), pf - vec3(0, 0, 1));
+  float n101 = dot(perlinGradient3D(c101), pf - vec3(1, 0, 1));
+  float n011 = dot(perlinGradient3D(c011), pf - vec3(0, 1, 1));
+  float n111 = dot(perlinGradient3D(c111), pf - vec3(1, 1, 1));
+
+  float nx00 = mix(n000, n100, f.x);
+  float nx10 = mix(n010, n110, f.x);
+  float nx01 = mix(n001, n101, f.x);
+  float nx11 = mix(n011, n111, f.x);
+
+  float nxy0 = mix(nx00, nx10, f.y);
+  float nxy1 = mix(nx01, nx11, f.y);
+
+  return mix(nxy0, nxy1, f.z);
+}
+
+// Periodic 3D Perlin FBM. Octave loop matches fbmNoise3D's shape (lacunarity
+// 2.0, gain 0.5, 6-octave cap, seed-stride 17.31, no normalization), but each
+// octave's underlying noise is wrapped to a doubling period so the FBM as a
+// whole tiles cleanly at the input range basePeriod.
+//
+// `basePeriod` MUST equal the bake's input range at the FIRST octave (i.e.,
+// cloudNoiseTileKm × the caller's frequency pre-scale). Period doubles each
+// octave to track the implicit `p *= 2.0` so all octaves remain individually
+// tilable at multiples of basePeriod.
+float fbmNoise3DPeriodic(vec3 p, int octaves, float seed, vec3 basePeriod) {
+  float value     = 0.0f;
+  float amplitude = 0.5f;
+  vec3  period    = basePeriod;
+
+  for (int i = 0; i < octaves && i < 6; i++) {
+    float seedOffset = seed + float(i) * 17.31f;
+    vec3  octaveOff  = vec3(seedOffset * 1.7f, seedOffset * 2.3f, seedOffset * 3.1f);
+    value     += amplitude * perlinNoise3DPeriodic(p + octaveOff, period);
+    p         *= 2.0f;
+    period    *= 2.0f;
+    amplitude *= 0.5f;
+  }
+  return value;
+}
+
 // Sigg-Hadwiger 4-tap-per-axis B-spline tricubic. In 3D, separability gives
 // 8 hardware trilinear taps with C2 continuous filtering and no boxy
 // linear-filter artifact at close-up density gradients.

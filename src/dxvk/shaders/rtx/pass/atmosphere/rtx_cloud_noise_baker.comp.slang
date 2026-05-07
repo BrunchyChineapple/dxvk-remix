@@ -68,14 +68,21 @@ void main(uint3 threadId : SV_DispatchThreadID) {
   // to decorrelate from the base lattice. Both return approximately [-1, 1]
   // (gradient noise's natural range).
   //
-  // The pre-scale matches the original analytic 2D fbmNoise2D's effective
-  // frequency (cloudScale * smoothNoise2D's internal *100 = 0.005 * 100 = 0.5).
-  // Earlier values of 90 / 360 came from the 2D code's third argument, which
-  // is the SEED in fbmNoise2D, not a frequency — pre-scaling by 90/360 put the
-  // FBM ~180x past Nyquist for the 256-cubed texture, baking aliased noise
-  // that saturate-clamped to mostly-zero and produced invisible clouds.
-  float base   = fbmNoise3D(worldPosKm * 0.5f, 4, 0.0f);
-  float detail = fbmNoise3D(worldPosKm * 2.0f, 3, 17.3f);
+  // Periodic variant: each octave's lattice is wrapped to (cloudNoiseTileKm *
+  // freq) so the bake produces a tilable volume. Without this, perlinNoise3D's
+  // unique-everywhere output created visible seams every cloudNoiseTileKm
+  // (12 km default) when the runtime sample wrapped via frac(). The period
+  // doubles per octave (matching fbmNoise3DPeriodic's `p *= 2.0`), keeping
+  // every octave individually tilable at the input range. cloudNoiseTileKm
+  // should produce integer periods at both pre-scales (12 km × 0.5 = 6,
+  // 12 km × 2.0 = 24); floor() snaps to nearest integer for non-default
+  // tile values, with min 2 to avoid a degenerate single-cell period.
+  const float baseFreq   = 0.5f;
+  const float detailFreq = 2.0f;
+  vec3  basePeriodBase   = max(floor(vec3(args.cloudNoiseTileKm * baseFreq)),   vec3(2.0f));
+  vec3  basePeriodDetail = max(floor(vec3(args.cloudNoiseTileKm * detailFreq)), vec3(2.0f));
+  float base   = fbmNoise3DPeriodic(worldPosKm * baseFreq,   4, 0.0f,  basePeriodBase);
+  float detail = fbmNoise3DPeriodic(worldPosKm * detailFreq, 3, 17.3f, basePeriodDetail);
 
   // Combine and recenter from gradient noise's [-1, 1]-ish range to [0, 1]
   // for R8 storage. The earlier saturate-clipped form (max(sum, 0)) lost half

@@ -508,6 +508,15 @@ namespace fork_hooks {
         RemixGui::DragFloat("Anvil Bias", &RtxOptions::cloudAnvilBiasObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover("Cumulus top inflation. 0=flat tops, 1=fully spread mushroom-cap anvils. Nubis pow trick.");
 
+        ImGui::Separator();
+        ImGui::TextDisabled("3D Noise Bake (Stage C)");
+        RemixGui::DragFloat("Noise Tile (km)", &RtxOptions::cloudNoiseTileKmObject(), 1.0f, 4.0f, 32.0f, "%.0f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+          "World-space tile period (km) for the prebaked 3D cloud noise volume. Smaller = more visible "
+          "repetition; larger = lower-frequency cloud detail. Integer values (6, 8, 12, 16, 24) keep the "
+          "bake perfectly tilable; non-integer values snap the period via floor() and may show small seams. "
+          "CHANGE APPLIES ON GAME RELAUNCH — the bake runs once at atmosphere init.");
+
         ImGui::TreePop();
       }
     }
