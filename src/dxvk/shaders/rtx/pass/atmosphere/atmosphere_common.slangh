@@ -1105,8 +1105,19 @@ float sampleCloudDensityTextured(vec3 worldPosKm,
   vec3 windOffset = vec3(args.cloudWindOffset.x, 0.0f, args.cloudWindOffset.y);
   vec3 perturbed  = worldPosKm + windOffset;
 
-  // 2. World-pos → texcoord (tilable wraparound via frac).
-  vec3 texcoord = frac(perturbed / args.cloudNoiseTileKm);
+  // 2. World-pos → texcoord. Anisotropic mapping: horizontal axes use the
+  //    cloudNoiseTileKm period (multiple cumulus widths per tile, ~12 km),
+  //    vertical axis is mapped to the cloud-layer-relative span [0, 1] across
+  //    cloudThickness so the bake's full 6-cycle base-octave structure runs
+  //    across the cloud layer's 1 km vertical extent. A uniform (worldPos / 12)
+  //    mapping would compress the cloud layer into ~8% of the texture's Y
+  //    axis — too little base-octave variation, reading as "stacked 2D layers"
+  //    rather than true volumetric structure.
+  float yRelative = (perturbed.y - args.cloudAltitude) / max(args.cloudThickness, 0.01f);
+  vec3 texcoord = vec3(
+      frac(perturbed.x / args.cloudNoiseTileKm),
+      frac(yRelative),
+      frac(perturbed.z / args.cloudNoiseTileKm));
 
   // 3. Tricubic 3D sample. Texture-size literal must match the baker's
   //    dispatch resolution (RtxAtmosphere::kCloudNoise3DSize = 256). If the

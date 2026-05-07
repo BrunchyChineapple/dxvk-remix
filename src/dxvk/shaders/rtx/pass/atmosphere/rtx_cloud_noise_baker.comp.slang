@@ -62,17 +62,29 @@ void main(uint3 threadId : SV_DispatchThreadID) {
 
   vec3 worldPosKm = voxelToWorldKm(threadId, args.cloudNoiseTileKm);
 
-  // Base FBM: 4 octaves at frequency 90 (frequency via pre-scale of worldPosKm).
-  // Detail FBM: 3 octaves at frequency 360 (4x base) with seed offset 17.3 to
-  // decorrelate from the base lattice. Both return approximately [-1, 1]
+  // Base FBM: 4 octaves with first-octave spatial frequency 0.5 cycles/km
+  // (1.0 unit of perlinNoise3D = 1.0 unit of input p; we want 0.5 cycles/km).
+  // Detail FBM: 3 octaves at 4x base frequency = 2.0 cycles/km, with seed 17.3
+  // to decorrelate from the base lattice. Both return approximately [-1, 1]
   // (gradient noise's natural range).
-  float base   = fbmNoise3D(worldPosKm * 90.0f,  4, 0.0f);
-  float detail = fbmNoise3D(worldPosKm * 360.0f, 3, 17.3f);
+  //
+  // The pre-scale matches the original analytic 2D fbmNoise2D's effective
+  // frequency (cloudScale * smoothNoise2D's internal *100 = 0.005 * 100 = 0.5).
+  // Earlier values of 90 / 360 came from the 2D code's third argument, which
+  // is the SEED in fbmNoise2D, not a frequency — pre-scaling by 90/360 put the
+  // FBM ~180x past Nyquist for the 256-cubed texture, baking aliased noise
+  // that saturate-clamped to mostly-zero and produced invisible clouds.
+  float base   = fbmNoise3D(worldPosKm * 0.5f, 4, 0.0f);
+  float detail = fbmNoise3D(worldPosKm * 2.0f, 3, 17.3f);
 
-  // Combine: detail at half-amplitude, then saturate-clamp to [0, 1] for R8.
-  // The clip is intentional -- gradient noise's negative half maps to "no
-  // cloud" voxels, which produces a sparse cloud-like distribution.
-  float density = saturate(base + 0.5f * detail);
+  // Combine and recenter from gradient noise's [-1, 1]-ish range to [0, 1]
+  // for R8 storage. The earlier saturate-clipped form (max(sum, 0)) lost half
+  // the signal because gradient noise has zero mean — clipping the negative
+  // half left the texture mostly empty and the coverage-threshold math (tuned
+  // against the analytic 2D's value-noise [0, 1] distribution) found nothing
+  // to threshold against. The recentering preserves the full FBM contrast and
+  // matches the distribution the per-frame coverage threshold expects.
+  float density = saturate(0.5f + 0.5f * (base + 0.5f * detail));
 
   cloudNoise3DOutput[threadId] = density;
 }
