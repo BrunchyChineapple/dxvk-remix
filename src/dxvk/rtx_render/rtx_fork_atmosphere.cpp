@@ -117,6 +117,7 @@ namespace fork_hooks {
     auto transmittanceLut   = ctx.m_atmosphere->getTransmittanceLut();
     auto multiscatteringLut = ctx.m_atmosphere->getMultiscatteringLut();
     auto skyViewLut         = ctx.m_atmosphere->getSkyViewLut();
+    auto cloudNoise3D       = ctx.m_atmosphere->getCloudNoise3D();  // Stage C
 
     // Always bind the LUTs (they're declared in shaders unconditionally)
     if (transmittanceLut.isValid()) {
@@ -127,6 +128,9 @@ namespace fork_hooks {
     }
     if (skyViewLut.isValid()) {
       ctx.bindResourceView(BINDING_ATMOSPHERE_SKY_VIEW_LUT, skyViewLut.view, nullptr);
+    }
+    if (cloudNoise3D.isValid()) {
+      ctx.bindResourceView(BINDING_ATMOSPHERE_CLOUD_NOISE_3D, cloudNoise3D.view, nullptr);
     }
   }
 
