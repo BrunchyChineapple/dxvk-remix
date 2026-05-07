@@ -1000,3 +1000,83 @@ float fbmNoise2D(vec2 p, int octaves, float seed) {
   return value;
 }
 
+// 3D Perlin gradient noise utilities — used only by the cloud-noise bake
+// compute pass (rtx_cloud_noise_baker.comp.slang). Per-frame paths sample
+// the prebaked Texture3D instead. True gradient noise (Ken Perlin's 12
+// cube-edge gradients + dot products) distinct from the value-noise helpers
+// above (smoothNoise2D / fbmNoise2D).
+
+// Ken Perlin's 12 cube-edge gradient vectors. Each is one of (±1,±1,0),
+// (±1,0,±1), (0,±1,±1) — uniform magnitude (sqrt(2)), avoids axis-aligned
+// bias of random unit gradients.
+vec3 perlinGradient3D(vec3 ip) {
+  // hash31 returns [0, 1); bin into 12 buckets.
+  uint h = uint(hash31(ip) * 12.0f);
+  if      (h == 0u)  return vec3( 1.0f,  1.0f,  0.0f);
+  else if (h == 1u)  return vec3(-1.0f,  1.0f,  0.0f);
+  else if (h == 2u)  return vec3( 1.0f, -1.0f,  0.0f);
+  else if (h == 3u)  return vec3(-1.0f, -1.0f,  0.0f);
+  else if (h == 4u)  return vec3( 1.0f,  0.0f,  1.0f);
+  else if (h == 5u)  return vec3(-1.0f,  0.0f,  1.0f);
+  else if (h == 6u)  return vec3( 1.0f,  0.0f, -1.0f);
+  else if (h == 7u)  return vec3(-1.0f,  0.0f, -1.0f);
+  else if (h == 8u)  return vec3( 0.0f,  1.0f,  1.0f);
+  else if (h == 9u)  return vec3( 0.0f, -1.0f,  1.0f);
+  else if (h == 10u) return vec3( 0.0f,  1.0f, -1.0f);
+  else               return vec3( 0.0f, -1.0f, -1.0f); // h == 11u
+}
+
+// 3D Perlin gradient noise — single octave at the input frequency.
+// Output range approximately [-1, 1] (gradient noise's classic range —
+// different from value noise's [0, 1]; do NOT saturate or remap here).
+// Used only by the cloud-noise bake compute pass; per-frame paths sample
+// the prebaked Texture3D instead.
+float perlinNoise3D(vec3 p) {
+  vec3 pi = floor(p);
+  vec3 pf = p - pi;
+  vec3 f  = pf * pf * (3.0f - 2.0f * pf); // cubic-Hermite fade
+
+  // Dot product of gradient at each integer corner with the offset vector
+  // from that corner to the sample point.
+  float n000 = dot(perlinGradient3D(pi + vec3(0.0f, 0.0f, 0.0f)), pf - vec3(0.0f, 0.0f, 0.0f));
+  float n100 = dot(perlinGradient3D(pi + vec3(1.0f, 0.0f, 0.0f)), pf - vec3(1.0f, 0.0f, 0.0f));
+  float n010 = dot(perlinGradient3D(pi + vec3(0.0f, 1.0f, 0.0f)), pf - vec3(0.0f, 1.0f, 0.0f));
+  float n110 = dot(perlinGradient3D(pi + vec3(1.0f, 1.0f, 0.0f)), pf - vec3(1.0f, 1.0f, 0.0f));
+  float n001 = dot(perlinGradient3D(pi + vec3(0.0f, 0.0f, 1.0f)), pf - vec3(0.0f, 0.0f, 1.0f));
+  float n101 = dot(perlinGradient3D(pi + vec3(1.0f, 0.0f, 1.0f)), pf - vec3(1.0f, 0.0f, 1.0f));
+  float n011 = dot(perlinGradient3D(pi + vec3(0.0f, 1.0f, 1.0f)), pf - vec3(0.0f, 1.0f, 1.0f));
+  float n111 = dot(perlinGradient3D(pi + vec3(1.0f, 1.0f, 1.0f)), pf - vec3(1.0f, 1.0f, 1.0f));
+
+  // Trilinear interpolation using faded weights
+  float nx00 = mix(n000, n100, f.x);
+  float nx10 = mix(n010, n110, f.x);
+  float nx01 = mix(n001, n101, f.x);
+  float nx11 = mix(n011, n111, f.x);
+
+  float nxy0 = mix(nx00, nx10, f.y);
+  float nxy1 = mix(nx01, nx11, f.y);
+
+  return mix(nxy0, nxy1, f.z);
+}
+
+// 3D Perlin FBM. Mirrors fbmNoise2D's octave-loop shape (lacunarity 2.0,
+// gain 0.5, 6-octave cap, no amplitude normalization, per-octave seed
+// stride 17.31) but uses the gradient-noise primitive perlinNoise3D rather
+// than value noise. Frequency control via pre-scaling p: caller passes
+// p * baseFreq before calling. Output range approximately [-1, 1].
+float fbmNoise3D(vec3 p, int octaves, float seed) {
+  float value     = 0.0f;
+  float amplitude = 0.5f;
+
+  for (int i = 0; i < octaves && i < 6; i++) {
+    // Per-octave seed offset shifts the lattice to decorrelate octaves.
+    // Same stride (17.31) used in fbmNoise2D for cross-function consistency.
+    float seedOffset  = seed + float(i) * 17.31f;
+    vec3  octaveOff   = vec3(seedOffset * 1.7f, seedOffset * 2.3f, seedOffset * 3.1f);
+    value     += amplitude * perlinNoise3D(p + octaveOff);
+    p         *= 2.0f;
+    amplitude *= 0.5f;
+  }
+  return value;
+}
+
