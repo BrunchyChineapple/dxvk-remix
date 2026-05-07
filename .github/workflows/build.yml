@@ -5,6 +5,9 @@ on:
     branches: [ main, 'release/**' ]
   pull_request:
     branches: [ main, 'release/**' ]
+  # Manual build trigger: publishing a GitHub Release (typically from
+  # modern-games-sdk-api) fires the workflow. Also enables
+  # workflow_dispatch so the Actions UI "Run workflow" button works.
   release:
     types: [published]
   workflow_dispatch:
@@ -16,17 +19,21 @@ jobs:
     strategy:
       matrix:
         include:
+          - build-flavour: debug
+            output-subdir: _Comp64Debug
+          - build-flavour: debugoptimized
+            output-subdir: _Comp64DebugOptimized
           - build-flavour: release
             output-subdir: _Comp64Release
 
     steps:
     - name: Setup variables
-      uses: actions/github-script@v7
+      uses: actions/github-script@v9
       with:
         script: core.exportVariable('GITHUB_SHA_SHORT', context.sha.substring(0, 7))
 
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         submodules: recursive
 
@@ -44,7 +51,7 @@ jobs:
       run: copy artifacts_readme.txt _output
 
     - name: Upload x64 binaries
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: rtx-remix-for-x64-games-${{github.run_number}}-${{env.GITHUB_SHA_SHORT}}-${{matrix.build-flavour}}
         path: |
@@ -75,7 +82,7 @@ jobs:
         Copy-Item -Recurse -Path bridge\_output\* -Destination _output\ -Force
 
     - name: Upload x86 binaries
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: rtx-remix-for-x86-games-${{github.run_number}}-${{env.GITHUB_SHA_SHORT}}-${{matrix.build-flavour}}
         include-hidden-files: true

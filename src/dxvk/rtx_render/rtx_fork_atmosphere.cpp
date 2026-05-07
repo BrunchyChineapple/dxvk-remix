@@ -402,10 +402,6 @@ namespace fork_hooks {
           ImGui::TreePop();
         }
 
-        // Night Sky, Moons, and Clouds now live as top-level tree nodes
-        // immediately below (from the remixplus/main merge). The old nested
-        // blocks here duplicated their RTX_OPTIONs and have been removed.
-
         ImGui::TreePop();
       }
 

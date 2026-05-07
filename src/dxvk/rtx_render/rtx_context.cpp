@@ -338,7 +338,7 @@ namespace dxvk {
     }
   }
 
-  VkExtent3D RtxContext::onFrameBegin(const VkExtent3D& upscaledExtent) {
+  VkExtent3D RtxContext::onInjectRtxFrameBegin(const VkExtent3D& upscaledExtent) {
     auto logRenderPassRaytraceModeRayQuery = [=](const char* renderPassName, auto mode) {
       switch (mode) {
       case decltype(mode)::RayQuery:
@@ -436,6 +436,17 @@ namespace dxvk {
     }
 
     return downscaledExtent;
+  }
+
+  void RtxContext::onInjectRtxFrameEnd(bool rayTracedThisFrame) {
+    if (rayTracedThisFrame) {
+      Resources::RaytracingOutput& rtOutput = getResourceManager().getRaytracingOutput();
+
+      m_common->metaNeuralRadianceCache().onFrameEnd(rtOutput);
+      rtOutput.onFrameEnd();
+    }
+
+    getSceneManager().onFrameEnd(this, rayTracedThisFrame);
   }
 
   // Hooked into D3D9 presentImage (same place HUD rendering is)
@@ -617,7 +628,7 @@ namespace dxvk {
       // If we really don't have any RT to do, just bail early (could be UI/menus rendering)
       if (getSceneManager().getSurfaceBuffer() != nullptr) {
 
-        VkExtent3D downscaledExtent = onFrameBegin(targetImage->info().extent);
+        VkExtent3D downscaledExtent = onInjectRtxFrameBegin(targetImage->info().extent);
 
         Resources::RaytracingOutput& rtOutput = getResourceManager().getRaytracingOutput();
 
@@ -765,9 +776,6 @@ namespace dxvk {
           getSceneManager().logStatistics();
         }
 
-        m_common->metaNeuralRadianceCache().onFrameEnd(rtOutput);
-
-        rtOutput.onFrameEnd();
         raytracedThisFrame = true;
       }
 
@@ -792,7 +800,7 @@ namespace dxvk {
       }
     }
 
-    getSceneManager().onFrameEnd(this, raytracedThisFrame);
+    onInjectRtxFrameEnd(raytracedThisFrame);
 
     // apply changes to RtxOptions after the frame has ended
     RtxOptionManager::applyPendingValues(m_device.ptr(), /* forceOnChange */ false);

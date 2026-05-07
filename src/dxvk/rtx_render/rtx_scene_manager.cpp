@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "rtx_asset_replacer.h"
+#include "rtx_fork_hooks.h"
 #include "rtx_scene_manager.h"
 #include "rtx_opacity_micromap_manager.h"
 #include "dxvk_device.h"
@@ -486,8 +487,7 @@ namespace dxvk {
     m_previousFrameSceneAvailable = raytracedThisFrame && RtxOptions::enablePreviousTLAS();
 
     m_bufferCache.clear();
-    m_externalGpuInstancingTransforms.clear();
-    if (raytracedThisFrame){
+    if (raytracedThisFrame) {
       std::lock_guard lock { m_drawCallMeta.mutex };
       const uint8_t curTick = m_drawCallMeta.ticker;
       const uint8_t nextTick = (m_drawCallMeta.ticker + 1) % m_drawCallMeta.MaxTicks;
@@ -788,8 +788,8 @@ namespace dxvk {
         transforms.objectToWorld = transforms.objectToWorld * replacement.replacementToObject;
         transforms.objectToView = transforms.objectToView * replacement.replacementToObject;
 
-        if (!replacement.instancesToObject.empty()) {
-          transforms.instancesToObject = &replacement.instancesToObject;
+        if (replacement.instancesToObject && !replacement.instancesToObject->empty()) {
+          transforms.instancesToObject = replacement.instancesToObject;
         } else {
           transforms.instancesToObject = nullptr;
         }
@@ -964,6 +964,7 @@ namespace dxvk {
     assert(result == ObjectCacheState::KBuildBVH);
 
     pBlas->frameLastUpdated = m_device->getCurrentFrameId();
+    m_instanceManager.notifySceneChanged();
 
     return result;
   }
@@ -980,8 +981,10 @@ namespace dxvk {
     // We dont expect to hit the rebuild path here - since this would indicate an index buffer or other topological change, and that *should* trigger a new scene object (since the hash would change)
     assert(result != ObjectCacheState::KBuildBVH);
 
-    if (result == ObjectCacheState::kUpdateBVH)
+    if (result == ObjectCacheState::kUpdateBVH) {
       pBlas->frameLastUpdated = m_device->getCurrentFrameId();
+      m_instanceManager.notifySceneChanged();
+    }
     
     pBlas->clearMaterialCache();
     pBlas->input = drawCallState; // cache the draw state for the next time.
@@ -1020,6 +1023,9 @@ namespace dxvk {
   }
 
   void SceneManager::onInstanceDestroyed(RtInstance& instance) {
+    // Evict from the AccelManager bucket cache to prevent stale pointer ABA issues.
+    m_accelManager.removeInstanceFromBucketCache(&instance);
+
     BlasEntry* pBlas = instance.getBlas();
     if (pBlas != nullptr) {
       pBlas->unlinkInstance(&instance);
@@ -1074,6 +1080,7 @@ namespace dxvk {
       m_device->getCommon()->metaGeometryUtils().dispatchSmoothNormals(ctx, drawCallState.getGeometryData(), pBlas->modifiedGeometryData);
       pBlas->modifiedGeometryData.smoothNormalsApplied = true;
       pBlas->frameLastUpdated = pBlas->frameLastTouched;
+      m_instanceManager.notifySceneChanged();
     }
 
     if (drawCallState.getSkinningState().numBones > 0 &&
@@ -1081,6 +1088,7 @@ namespace dxvk {
         (result == ObjectCacheState::KBuildBVH || result == ObjectCacheState::kUpdateBVH)) {
       m_device->getCommon()->metaGeometryUtils().dispatchSkinning(drawCallState, pBlas->modifiedGeometryData);
       pBlas->frameLastUpdated = pBlas->frameLastTouched;
+      m_instanceManager.notifySceneChanged();
     }
 
     // Note: The material data can be modified in instance manager
@@ -1564,7 +1572,7 @@ namespace dxvk {
       XXH64_hash_t lightIdHash = lightAssetHash;
       lightIdHash = XXH64(&lightPos, sizeof(Vector3), lightIdHash);
 
-      const InstanceLookupKey lightKey { lightIdHash, lightAssetHash, kEmptyHash, kEmptyHash, lightPos, lightTransform };
+      const ReplacementInstance::LookupKey lightKey { lightIdHash, lightAssetHash, kEmptyHash, kEmptyHash, lightPos, lightTransform };
       ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(lightKey);
 
       // Reinitialize the RI if the prim count doesn't match the replacement count.
@@ -1730,9 +1738,13 @@ namespace dxvk {
 
         m_opacityMicromapManager = std::make_unique<OpacityMicromapManager>(m_device);
         m_instanceManager.addEventHandler(m_opacityMicromapManager->getInstanceEventHandler());
+        // Seed candidates with instances that were added before the event handler was registered
+        m_opacityMicromapManager->seedCandidates(m_instanceManager.getInstanceTable());
         Logger::info("[RTX] Opacity Micromap: enabled");
       }
     } else if (m_opacityMicromapManager.get()) {
+      m_accelManager.invalidateOpacityMicromapBindings();
+      m_instanceManager.notifySceneChanged();
       m_instanceManager.removeEventHandler(m_opacityMicromapManager.get());
       m_opacityMicromapManager = nullptr;
       Logger::info("[RTX] Opacity Micromap: disabled");
@@ -1755,7 +1767,15 @@ namespace dxvk {
     // compute shader can copy template material entries to per-instance slots.
     // For PointInstancer duplicate entries we skip writeGPUData and advance past
     // the gap — the GPU shader will fill those slots.
-    {
+    //
+    // When the scene is unchanged (fast-skip path in mergeInstancesIntoBlas),
+    // the surface order and material data are normally identical to last frame.
+    // Baked terrain materials are updated independently of acceleration-structure
+    // scene generation, so keep their surface-material upload live.
+    const bool updateSurfaceMaterials =
+      !m_accelManager.wasSceneUnchangedThisFrame() ||
+      TerrainBaker::needsTerrainBaking();
+    if (updateSurfaceMaterials) {
       DxvkBufferCreateInfo matInfo;
       matInfo.usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
                     | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
@@ -1820,7 +1840,8 @@ namespace dxvk {
 
     // Todo: These updates require a lot of temporary buffer allocations and memcopies, ideally we should memcpy directly into a mapped pointer provided by Vulkan,
     // but we have to create a buffer to pass to DXVK's updateBuffer for now.
-    {
+    // Skip when scene is unchanged — buffers from last frame are still valid.
+    if (!m_accelManager.wasSceneUnchangedThisFrame()) {
       // Allocate the instance buffer and copy its contents from host to device memory
       DxvkBufferCreateInfo info;
       info.usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
@@ -1927,20 +1948,47 @@ namespace dxvk {
     }
 
     if (!state.gpuInstancingTransforms.empty()) {
-      m_externalGpuInstancingTransforms.push_back(std::move(state.gpuInstancingTransforms));
-      state.drawCall.transformData.instancesToObject = &m_externalGpuInstancingTransforms.back();
+      state.drawCall.transformData.instancesToObject =
+        std::make_shared<const std::vector<Matrix4>>(std::move(state.gpuInstancingTransforms));
     }
 
-    const auto& submeshes = m_pReplacer->accessExternalMesh(state.mesh);
+    const XXH64_hash_t meshHash = reinterpret_cast<XXH64_hash_t>(state.mesh);
 
+    // Fetch submeshes once — they drive both the replacement path (needs submeshes[0]
+    // as geometry template) and the default iteration path.
+    const std::vector<RasterGeometry>& submeshes = m_pReplacer->accessExternalMesh(state.mesh);
+    if (submeshes.empty()) {
+      Logger::err(str::format("[RTX-Mesh] External mesh has no submeshes: 0x", std::hex, meshHash, std::dec));
+      return;
+    }
+
+    // Persistence-tracking setup happens before the replacement-lookup early-out
+    // so the same ReplacementInstance can be threaded through both paths —
+    // drawReplacements() requires a non-null instance and uses it to drive
+    // RtInstance reuse across frames for the replacement primitives.
     const XXH64_hash_t identityHash = state.computeExternalDrawIdentityHash();
     const XXH64_hash_t spatialMapHash = spatialMapHashForExternalDrawMesh(state.mesh);
     const Matrix4& xform = state.drawCall.transformData.objectToWorld;
     const XXH64_hash_t matHash = state.drawCall.materialData.getHash();
     const Vector3 worldPos = xform[3].xyz();
 
-    const InstanceLookupKey externalKey { identityHash, spatialMapHash, matHash, kEmptyHash, worldPos, xform };
+    const ReplacementInstance::LookupKey externalKey { identityHash, spatialMapHash, matHash, kEmptyHash, worldPos, xform };
     ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(externalKey);
+
+    if (std::vector<AssetReplacement>* pReplacements = fork_hooks::externalDrawMeshReplacement(*m_pReplacer, meshHash)) {
+      // Copy the DrawCallState so we don't mutate the caller's state. Point geometryData
+      // at submeshes[0] as the replacement geometry template, clear externalMaterial so
+      // the USD replacement material takes precedence, and use a neutral default material
+      // since the replacement will provide its own.
+      DrawCallState replacementDrawCall = state.drawCall;
+      replacementDrawCall.geometryData = submeshes[0];
+      replacementDrawCall.geometryData.cullMode = state.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+      replacementDrawCall.geometryData.externalMaterial = nullptr;
+
+      MaterialData renderMaterialData = LegacyMaterialData().as<OpaqueMaterialData>();
+      drawReplacements(ctx, &replacementDrawCall, pReplacements, renderMaterialData, replacementInstance);
+      return;
+    }
 
     AxisAlignedBoundingBox geometryBBox;
 
@@ -1948,15 +1996,23 @@ namespace dxvk {
       state.drawCall.geometryData = submeshes[i];
       state.drawCall.geometryData.cullMode = state.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
 
+      XXH64_hash_t textureHash = 0;
+
       const MaterialData* material = m_pReplacer->accessExternalMaterial(submeshes[i].externalMaterial);
       if (material != nullptr) {
+        fork_hooks::externalDrawMaterialReplacement(*m_pReplacer, material);
+
         state.drawCall.materialData.setHashOverride(material->getHash());
-      } 
+
+        fork_hooks::externalDrawTextureCategories(material, state.drawCall, textureHash);
+      }
 
       const RtxParticleSystemDesc* pParticles = nullptr;
       if (state.optionalParticleDesc.has_value()) {
         pParticles = &state.optionalParticleDesc.value();
       }
+
+      fork_hooks::externalDrawObjectPicking(*m_device, state.drawCall, textureHash, *this);
 
       RtInstance* existingInstance = (replacementInstance->prims.size() > i)
           ? replacementInstance->prims[i].getInstance() : nullptr;
