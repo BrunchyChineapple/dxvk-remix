@@ -484,7 +484,7 @@ float computeCloudHeightFraction(vec3 samplePos, AtmosphereArgs args) {
 //   stratus  (type=0):   rise 0..0.10, plateau 0.10..0.20, fall 0.20..0.30
 //   cumulus  (type=1):   rise 0..0.20, plateau 0.20..0.75, fall 0.75..0.95
 // The cumulus plateau extends through the upper slab so the Nubis anvil pow
-// trick (gated 0.7..0.8 in sampleCloudDensity) lands on dense cloud rather
+// trick (gated 0.7..0.8 in sampleCloudDensityTextured) lands on dense cloud rather
 // than already-faded tail. Without the long plateau the anvil widening
 // applies to ~30% density and reads as "no visible change" on the silhouette.
 // No integral normalization across types -- cumulus is naturally denser than
@@ -496,93 +496,6 @@ float cloudTypeProfile(float hf, float type) {
   float rise = saturate(hf / max(riseEnd, 1e-4f));
   float fall = saturate((fallEnd - hf) / max(fallEnd - fallStart, 1e-4f));
   return saturate(rise * fall);
-}
-
-// Sample cloud density (procedural FBM) at a given horizontal world position
-// (km), normalized height fraction within the cloud slab, and per-XZ local
-// type/coverage values from the spatial-variation control noises. Returns
-// density in [0, 1].
-//
-// Vertical structure comes from cloudTypeProfile (Nubis sliding keypoints).
-// Coverage modulation includes the Nubis anvil pow trick at the slab top so
-// cumulus tops inflate outward. Wind-shear UV perturbation along wind
-// direction is gated by typeLocal so puffier cumulus shears more than
-// flat stratus.
-float sampleCloudDensity(vec2 worldPosKm, float heightFraction,
-                         float typeLocal, float coverageLocal,
-                         AtmosphereArgs args) {
-  // UV perturbation along wind direction. Strength scales with type so cumulus
-  // (puffier, more turbulent) shears more than stratus (flat, calm).
-  vec2 windOffset = args.cloudWindOffset;
-  float windLen = length(windOffset);
-  vec2 windDir = (windLen > 0.0001f) ? (windOffset / windLen) : vec2(0.7071f, 0.7071f);
-  vec2 perturb = windDir * (heightFraction * args.cloudThickness * typeLocal * args.cloudWindShearStrength);
-
-  // Base cloud shape — large slowly moving clumps
-  vec2 uv = (worldPosKm + perturb) * args.cloudScale + args.cloudWindOffset * args.cloudScale;
-
-  // Two-octave FBM with detail layer
-  float base   = fbmNoise2D(uv,             4, 90.0f);
-  float detail = fbmNoise2D(uv * 4.0f + vec2(5.3f, 2.1f), 3, 95.0f);
-
-  float detailFade = smoothstep(0.005f, 0.05f, args.cloudScale);
-  float shape = base * 0.75f + detail * args.cloudDetailWeight * detailFade;
-
-  // Anvil top: raise effective coverage at high height-fraction so cumulus
-  // tops inflate outward. Paper-faithful Nubis formula (SIGGRAPH 2017 slide 46):
-  //   coverage = pow(coverage, remap(height, 0.7, 0.8, 1.0, lerp(1.0, 0.5, anvil_bias)));
-  // Gated purely by height fraction (not type) — same line runs for all types,
-  // only tall (cumulus) clouds reach the zone. Pairs with the wind-direction
-  // skew in the perturb expression above (cloudWindShearStrength) to read as
-  // a leaning anvil top, matching slides 49-50 of the paper.
-  float anvilExponent = mix(1.0f, mix(1.0f, 0.5f, args.cloudAnvilBias),
-                            smoothstep(0.7f, 0.8f, heightFraction));
-  float coverageAnvil = pow(coverageLocal, anvilExponent);
-
-  // Coverage threshold — overcast pockets push above threshold, sparse
-  // pockets thin out.
-  float coverageThreshold = mix(0.80f, 0.15f, coverageAnvil);
-  float density = smoothstep(coverageThreshold, coverageThreshold + 0.25f, shape);
-
-  // Type-driven vertical profile (replaces the old cloudVerticalProfile bell).
-  density *= cloudTypeProfile(heightFraction, typeLocal);
-
-  return saturate(density);
-}
-
-// Stripped-down cloud density for shadow-direction extinction taps. Identical
-// to sampleCloudDensity except: drops the 4×-frequency detail FBM call, and
-// reduces the base FBM from 4 octaves to 2. Used by sampleCloudSunTransmittance
-// (sun + combined-moon shadow march). Justification: high-frequency detail
-// integrates out along the 1.6km sun-direction shadow path -- the dominant
-// signal is the coverage-threshold-shaped large-scale shape, captured by 2
-// octaves. Saves ~20 hashes per shadow tap (28 → 8).
-float sampleCloudDensityShadow(vec2 worldPosKm, float heightFraction,
-                               float typeLocal, float coverageLocal,
-                               AtmosphereArgs args) {
-  // Wind-shear UV perturbation (identical to sampleCloudDensity)
-  vec2 windOffset = args.cloudWindOffset;
-  float windLen = length(windOffset);
-  vec2 windDir = (windLen > 0.0001f) ? (windOffset / windLen) : vec2(0.7071f, 0.7071f);
-  vec2 perturb = windDir * (heightFraction * args.cloudThickness * typeLocal * args.cloudWindShearStrength);
-
-  vec2 uv = (worldPosKm + perturb) * args.cloudScale + args.cloudWindOffset * args.cloudScale;
-
-  // 2-octave base only; no detail layer.
-  float base = fbmNoise2D(uv, 2, 90.0f);
-  float shape = base;
-
-  // Anvil pow + coverage threshold + vertical profile (identical to sampleCloudDensity).
-  float anvilExponent = mix(1.0f, mix(1.0f, 0.5f, args.cloudAnvilBias),
-                            smoothstep(0.7f, 0.8f, heightFraction));
-  float coverageAnvil = pow(coverageLocal, anvilExponent);
-
-  float coverageThreshold = mix(0.80f, 0.15f, coverageAnvil);
-  float density = smoothstep(coverageThreshold, coverageThreshold + 0.25f, shape);
-
-  density *= cloudTypeProfile(heightFraction, typeLocal);
-
-  return saturate(density);
 }
 
 // Intersect view ray with the cloud shell. Returns true and the hit distance
@@ -620,6 +533,16 @@ bool intersectCloudLayer(vec3 rayDir, AtmosphereArgs args, out float t, out vec3
 // and shadowed. Used by getTransmittanceToSun to darken ground/atmosphere
 // lighting under heavy cloud cover.
 float evalCloudGroundShadow(vec3 sunDir, AtmosphereArgs args) {
+#ifndef ATMOSPHERE_AVAILABLE
+  // The cloud noise SRV/sampler globals (AtmosphereCloudNoise3D /
+  // AtmosphereCloudNoise3DSampler) are declared only in shaders that include a
+  // bindings file (common_bindings.slangh or atmosphere_bindings.slangh); the
+  // atmosphere LUT compute shaders pull in atmosphere_common.slangh without
+  // those bindings to access shared math helpers, so they need a binding-free
+  // fallback. Returning 1.0 here means no cloud occlusion in those passes,
+  // which is correct — the LUTs encode pure atmospheric scattering.
+  return 1.0f;
+#else
   if (args.cloudEnabled < 0.5f || args.cloudCoverageMean < 0.01f) return 1.0f;
   if (args.cloudShadowStrength < 0.01f) return 1.0f;
 
@@ -645,10 +568,12 @@ float evalCloudGroundShadow(vec3 sunDir, AtmosphereArgs args) {
   // Sampling at any hf in the plateau gives profile=1.0; midpoint is the
   // most conservative choice given the noise sampling jitter at the call site.
   float hfPeak = 0.15f + 0.325f * typeLocal;
-  float density = sampleCloudDensity(hitXZ, hfPeak, typeLocal, coverageLocal, args);
+  float density = sampleCloudDensityTextured(hitPos, hfPeak, typeLocal, coverageLocal, args,
+                                              AtmosphereCloudNoise3D, AtmosphereCloudNoise3DSampler);
   float transmittance = exp(-density * args.cloudDensity * 2.0f);
 
   return mix(1.0f, transmittance, args.cloudShadowStrength);
+#endif
 }
 
 // Sun disk angular radius is now dynamic (args.sunAngularRadius)
@@ -960,7 +885,7 @@ vec3 getAnalyticalMultiscattering(float altitude, float sunZenithCosAngle, Atmos
 }
 
 // Procedural noise utilities — shared by the cloud layer
-// (sampleCloudDensity / evalClouds via fbmNoise2D below) and the sky-path
+// (sampleCloudDensityTextured / evalClouds via fbmNoise2D below) and the sky-path
 // star / moon / night-sky shaders in atmosphere_sky.slangh. Based on integer
 // lattice hashing for stable, non-repeating patterns.
 float hash31(vec3 p) {
