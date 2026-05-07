@@ -1142,3 +1142,75 @@ float sampleTricubicBSpline(Texture3D<float> tex, SamplerState s,
   return mix(txy1, txy0, g0.z);
 }
 
+// Stage C replacement for sampleCloudDensity AND sampleCloudDensityShadow.
+// Reads a tricubic sample of the prebaked 3D Perlin FBM, layers a small
+// per-frame analytic detail FBM for shape-jitter, and applies the same
+// per-frame coverage / anvil / cloud-type shaping logic the analytic
+// sampleCloudDensity used to do inline.
+//
+// Visual notes:
+//   - The 3D noise volume gives genuine top-to-bottom shape variation
+//     inside a cumulus body — a quality win over 2D-extruded noise.
+//   - Tricubic interpolation eliminates the boxy linear-filter artifact
+//     visible at close-up cloud detail.
+//   - The 1-octave detail layer (~10% weight) provides slow per-frame
+//     shape evolution so the cloud field doesn't read as frozen during
+//     static-camera shots.
+//
+// cloudNoise3D / cloudSampler are passed as parameters (instead of referenced
+// as globals) so this helper compiles in any translation unit that includes
+// atmosphere_common.slangh, regardless of whether the consumer pulled in
+// common_bindings.slangh or atmosphere_bindings.slangh. cloudSampler must be
+// a linear (trilinear) SamplerState — the tricubic kernel does its own
+// weighting via 8 trilinear taps and requires linear filtering to be correct.
+float sampleCloudDensityTextured(vec3 worldPosKm,
+                                 float heightFraction,
+                                 float typeLocal,
+                                 float coverageLocal,
+                                 AtmosphereArgs args,
+                                 Texture3D<float> cloudNoise3D,
+                                 SamplerState cloudSampler) {
+  // 1. Wind perturbation (translation only — texture is tilable).
+  //    The old analytic sampleCloudDensity also applied a height-dependent
+  //    shear (heightFraction * cloudThickness * typeLocal * cloudWindShearStrength).
+  //    That term is intentionally dropped here: the 3D volume already encodes
+  //    vertical structure, so a UV shear would fight the volume's own variation.
+  //    If a deliberate shear-skewed look is wanted later, layer it on the
+  //    texcoord here rather than in this helper's contract.
+  vec3 windOffset = vec3(args.cloudWindOffset.x, 0.0f, args.cloudWindOffset.y);
+  vec3 perturbed  = worldPosKm + windOffset;
+
+  // 2. World-pos → texcoord (tilable wraparound via frac).
+  vec3 texcoord = frac(perturbed / args.cloudNoiseTileKm);
+
+  // 3. Tricubic 3D sample. Texture-size literal must match the baker's
+  //    dispatch resolution (RtxAtmosphere::kCloudNoise3DSize = 256). If the
+  //    bake resolution ever changes, update both sites in lockstep.
+  float texturedNoise = sampleTricubicBSpline(
+      cloudNoise3D, cloudSampler,
+      texcoord, vec3(256.0f));
+
+  // 4. Per-frame 1-octave analytic detail (shape jitter at ~10% weight).
+  //    Frequency tuned for sub-voxel-scale variation that the prebaked
+  //    texture cannot represent.
+  //    NOTE: perlinNoise3D returns gradient noise in [-1, 1]; the plan's
+  //    - 0.5f shift is preserved as-is per plan spec (Task 9 re-tuning will
+  //    address the asymmetry if visually problematic).
+  float detailWeight = 0.10f;  // tune in Task 9 re-tuning loop
+  float detail       = perlinNoise3D(perturbed * 720.0f) - 0.5f;
+  float density      = texturedNoise + detailWeight * detail;
+
+  // 5. Coverage threshold + anvil pow + cloud-type vertical profile.
+  //    Lifted verbatim from sampleCloudDensity.
+  float anvilExponent = mix(1.0f, mix(1.0f, 0.5f, args.cloudAnvilBias),
+                            smoothstep(0.7f, 0.8f, heightFraction));
+  float coverageAnvil = pow(coverageLocal, anvilExponent);
+
+  float coverageThreshold = mix(0.80f, 0.15f, coverageAnvil);
+  density = smoothstep(coverageThreshold, coverageThreshold + 0.25f, density);
+
+  density *= cloudTypeProfile(heightFraction, typeLocal);
+
+  return saturate(density);
+}
+
