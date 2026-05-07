@@ -1080,3 +1080,65 @@ float fbmNoise3D(vec3 p, int octaves, float seed) {
   return value;
 }
 
+// Sigg-Hadwiger 4-tap-per-axis B-spline tricubic. In 3D, separability gives
+// 8 hardware trilinear taps with C2 continuous filtering and no boxy
+// linear-filter artifact at close-up density gradients.
+//
+// Reference: GPU Gems 2, ch. 20.6, "Fast Third-Order Texture Filtering."
+//
+// Inputs:
+//   tex:     the Texture3D<float> to sample.
+//   s:       a linear (trilinear) sampler — the kernel does its own weighting
+//            via 8 trilinear taps; tex MUST be sampled with linear filtering
+//            for the math to work.
+//   uvw:     normalized texture coordinates in [0, 1].
+//   texSize: vec3 of texture dimensions (e.g. vec3(256.0)).
+//
+// Returns: the tricubic-interpolated scalar at uvw.
+float sampleTricubicBSpline(Texture3D<float> tex, SamplerState s,
+                            vec3 uvw, vec3 texSize) {
+  // Convert normalized uvw to texel space, offset by 0.5 to center on texels.
+  vec3 coord    = uvw * texSize - 0.5f;
+  vec3 fracPart = fract(coord);
+  vec3 intPart  = floor(coord);
+
+  // B-spline cubic weights per axis (4 weights w0..w3 each).
+  vec3 fp2 = fracPart * fracPart;
+  vec3 fp3 = fp2 * fracPart;
+
+  vec3 w0 = (1.0f / 6.0f) * (-fp3 + 3.0f * fp2 - 3.0f * fracPart + 1.0f);
+  vec3 w1 = (1.0f / 6.0f) * (3.0f * fp3 - 6.0f * fp2 + 4.0f);
+  vec3 w2 = (1.0f / 6.0f) * (-3.0f * fp3 + 3.0f * fp2 + 3.0f * fracPart + 1.0f);
+  vec3 w3 = (1.0f / 6.0f) * fp3;
+
+  // Combine pairs of weights to fold 4 weights into 2 trilinear-tap
+  // positions per axis (Sigg-Hadwiger separable optimization).
+  vec3 g0 = w0 + w1;
+  vec3 g1 = w2 + w3;
+
+  vec3 invTexSize = 1.0f / texSize;
+  vec3 h0 = (intPart - 1.0f + (w1 / g0) + 0.5f) * invTexSize;
+  vec3 h1 = (intPart + 1.0f + (w3 / g1) + 0.5f) * invTexSize;
+
+  // 8 trilinear taps (one per corner of a 2-cubed cube of merged samples).
+  float t000 = tex.SampleLevel(s, vec3(h0.x, h0.y, h0.z), 0).r;
+  float t100 = tex.SampleLevel(s, vec3(h1.x, h0.y, h0.z), 0).r;
+  float t010 = tex.SampleLevel(s, vec3(h0.x, h1.y, h0.z), 0).r;
+  float t110 = tex.SampleLevel(s, vec3(h1.x, h1.y, h0.z), 0).r;
+  float t001 = tex.SampleLevel(s, vec3(h0.x, h0.y, h1.z), 0).r;
+  float t101 = tex.SampleLevel(s, vec3(h1.x, h0.y, h1.z), 0).r;
+  float t011 = tex.SampleLevel(s, vec3(h0.x, h1.y, h1.z), 0).r;
+  float t111 = tex.SampleLevel(s, vec3(h1.x, h1.y, h1.z), 0).r;
+
+  // Combine via 7 lerps with the merged weights (3-axis separable).
+  float tx00 = mix(t100, t000, g0.x);
+  float tx10 = mix(t110, t010, g0.x);
+  float tx01 = mix(t101, t001, g0.x);
+  float tx11 = mix(t111, t011, g0.x);
+
+  float txy0 = mix(tx10, tx00, g0.y);
+  float txy1 = mix(tx11, tx01, g0.y);
+
+  return mix(txy1, txy0, g0.z);
+}
+
