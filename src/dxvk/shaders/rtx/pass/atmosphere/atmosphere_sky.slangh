@@ -1014,12 +1014,22 @@ vec3 evalSkyRadiance(
         // matching definition in evalClouds; mirrored here for the disk halo.
         float phaseGlow = 0.5f - 0.5f * cos(m.phase * 2.0f * kPi);
         phaseGlow = max(phaseGlow, 0.05f);  // minimal glow at new moon
-        // Magnitude factor halved (0.003 -> 0.0015) to compensate for the
-        // phaseGlow formula correction in 34d7bf8b. The prior formula peaked
-        // at quarter moons (where halo was historically tuned); the fixed
-        // formula peaks at full moon, ~3x that peak. Halving brings the
-        // perceived halo magnitude back to roughly its pre-fix tuning.
-        vec3 glowColor = m.color * m.brightness * 0.0015f * glow * phaseGlow * moonFade;
+        // Phase 2 (2026-05-08): halo magnitude scaffold uses sharedFactor
+        // for sun-following-ness consistency. kHaloMagnitude (= 0.0015,
+        // preserved from 27c69c6d's post-phaseGlow-fix tuning) is the
+        // stylistic Gaussian-glow strength -- the halo is a stylized
+        // diffraction effect, not a strict physics term, so no
+        // moonSolidAngleSr factor.
+        //
+        // Magnitude at FNV defaults (full moon, zenith, m.brightness=1.0):
+        //   sharedFactor × 0.0015 × glow ≈ 0.74 × 0.0015 × glow ≈ 1.1e-3 × glow
+        // vs prior:
+        //   m.color × m.brightness × 0.0015 ≈ 0.88 × 4.0 × 0.0015 ≈ 5.3e-3 × glow
+        // Halo drops ~5× at default m.brightness. Recoverable via
+        // m.brightness=4.0 if user prefers current visual.
+        const float kHaloMagnitude = 0.0015f;
+        vec3 sharedFactor = computeMoonSharedFactor(m, args, m.color);
+        vec3 glowColor = sharedFactor * phaseGlow * glow * kHaloMagnitude * moonFade;
         radiance += glowColor;
       }
     }
