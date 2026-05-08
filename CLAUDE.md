@@ -132,7 +132,12 @@ via the `Skill` tool by name:
 - **`rtx-build`** — wraps the proper meson/ninja build with the
   required `nv-private/` + `tests/rtx/dxvk_rt_testing/` pre-cleanup,
   runs in the background, reports exit code + error count. Use
-  whenever the user asks to build or compile-check.
+  whenever the user asks to build or compile-check the runtime.
+- **`bridge-build`** — wraps `bridge/build_bridge_release.bat` (x64
+  server + x86 client). Verifies all three artifacts (`NvRemixBridge.exe`,
+  `d3d9.dll`, `NvRemixLauncher32.exe`) exist and flags mixed-date
+  binaries (IPC ABI risk). Use whenever the user asks to build the
+  bridge specifically.
 
 ## Don't
 
