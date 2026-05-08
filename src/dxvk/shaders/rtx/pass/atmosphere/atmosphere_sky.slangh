@@ -751,10 +751,31 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args) {
         // Directional contribution — only moons above horizon matter for
         // direct illumination of the cloud body.
         if (moonDir.y > 0.01f && args.cloudMoonBrightness > 0.001f) {
-          float moonLambert = saturate(moonDir.y * 0.8f + 0.2f);
+          // Moon-specific cloud response gains -- separate from the sun's
+          // shared kDiffuseGain/kPhaseGain because moonlit clouds need a
+          // different diffuse-vs-phase balance to read correctly. With the
+          // sun's shared values (0.35 / 0.20 at args.cloudAnisotropy=0.6)
+          // the diffuse-everywhere term beats the view-dependent phase peak
+          // (0.27 > 0.16), so all clouds were uniformly lit and the silver
+          // lining failed to read against the uniform glow.
+          //
+          // Re-balance for the moon path:
+          //   kMoonDiffuseGain  0.10 (down from 0.35)  -- crush uniform glow
+          //   kMoonPhaseGain    0.30 (up from 0.20)    -- boost forward scatter
+          //   kMoonAnisotropy   0.85 (vs shared 0.60)  -- sharper HG peak
+          //
+          // Perceptual outcome: peak (cloud in front of moon) responds at
+          // ~1.13, off-axis (cloud 60deg from moon) at ~0.09 -- a ~14x
+          // contrast vs the prior ~1.6x, matching the IRL "bright silver
+          // lining only on the cloud in front of the moon, gentle glow
+          // elsewhere" look.
+          const float kMoonDiffuseGain = 0.10f;
+          const float kMoonPhaseGain   = 0.30f;
+          const float kMoonAnisotropy  = 0.85f;
+          float moonLambert  = saturate(moonDir.y * 0.8f + 0.2f);
           float moonCosTheta = dot(viewDir, moonDir);
-          float moonPhase = hgPhase(moonCosTheta, args.cloudAnisotropy);
-          float moonResponse = kDiffuseGain * moonLambert + kPhaseGain * moonPhase;
+          float moonPhase    = hgPhase(moonCosTheta, kMoonAnisotropy);
+          float moonResponse = kMoonDiffuseGain * moonLambert + kMoonPhaseGain * moonPhase;
           // Convert m.brightness from disk-rendering units (where m.brightness=4
           // makes a visible moon disk against the dark sky, multiplied by ~100
           // in evalMoonDisk) to cloud-illumination units. Without this scale,
