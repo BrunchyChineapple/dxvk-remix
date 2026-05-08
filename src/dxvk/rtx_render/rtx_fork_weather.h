@@ -1,24 +1,29 @@
 #pragma once
 
 // rtx_fork_weather.h — fork-owned weather preset declarations.
-// Defines 312 RTX_OPTIONs (12 presets × 26 fields) under the
+// Defines 348 RTX_OPTIONs (12 presets x 29 fields) under the
 // rtx.weather.preset.<presetName> namespace.
+//
+// Field bucket breakdown: 19 cloud + 3 atmosphere + 3 sky/moon mood + 4 volumetric.
 //
 // Usage: invoke DECLARE_ALL_WEATHER_PRESETS() inside the RtxOptions struct body
 // (see rtx_options.h). The macro expands all 12 preset declarations inline.
 //
-// The WEATHER_PRESET_FIELD_LIST(X) X-macro is also preserved here for use by
-// Task 2 (WeatherSnapshot struct member generation). It expands to one
-// X(type, name, default) call per field.
+// The WEATHER_PRESET_FIELD_LIST(X) X-macro is preserved here for use by Task 2
+// (WeatherSnapshot struct member generation). It expands to one X(type, name,
+// default) call per field, and is the single source of truth for the field
+// list. DECLARE_WEATHER_PRESET delegates to it via a per-preset binder, so
+// adding a field requires only one edit (in WEATHER_PRESET_FIELD_LIST) and the
+// 12 preset declarations regenerate automatically.
 
 #include "rtx_option.h"
 #include "../../util/util_vector.h"
 
 // ---------------------------------------------------------------------------
-// Field-list X-macro — 26 entries, one per weather field.
-// Consumed by DECLARE_WEATHER_PRESET below and also available for Task 2
-// (WeatherSnapshot struct member declaration).
-// Expands to: X(type, name, defaultValue)
+// Field-list X-macro — single source of truth for the 29 weather fields.
+// Consumed by DECLARE_WEATHER_PRESET (via the per-preset binders) and also
+// available for Task 2 (WeatherSnapshot struct member declaration).
+// Expands to: X(type, name, defaultValue), one entry per field.
 // ---------------------------------------------------------------------------
 #define WEATHER_PRESET_FIELD_LIST(X)                                                               \
   /* Cloud (19) */                                                                                 \
@@ -49,69 +54,65 @@
   X(float,   nightSkyBrightness,                        0.008f)                                    \
   X(float,   moonNeeStrength,                           1.0f)                                      \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                      \
-  /* Volumetric (4) — volumetricAnisotropy avoids clash with cloudAnisotropy */                   \
+  /* Volumetric (4); volumetricAnisotropy avoids clash with cloudAnisotropy */                     \
   X(Vector3, transmittanceColor,                        Vector3(0.999f, 0.999f, 0.999f))           \
   X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                    \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))           \
   X(float,   volumetricAnisotropy,                      0.0f)
 
 // ---------------------------------------------------------------------------
-// Per-field RTX_OPTION generator — invoked once per field inside DECLARE_WEATHER_PRESET.
-// Produces: RTX_OPTION("rtx.weather.preset.<N>", type, N_fieldName, default, doc)
+// Per-field RTX_OPTION generator. Takes the preset name plus the X-macro's
+// (type, fieldName, defaultVal) tuple and emits one RTX_OPTION declaration in
+// the rtx.weather.preset.<presetName> namespace with getter
+// presetName_fieldName.
 // ---------------------------------------------------------------------------
-#define WEATHER_PRESET_FIELD_DECL_(N, type, fieldName, defaultVal)                                 \
-  RTX_OPTION("rtx.weather.preset." #N, type, N##_##fieldName, defaultVal,                         \
-             "Weather preset '" #N "' value for " #fieldName ". Override per-game in user.conf.")
+#define WEATHER_PRESET_RTX_OPTION_FOR(presetName, type, fieldName, defaultVal)                     \
+  RTX_OPTION("rtx.weather.preset." #presetName, type, presetName##_##fieldName, defaultVal,        \
+             "Weather preset '" #presetName "' value for " #fieldName ". Override per-game in user.conf.")
 
 // ---------------------------------------------------------------------------
-// Single-preset macro — expands all 26 RTX_OPTION declarations for preset N.
-// Must be invoked inside a class body (RTX_OPTION declares inline static members).
+// Per-preset binder macros. WEATHER_PRESET_FIELD_LIST(X) expects X to be a
+// 3-arg macro (type, name, default), but RTX_OPTION generation also needs the
+// preset name. Each binder closes over a specific preset name and forwards to
+// WEATHER_PRESET_RTX_OPTION_FOR.
+//
+// Adding a new preset requires (a) defining a new binder here and (b) adding
+// a DECLARE_WEATHER_PRESET line to DECLARE_ALL_WEATHER_PRESETS below.
 // ---------------------------------------------------------------------------
-#define DECLARE_WEATHER_PRESET(N)                                                                  \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudDensity,                           1.0f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudCoverageMean,                      0.5f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudCoverageSpread,                    0.2f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudCoverageNoiseScale,                0.0033f);        \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudTypeMean,                          0.5f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudTypeSpread,                        0.2f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudTypeNoiseScale,                    0.0034f);        \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudAnvilBias,                         0.3f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudWindShearStrength,                 0.5f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, Vector3, cloudColor,                             Vector3(0.89f, 0.92f, 1.0f)); \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudWindSpeed,                         0.02f);          \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudWindDirection,                     45.0f);          \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudShadowStrength,                    0.0f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudAnisotropy,                        0.6f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudThickness,                         3.05f);          \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudDetailWeight,                      1.0f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, Vector3, cloudShadowTint,                        Vector3(0.55f, 0.65f, 0.85f)); \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudShadowTintStrength,                1.0f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   cloudSunsetWarmth,                      0.95f);          \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   airDensity,                             1.0f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   aerosolDensity,                         1.0f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, Vector3, sunIlluminance,                         Vector3(20.0f, 20.0f, 20.0f)); \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   nightSkyBrightness,                     0.008f);         \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   moonNeeStrength,                        1.0f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   moonAtmosphericCouplingStrength,        1.0f);           \
-  WEATHER_PRESET_FIELD_DECL_(N, Vector3, transmittanceColor,                     Vector3(0.999f, 0.999f, 0.999f)); \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   transmittanceMeasurementDistanceMeters, 200.0f);         \
-  WEATHER_PRESET_FIELD_DECL_(N, Vector3, singleScatteringAlbedo,                 Vector3(0.999f, 0.999f, 0.999f)); \
-  WEATHER_PRESET_FIELD_DECL_(N, float,   volumetricAnisotropy,                   0.0f)
+#define WEATHER_PRESET_BIND_clear(type, name, def)         WEATHER_PRESET_RTX_OPTION_FOR(clear,         type, name, def);
+#define WEATHER_PRESET_BIND_partlyCloudy(type, name, def)  WEATHER_PRESET_RTX_OPTION_FOR(partlyCloudy,  type, name, def);
+#define WEATHER_PRESET_BIND_overcast(type, name, def)      WEATHER_PRESET_RTX_OPTION_FOR(overcast,      type, name, def);
+#define WEATHER_PRESET_BIND_hazy(type, name, def)          WEATHER_PRESET_RTX_OPTION_FOR(hazy,          type, name, def);
+#define WEATHER_PRESET_BIND_foggy(type, name, def)         WEATHER_PRESET_RTX_OPTION_FOR(foggy,         type, name, def);
+#define WEATHER_PRESET_BIND_drizzle(type, name, def)       WEATHER_PRESET_RTX_OPTION_FOR(drizzle,       type, name, def);
+#define WEATHER_PRESET_BIND_rainstorm(type, name, def)     WEATHER_PRESET_RTX_OPTION_FOR(rainstorm,     type, name, def);
+#define WEATHER_PRESET_BIND_thunderstorm(type, name, def)  WEATHER_PRESET_RTX_OPTION_FOR(thunderstorm,  type, name, def);
+#define WEATHER_PRESET_BIND_snow(type, name, def)          WEATHER_PRESET_RTX_OPTION_FOR(snow,          type, name, def);
+#define WEATHER_PRESET_BIND_blizzard(type, name, def)      WEATHER_PRESET_RTX_OPTION_FOR(blizzard,      type, name, def);
+#define WEATHER_PRESET_BIND_sandstorm(type, name, def)     WEATHER_PRESET_RTX_OPTION_FOR(sandstorm,     type, name, def);
+#define WEATHER_PRESET_BIND_smoggy(type, name, def)        WEATHER_PRESET_RTX_OPTION_FOR(smoggy,        type, name, def);
 
 // ---------------------------------------------------------------------------
-// Umbrella macro — invoke inside RtxOptions struct body to declare all 312
-// RTX_OPTIONs (12 presets × 26 fields).
+// Single-preset macro. Walks WEATHER_PRESET_FIELD_LIST via the binder for
+// preset N, emitting all 29 RTX_OPTION declarations. Must be invoked inside a
+// class body (RTX_OPTION declares inline static members).
+// ---------------------------------------------------------------------------
+#define DECLARE_WEATHER_PRESET(N) WEATHER_PRESET_FIELD_LIST(WEATHER_PRESET_BIND_##N)
+
+// ---------------------------------------------------------------------------
+// Umbrella macro. Invoke inside RtxOptions struct body to declare all 348
+// RTX_OPTIONs (12 presets x 29 fields).
 // ---------------------------------------------------------------------------
 #define DECLARE_ALL_WEATHER_PRESETS()   \
-  DECLARE_WEATHER_PRESET(clear);        \
-  DECLARE_WEATHER_PRESET(partlyCloudy); \
-  DECLARE_WEATHER_PRESET(overcast);     \
-  DECLARE_WEATHER_PRESET(hazy);         \
-  DECLARE_WEATHER_PRESET(foggy);        \
-  DECLARE_WEATHER_PRESET(drizzle);      \
-  DECLARE_WEATHER_PRESET(rainstorm);    \
-  DECLARE_WEATHER_PRESET(thunderstorm); \
-  DECLARE_WEATHER_PRESET(snow);         \
-  DECLARE_WEATHER_PRESET(blizzard);     \
-  DECLARE_WEATHER_PRESET(sandstorm);    \
+  DECLARE_WEATHER_PRESET(clear)         \
+  DECLARE_WEATHER_PRESET(partlyCloudy)  \
+  DECLARE_WEATHER_PRESET(overcast)      \
+  DECLARE_WEATHER_PRESET(hazy)          \
+  DECLARE_WEATHER_PRESET(foggy)         \
+  DECLARE_WEATHER_PRESET(drizzle)       \
+  DECLARE_WEATHER_PRESET(rainstorm)     \
+  DECLARE_WEATHER_PRESET(thunderstorm)  \
+  DECLARE_WEATHER_PRESET(snow)          \
+  DECLARE_WEATHER_PRESET(blizzard)      \
+  DECLARE_WEATHER_PRESET(sandstorm)     \
   DECLARE_WEATHER_PRESET(smoggy)

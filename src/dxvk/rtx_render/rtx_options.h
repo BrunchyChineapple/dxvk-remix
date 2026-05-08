@@ -1322,8 +1322,20 @@ namespace dxvk {
     DECLARE_ALL_WEATHER_PRESETS();
 #undef DECLARE_ALL_WEATHER_PRESETS
 #undef DECLARE_WEATHER_PRESET
-#undef WEATHER_PRESET_FIELD_DECL_
-    // NOTE: WEATHER_PRESET_FIELD_LIST is intentionally NOT undef'd here —
+#undef WEATHER_PRESET_RTX_OPTION_FOR
+#undef WEATHER_PRESET_BIND_clear
+#undef WEATHER_PRESET_BIND_partlyCloudy
+#undef WEATHER_PRESET_BIND_overcast
+#undef WEATHER_PRESET_BIND_hazy
+#undef WEATHER_PRESET_BIND_foggy
+#undef WEATHER_PRESET_BIND_drizzle
+#undef WEATHER_PRESET_BIND_rainstorm
+#undef WEATHER_PRESET_BIND_thunderstorm
+#undef WEATHER_PRESET_BIND_snow
+#undef WEATHER_PRESET_BIND_blizzard
+#undef WEATHER_PRESET_BIND_sandstorm
+#undef WEATHER_PRESET_BIND_smoggy
+    // NOTE: WEATHER_PRESET_FIELD_LIST is intentionally NOT undef'd here -
     // Task 2 consumes it to declare WeatherSnapshot struct members.
 
     // ----- Moon NEE / atmospheric-coupling strengths (fork) -----
