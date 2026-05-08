@@ -797,8 +797,14 @@ initializer list and can't be lifted into a separate TU.
 - **Block** at `evalAtmosphereSunNEE` (full function) — ~100 LOC, planned target `fork_hooks::evalAtmosphereSunNEEDirect` in `rtx_fork_atmosphere.slangh`.
   *Implements primary-bounce sun NEE for physical atmosphere: samples sun direction + cone angle, traces multiple jittered shadow rays for soft shadows, averages visibility, evaluates BRDF split-weight, and accumulates diffuse/specular sun radiance.*
 
+- **Block** at `evalAtmosphereMoonNEE` (full function) — ~100 LOC, planned target `fork_hooks::evalAtmosphereMoonNEEDirect` in `rtx_fork_atmosphere.slangh`.
+  *Primary-bounce moon NEE -- mirror of evalAtmosphereSunNEE for the moon. Calls `sampleAtmosphereMoonLight` with a u_pick blue-noise sample so one of the enabled, above-horizon moons is importance-picked per ray (weight = brightness × phaseGlow × elevation). Soft-shadow cone jitter via `getJitteredSunDirection` (direction-agnostic). Accumulated contribution divided by `moonSample.solidAnglePdf` (discrete pick PDF) so multi-moon importance sampling stays unbiased over many frames. Added by 2026-05-07 moon sun-parity workstream.*
+
 - **Block** at `integrateDirectPath` (atmosphere sun NEE call site) — ~14 LOC, planned target `fork_hooks::directPathAtmosphereSunCall` in `rtx_fork_atmosphere.slangh`.
   *Calls `evalAtmosphereSunNEE` in the direct-path integrator when `cb.skyMode == 1`.*
+
+- **Block** at `integrateDirectPath` (atmosphere moon NEE call site) — ~12 LOC, planned target `fork_hooks::directPathAtmosphereMoonCall` in `rtx_fork_atmosphere.slangh`.
+  *Calls `evalAtmosphereMoonNEE` immediately after `evalAtmosphereSunNEE` in the direct-path integrator when `cb.skyMode == 1`. Sun and moon NEE are independent samples -- both can be valid at twilight, both invalid during pure daytime / pure-night-with-no-moons; each early-outs cheaply when invalid. Added by 2026-05-07 moon sun-parity workstream.*
 
 - **Block** at `integrateDirectPath` (sky radiance miss branch) — ~8 LOC, planned target `fork_hooks::directPathAtmosphereMiss` in `rtx_fork_atmosphere.slangh`.
   *Adds `#ifdef ATMOSPHERE_AVAILABLE` branch in the miss sky-radiance evaluation to call `evalSkyRadiance` in physical atmosphere mode.*
@@ -819,6 +825,12 @@ initializer list and can't be lifted into a separate TU.
 
 - **Block** at `evalAtmosphereSunNEESecondary` (full function) — ~100 LOC, planned target `fork_hooks::evalAtmosphereSunNEEIndirect` in `rtx_fork_atmosphere.slangh`.
   *Secondary-bounce variant of the atmosphere sun NEE function: uses half the sample count for performance, otherwise identical structure to the direct-path version.*
+
+- **Block** at `evalAtmosphereMoonNEESecondary` (full function) — ~100 LOC, planned target `fork_hooks::evalAtmosphereMoonNEEIndirect` in `rtx_fork_atmosphere.slangh`.
+  *Secondary-bounce variant of the moon NEE function -- mirror of evalAtmosphereSunNEESecondary. Same structure as the direct-path moon NEE but with the indirect shadow-mask flags, half the sample count, and additive `diffuseLight` / `specularLight` accumulation (no throughput multiplier; caller folds throughput in). Added by 2026-05-07 moon sun-parity workstream.*
+
+- **Block** at `integratePathVertex` (atmosphere moon NEE call site) — ~16 LOC, planned target `fork_hooks::indirectPathAtmosphereMoonCall` in `rtx_fork_atmosphere.slangh`.
+  *Calls `evalAtmosphereMoonNEESecondary` after the existing sun call when `cb.skyMode == 1 && isNeeEnabledOnBounce`. Accumulates the returned diffuseLight + specularLight via accumulateRadiance. Added by 2026-05-07 moon sun-parity workstream.*
 
 - **Block** at `integratePathVertex` (atmosphere sky radiance in miss) — ~8 LOC, planned target `fork_hooks::indirectPathAtmosphereMiss` in `rtx_fork_atmosphere.slangh`.
   *Adds the `#ifdef ATMOSPHERE_AVAILABLE` sky-radiance branch in the indirect path miss handler.*
