@@ -293,7 +293,13 @@ vec3 evalAtmosphereRadiance(
   // Brightness-weighted average direction across enabled, above-horizon moons,
   // and summed irradiance across the same. One scattering term per sample
   // instead of N per-moon terms; visual delta is near-zero at moon magnitudes
-  // (~1e-5 of sun) and the perf saving is real (no per-moon dot/phase/exp).
+  // and the perf saving is real (no per-moon dot/phase/exp inside the loop).
+  //
+  // Phase 2 (2026-05-08): per-moon irradiance is now the unified physical
+  // scaffold — args.sunIlluminance × m.color × moonAirTrans × m.brightness × π⁻¹
+  // × phaseGlow × moonSolidAngleSr — replacing the prior kAtmosphereMoonIllumScale
+  // = 1e-4 magic-number scaling. Magnitude at default settings is within ~5%
+  // of the prior calibration; sun-following-ness is now correct.
   vec3 combinedMoonDir        = vec3(0.0f, 1.0f, 0.0f);
   vec3 combinedMoonIrradiance = vec3(0.0f);
   if (args.moonAtmosphericCouplingStrength > 0.001f) {
@@ -302,7 +308,6 @@ vec3 evalAtmosphereRadiance(
     if (nightFactor > 0.001f) {
       vec3  sumWeightedDir = vec3(0.0f);
       float sumWeight      = 0.0f;
-      const float kAtmosphereMoonIllumScale = 1e-4f;
       [unroll] for (uint mi = 0u; mi < MAX_MOONS; ++mi) {
         MoonParams m = args.moons[mi];
         if (m.enabled < 0.5f) continue;
@@ -310,11 +315,10 @@ vec3 evalAtmosphereRadiance(
         if (moonDir.y <= 0.01f) continue;
         float phaseGlow = 0.5f - 0.5f * cos(m.phase * 2.0f * kPi);
         if (phaseGlow <= 0.001f) continue;
-        vec3 moonAirTrans = getAtmosphericTransmittanceForDir(moonDir, args);
-        vec3 moonIrradiance = m.color * m.brightness * phaseGlow
-                            * moonAirTrans * args.sunIlluminance
-                            * kAtmosphereMoonIllumScale * nightFactor
-                            * args.moonAtmosphericCouplingStrength;
+        vec3 sharedFactor = computeMoonSharedFactor(m, args, m.color);
+        float moonSolidAngleSr = 2.0f * kPi * (1.0f - cos(m.angularRadius));
+        vec3 moonIrradiance = sharedFactor * phaseGlow * moonSolidAngleSr
+                            * nightFactor * args.moonAtmosphericCouplingStrength;
         float w = max(max(moonIrradiance.r, moonIrradiance.g), moonIrradiance.b);
         if (w <= 0.0f) continue;
         sumWeightedDir += moonDir * w;
