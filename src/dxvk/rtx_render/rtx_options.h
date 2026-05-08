@@ -1310,6 +1310,16 @@ namespace dxvk {
     DECLARE_MOON_OPTIONS(3);
 #undef DECLARE_MOON_OPTIONS
 
+    // ----- Moon NEE / atmospheric-coupling strengths (fork) -----
+    RTX_OPTION("rtx.atmosphere", float, moonNeeStrength, 1.0f,
+               "Global multiplier on direct moon lighting via NEE (surface + volumetric). "
+               "0 = moon does not light geometry/volumes; 1 = default calibrated magnitude; "
+               ">1 = brighten for stylized scenes.");
+    RTX_OPTION("rtx.atmosphere", float, moonAtmosphericCouplingStrength, 1.0f,
+               "Multiplier on the moon's contribution to atmospheric scattering. "
+               "0 = no blue-dome around the moon (sky stays pure black); 1 = default; "
+               ">1 = exaggerated for stylized scenes.");
+
     // Cloud parameters (procedural FBM cloud layer)
     RTX_OPTION("rtx.atmosphere", bool, cloudEnabled, true, "Enable procedural cloud rendering.");
     RTX_OPTION("rtx.atmosphere", float, cloudDensity, 1.80f, "Cloud opacity/density multiplier.");

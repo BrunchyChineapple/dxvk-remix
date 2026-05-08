@@ -444,6 +444,16 @@ namespace fork_hooks {
 
       // ----- Moons tree (fork) -----
       if (ImGui::TreeNode("Moons")) {
+        // Global moon-strength sliders apply across all moons. Per-moon enable +
+        // appearance lives inside renderMoonUI below.
+        RemixGui::DragFloat("Atmospheric Coupling",
+                            &RtxOptions::moonAtmosphericCouplingStrengthObject(),
+                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Multiplier on the moon's contribution to atmospheric scattering. "
+            "0 = no blue-dome around the moon (sky stays pure black); 1 = default; "
+            ">1 = exaggerated.");
+
         for (int i = 0; i < static_cast<int>(MAX_MOONS); ++i) {
           renderMoonUI(i);
         }

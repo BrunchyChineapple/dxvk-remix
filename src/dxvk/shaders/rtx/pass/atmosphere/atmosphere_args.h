@@ -104,6 +104,12 @@ struct AtmosphereArgs {
   // ----- Per-moon parameters (fork) -----
   MoonParams moons[MAX_MOONS];
 
+  // ----- Moon NEE / atmospheric-coupling strength sliders (fork) -----
+  float moonNeeStrength;                  // Multiplier on direct moon NEE contribution
+  float moonAtmosphericCouplingStrength;  // Multiplier on moon's contribution to atmospheric scattering
+  float padMoonNee0;                      // 16-byte alignment
+  float padMoonNee1;
+
   // ----- Cloud parameters (fork: procedural FBM cloud layer at fixed altitude) -----
   vec3 cloudColor;          // Cloud base color (typically white)
   float cloudDensity;       // Overall opacity/density multiplier

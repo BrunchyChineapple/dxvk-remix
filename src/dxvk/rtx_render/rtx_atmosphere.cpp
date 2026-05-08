@@ -282,6 +282,12 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     populateMoonParams(args.moons[i], i);
   }
 
+  // ----- Moon NEE / atmospheric-coupling strengths (fork) -----
+  args.moonNeeStrength                 = RtxOptions::moonNeeStrength();
+  args.moonAtmosphericCouplingStrength = RtxOptions::moonAtmosphericCouplingStrength();
+  args.padMoonNee0                     = 0.0f;
+  args.padMoonNee1                     = 0.0f;
+
   // Cloud parameters
   {
     args.cloudColor = RtxOptions::cloudColor();

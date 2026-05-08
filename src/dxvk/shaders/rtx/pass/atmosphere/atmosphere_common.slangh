@@ -263,6 +263,44 @@ vec3 evalAtmosphereRadiance(
   float phaseR = rayleighPhase(cosTheta);
   float phaseM = hgPhase(cosTheta, args.mieAnisotropy);
   
+  // Combined-moon direction + irradiance precompute (Lever-4 style — fork).
+  // Brightness-weighted average direction across enabled, above-horizon moons,
+  // and summed irradiance across the same. One scattering term per sample
+  // instead of N per-moon terms; visual delta is near-zero at moon magnitudes
+  // (~1e-5 of sun) and the perf saving is real (no per-moon dot/phase/exp).
+  vec3 combinedMoonDir        = vec3(0.0f, 1.0f, 0.0f);
+  vec3 combinedMoonIrradiance = vec3(0.0f);
+  if (args.moonAtmosphericCouplingStrength > 0.001f) {
+    float sunElev_local = sunDir.y;
+    float nightFactor   = smoothstep(0.02f, -0.05f, sunElev_local);
+    if (nightFactor > 0.001f) {
+      vec3  sumWeightedDir = vec3(0.0f);
+      float sumWeight      = 0.0f;
+      const float kAtmosphereMoonIllumScale = 1e-4f;
+      [unroll] for (uint mi = 0u; mi < MAX_MOONS; ++mi) {
+        MoonParams m = args.moons[mi];
+        if (m.enabled < 0.5f) continue;
+        vec3 moonDir = normalize(m.direction);
+        if (moonDir.y <= 0.01f) continue;
+        float phaseGlow = 0.5f - 0.5f * cos(m.phase * 2.0f * kPi);
+        if (phaseGlow <= 0.001f) continue;
+        vec3 moonAirTrans = getAtmosphericTransmittanceForDir(moonDir, args);
+        vec3 moonIrradiance = m.color * m.brightness * phaseGlow
+                            * moonAirTrans * args.sunIlluminance
+                            * kAtmosphereMoonIllumScale * nightFactor
+                            * args.moonAtmosphericCouplingStrength;
+        float w = max(max(moonIrradiance.r, moonIrradiance.g), moonIrradiance.b);
+        if (w <= 0.0f) continue;
+        sumWeightedDir += moonDir * w;
+        sumWeight      += w;
+        combinedMoonIrradiance += moonIrradiance;
+      }
+      if (sumWeight > 0.0f && length(sumWeightedDir) > 0.001f) {
+        combinedMoonDir = normalize(sumWeightedDir);
+      }
+    }
+  }
+
   for (int i = 0; i < actualSamples && i < 512; ++i) {
     float t = t0 + (float(i) + 0.5f) * dt;
     vec3 samplePos = rayOrigin + rayDir * t;
@@ -355,9 +393,24 @@ vec3 evalAtmosphereRadiance(
     sunTransmittance *= twilightFactor;
     
     // Single scattering contribution
-    vec3 singleScatter = args.sunIlluminance * sunTransmittance * 
+    vec3 singleScatter = args.sunIlluminance * sunTransmittance *
                           (scatteringR * phaseR + scatteringM * phaseM);
-    
+
+    // Moon contribution to single scattering. Combined-moon direction +
+    // irradiance precomputed above the per-sample loop (Lever-4 style —
+    // brightness-weighted average across enabled, above-horizon moons).
+    // Per-sample we just dot the ray direction against the combined moon
+    // direction and apply the same Rayleigh + Mie phase functions used for
+    // the sun.
+    if (any(combinedMoonIrradiance > vec3(0.0f))) {
+      float moonCosTheta = dot(rayDir, combinedMoonDir);
+      float moonPhaseR = rayleighPhase(moonCosTheta);
+      float moonPhaseM = hgPhase(moonCosTheta, args.mieAnisotropy);
+      vec3 moonSingleScatter = combinedMoonIrradiance *
+                               (scatteringR * moonPhaseR + scatteringM * moonPhaseM);
+      singleScatter += moonSingleScatter;
+    }
+
     // Multiscattering contribution
     // Use high-accuracy analytical approximation instead of LUT
     vec3 multiScatter = getAnalyticalMultiscattering(altitude, sunZenithCosAngle, args);
