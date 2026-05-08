@@ -560,20 +560,33 @@ vec3 evalMoonDisk(vec3 viewDir, uint moonIdx, AtmosphereArgs args, out float dis
     break;
   }
 
-  // Atmospheric transmittance — same Kasten-Young + ozone + twilight model
-  // the cloud and surface NEE paths use. Single source of truth for moon-
-  // direction extinction. Replaces the prior reduced-Rayleigh ad-hoc formula
-  // (clamped airmass at 10, no ozone, no twilight fade) which produced a
-  // visibly different reddening curve at moonrise/moonset than the cloud
-  // moon-direct-light path was using for the same direction.
-  vec3 moonTransmittance = getAtmosphericTransmittanceForDir(moonDir, args);
+  // Phase 2 (2026-05-08): unified physical irradiance scaffold.
+  // Replaces the prior magic-number scaffolding:
+  //   litRadiance = m.color × surfaceColor × m.brightness × limbDark × surfaceDetail × diffuse × moonAirTrans
+  // (effectively m.color² × m.brightness × ...) which made disk visibility depend
+  // on m.color magnitude squared and the m.brightness=4.0 default. The disk
+  // didn't multiply by args.sunIlluminance at all, divorcing disk magnitude from
+  // the rest of the lighting pipeline.
+  //
+  // New: sharedFactor = sunIlluminance × surfaceColor × moonAirTrans × m.brightness / π
+  // Albedo (surfaceColor — perturbed by surface noise per pixel) appears
+  // exactly once, properly multiplied by sun irradiance. The per-pixel
+  // diffuse cosine integrates to phaseGlow × π over the disk, so phase
+  // emerges naturally without an explicit phaseGlow multiplier.
+  //
+  // Magnitude at FNV defaults (m.brightness=1.0, m.color=0.12, central pixel):
+  //   sharedFactor ≈ 20 × 0.12 × 0.97 × 1.0 / π ≈ 0.74 per channel
+  //   litRadiance  ≈ 0.74 (vs prior ~3.0) -- 4× drop. Recoverable via
+  //   m.brightness if user prefers current visual.
+  vec3 sharedFactor = computeMoonSharedFactor(m, args, surfaceColor);
 
-  // Lit side: full surface detail + per-moon brightness/color
-  vec3 litRadiance = m.color * surfaceColor * m.brightness *
-                     limbDarkening * surfaceDetail * diffuse * moonTransmittance;
+  // Lit side: full surface detail × per-pixel diffuse × limb darkening.
+  vec3 litRadiance = sharedFactor * surfaceDetail * diffuse * limbDarkening;
 
-  // Dark side: very dim — knob-controlled fraction of surface color
-  vec3 darkRadiance = surfaceColor * m.darkSideBrightness * limbDarkening;
+  // Dark side: stylistic earthshine-fill, anchored to the same sharedFactor
+  // so it tracks sun changes proportionally. m.darkSideBrightness retains
+  // its prior semantics (default 0.005 = ~0.5% of fully-lit moon).
+  vec3 darkRadiance = sharedFactor * m.darkSideBrightness * limbDarkening;
 
   // Blend lit and dark by phase illumination
   vec3 moonRadiance = mix(darkRadiance, litRadiance, illumination);
