@@ -754,19 +754,13 @@ namespace dxvk { namespace fork_weather {
     };
     constexpr int kPresetCount = static_cast<int>(IM_ARRAYSIZE(kPresetNames));
 
-    // Map current m_targetPresetName to combo index; 0 = dormant.
+    // The combo represents user INTENT (what gets applied when the user hits
+    // the Apply button), not live blender state. Live state appears in the
+    // read-only display below. Force-syncing s_selectedIndex from
+    // m_targetPresetName every frame defeats ImGui::Combo's user input --
+    // the user's pick gets clobbered before the next frame renders. Leave
+    // s_selectedIndex purely user-driven; it persists across frames via static.
     static int s_selectedIndex = 0;
-    if (!m_targetPresetName.empty()) {
-      for (int i = 1; i < kPresetCount; ++i) {
-        if (m_targetPresetName == kPresetNames[i]) {
-          s_selectedIndex = i;
-          break;
-        }
-      }
-    } else {
-      s_selectedIndex = 0;
-    }
-
     ImGui::Combo("Target Preset", &s_selectedIndex, kPresetNames, kPresetCount);
 
     // ---- 2. Blend Duration slider ----
