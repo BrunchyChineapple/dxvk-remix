@@ -47,6 +47,7 @@
 #include "rtx_option_manager.h"
 #include "rtx_hashing.h"
 #include "rtx_mod_manager.h"
+#include "rtx_fork_weather.h"
 
 enum _NV_GPU_ARCHITECTURE_ID;
 typedef enum _NV_GPU_ARCHITECTURE_ID NV_GPU_ARCHITECTURE_ID;
@@ -1311,6 +1312,18 @@ namespace dxvk {
     DECLARE_MOON_OPTIONS(2);
     DECLARE_MOON_OPTIONS(3);
 #undef DECLARE_MOON_OPTIONS
+
+    // ----- Weather preset declarations (fork, 2026-05-08) -----
+    // 312 RTX_OPTIONs: 12 presets × 26 fields under rtx.weather.preset.<name>.
+    // Neutral defaults here; per-archetype tuning lands in a follow-up commit.
+    // Getter form: RtxOptions::clear_cloudDensity(), etc.
+    // See src/dxvk/rtx_render/rtx_fork_weather.h for macro definitions.
+    DECLARE_ALL_WEATHER_PRESETS();
+#undef DECLARE_ALL_WEATHER_PRESETS
+#undef DECLARE_WEATHER_PRESET
+#undef WEATHER_PRESET_FIELD_DECL_
+    // NOTE: WEATHER_PRESET_FIELD_LIST is intentionally NOT undef'd here —
+    // Task 2 consumes it to declare WeatherSnapshot struct members.
 
     // ----- Moon NEE / atmospheric-coupling strengths (fork) -----
     RTX_OPTION("rtx.atmosphere", float, moonNeeStrength, 1.0f,
