@@ -560,10 +560,13 @@ vec3 evalMoonDisk(vec3 viewDir, uint moonIdx, AtmosphereArgs args, out float dis
     break;
   }
 
-  // Atmospheric transmittance — reduced Rayleigh keeps moon white/silver
-  float moonElev = moonDir.y;
-  float moonAirMass = min(1.0f / max(abs(moonElev) + 0.05f, 0.05f), 10.0f);
-  vec3 moonTransmittance = exp(-args.rayleighScattering * args.rayleighScaleHeight * moonAirMass * 0.2f);
+  // Atmospheric transmittance — same Kasten-Young + ozone + twilight model
+  // the cloud and surface NEE paths use. Single source of truth for moon-
+  // direction extinction. Replaces the prior reduced-Rayleigh ad-hoc formula
+  // (clamped airmass at 10, no ozone, no twilight fade) which produced a
+  // visibly different reddening curve at moonrise/moonset than the cloud
+  // moon-direct-light path was using for the same direction.
+  vec3 moonTransmittance = getAtmosphericTransmittanceForDir(moonDir, args);
 
   // Lit side: full surface detail + per-moon brightness/color
   vec3 litRadiance = m.color * surfaceColor * m.brightness *
