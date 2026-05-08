@@ -22,6 +22,7 @@
 
 #include "rtx_fork_weather.h"
 #include "rtx_fork_hooks.h"
+#include "rtx_context.h"
 #include "rtx_fork_game_state.h"
 #include "rtx_options.h"
 #include "rtx_global_volumetrics.h"
@@ -790,8 +791,9 @@ namespace dxvk { namespace fork_hooks {
   // Real implementation lands in Task 3 (wires WeatherBlender into RtxContext
   // per-frame and resolves m_weatherBlender). For now, both args are unused.
   void updateWeatherBlender(class RtxContext& ctx, float deltaTimeSeconds) {
-    (void)ctx;
-    (void)deltaTimeSeconds;
+    if (ctx.m_weatherBlender) {
+      ctx.m_weatherBlender->update(deltaTimeSeconds);
+    }
   }
 
   // Renders the weather preset UI inside the existing atmosphere ImGui tree.
