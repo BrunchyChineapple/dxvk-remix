@@ -28,11 +28,14 @@
 #include "rtx_global_volumetrics.h"
 #include "imgui/imgui.h"
 #include "rtx_imgui.h"               // RemixGui::DragFloat, DragFloat3, SetTooltipToLastWidgetOnHover
+#include "../../util/log/log.h"     // Logger::warn for unknown-preset diagnostic
+#include "../../util/util_string.h" // str::format
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <unordered_set>
 
 // ---------------------------------------------------------------------------
 // Anonymous-namespace helpers
@@ -642,6 +645,18 @@ namespace dxvk { namespace fork_weather {
       return;
     }
     if (!isKnownPresetName(newTarget)) {
+      // Warn once per distinct unknown name so plugin authors who typo a
+      // preset string ("rainstOrm") get a diagnostic instead of silent
+      // dormancy. Subsequent SetGameValue writes with the same bad name
+      // stay quiet to avoid log spam.
+      static std::unordered_set<std::string> s_warned;
+      if (s_warned.insert(newTarget).second) {
+        Logger::warn(str::format(
+          "WeatherBlender: unknown preset name '", newTarget,
+          "' in __weather.target -- known names are clear, partlyCloudy, "
+          "overcast, hazy, foggy, drizzle, rainstorm, thunderstorm, snow, "
+          "blizzard, sandstorm, smoggy. Treating as dormant."));
+      }
       m_targetPresetName.clear();
       m_previousPresetName.clear();
       return;
@@ -780,15 +795,19 @@ namespace dxvk { namespace fork_weather {
       "Manual edits to the underlying sliders persist undisturbed.");
 
     // ---- 6. Read-only state display ----
+    // "Current" shows the dominant preset (target if t > 0.5 else previous),
+    // matching the publishStateToGameStateStore convention so the in-game
+    // readout agrees with what plugins read back from __weather.current.
     {
-      const char* currentDisplay  = m_targetPresetName.empty()  ? "(dormant)" : m_targetPresetName.c_str();
-      const char* targetDisplay   = m_targetPresetName.empty()  ? "(dormant)" : m_targetPresetName.c_str();
-      const char* previousDisplay = m_previousPresetName.empty() ? "(dormant)" : m_previousPresetName.c_str();
-
       float currentT = 0.0f;
       if (!m_targetPresetName.empty() && m_blendDurationSec > 0.001f) {
         currentT = saturate((m_currentTimeSec - m_blendStartTimeSec) / m_blendDurationSec);
       }
+
+      const std::string& dominantName = (currentT > 0.5f) ? m_targetPresetName : m_previousPresetName;
+      const char* currentDisplay  = m_targetPresetName.empty()   ? "(dormant)" : dominantName.c_str();
+      const char* targetDisplay   = m_targetPresetName.empty()   ? "(dormant)" : m_targetPresetName.c_str();
+      const char* previousDisplay = m_previousPresetName.empty() ? "(dormant)" : m_previousPresetName.c_str();
 
       ImGui::TextDisabled("Current: %s", currentDisplay);
       ImGui::TextDisabled("Target: %s",  targetDisplay);
