@@ -758,12 +758,15 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args) {
         // zero at full) — defaulting all moonlit-cloud, ambient-airglow, and
         // moon-halo contributions to zero at the default phase=0.5.
         float phaseGlow = 0.5f - 0.5f * cos(m.phase * 2.0f * kPi);
-        // Phase 2 (2026-05-08): nightLight ambient airglow now uses
-        // sharedFactor for sun-following-ness consistency. Magnitude factor
-        // 0.0015 preserved as the stylistic ambient-bounce strength.
+        // Phase 2 (2026-05-08): nightLight ambient airglow uses sharedFactor
+        // for sun-following-ness consistency. Magnitude factor 0.0015
+        // preserved as the stylistic ambient-bounce strength.
+        // Phase 3 (2026-05-08): args.cloudMoonBrightness applied as per-path
+        // stylistic multiplier; ambient airglow shares the cloud knob since
+        // both lift the cloud volume's perceived brightness in tandem.
         vec3 sharedFactorAmbient = computeMoonSharedFactor(m, args, m.color);
         nightLight += sharedFactorAmbient * 0.0015f
-                    * moonDot * phaseGlow * nightFactor;
+                    * moonDot * phaseGlow * args.cloudMoonBrightness * nightFactor;
 
         // Directional contribution — only moons above horizon matter for
         // direct illumination of the cloud body.
@@ -805,8 +808,12 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args) {
           // peak stays visible. Silver lining reads correctly.
           vec3 sharedFactor = computeMoonSharedFactor(m, args, m.color);
           float moonSolidAngleSr = 2.0f * kPi * (1.0f - cos(m.angularRadius));
+          // Phase 3 (2026-05-08): args.cloudMoonBrightness is the per-path stylistic
+          // multiplier (default 24.0 = matches pre-Phase-2 silver-lining at
+          // m.brightness=1.0 under FNV tonemapper).
           vec3 moonIrradiance = sharedFactor * phaseGlow * moonSolidAngleSr
-                              * args.moonNeeStrength * nightFactor;
+                              * args.moonNeeStrength * args.cloudMoonBrightness
+                              * nightFactor;
           moonCoeff[mi]   = moonIrradiance * moonResponse;
           moonDirNorm[mi] = moonDir;
         }
@@ -1028,8 +1035,12 @@ vec3 evalSkyRadiance(
         // Halo drops ~5× at default m.brightness. Recoverable via
         // m.brightness=4.0 if user prefers current visual.
         const float kHaloMagnitude = 0.0015f;
+        // Phase 3 (2026-05-08): args.haloMoonBrightness is the per-path stylistic
+        // multiplier on halo glow (default 5.0 = matches pre-Phase-2 halo magnitude
+        // at m.brightness=1.0 under FNV tonemapper).
         vec3 sharedFactor = computeMoonSharedFactor(m, args, m.color);
-        vec3 glowColor = sharedFactor * phaseGlow * glow * kHaloMagnitude * moonFade;
+        vec3 glowColor = sharedFactor * phaseGlow * glow * kHaloMagnitude
+                       * args.haloMoonBrightness * moonFade;
         radiance += glowColor;
       }
     }

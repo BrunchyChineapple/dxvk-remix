@@ -1314,13 +1314,34 @@ namespace dxvk {
 
     // ----- Moon NEE / atmospheric-coupling strengths (fork) -----
     RTX_OPTION("rtx.atmosphere", float, moonNeeStrength, 1.0f,
-               "Global multiplier on direct moon lighting via NEE (surface + volumetric). "
-               "0 = moon does not light geometry/volumes; 1 = default calibrated magnitude; "
-               ">1 = brighten for stylized scenes.");
+               "World-side master multiplier on direct moon lighting (surface NEE + clouds + future volumetric). "
+               "0 = moon does not light the world; 1 = default physical-baseline magnitude; "
+               ">1 = brighten across all world-side paths simultaneously. Per-path fine-tuning available "
+               "via surfaceMoonBrightness / cloudMoonBrightness / haloMoonBrightness.");
     RTX_OPTION("rtx.atmosphere", float, moonAtmosphericCouplingStrength, 1.0f,
-               "Multiplier on the moon's contribution to atmospheric scattering. "
-               "0 = no blue-dome around the moon (sky stays pure black); 1 = default; "
+               "Sky-side multiplier on the moon's contribution to atmospheric scattering. "
+               "0 = no blue-dome around the moon (sky stays pure black); 1 = default physical-baseline; "
                ">1 = exaggerated for stylized scenes.");
+
+    // ----- Per-path moon stylistic multipliers (fork, Phase 3) -----
+    // These are tonemapper-correction stylistic axes layered on top of the unified
+    // physical irradiance scaffold from Phase 2. Defaults empirically calibrated to
+    // approximate pre-Phase-2 visibility under FNV's tonemapper at m.brightness=1.0
+    // (the new physical-neutral default). Set to 1.0 for architecturally-pure
+    // physical baseline; raise for tonemapper-aware visibility.
+    RTX_OPTION("rtx.atmosphere", float, surfaceMoonBrightness, 8.0f,
+               "Per-path stylistic multiplier on surface NEE (ground moonlight). "
+               "Default 8.0 = empirical baseline for visible ground under FNV tonemapper "
+               "at m.brightness=1.0; 1.0 = physically-pure (very dim under typical tonemappers); "
+               "raise for brighter ground.");
+    RTX_OPTION("rtx.atmosphere", float, cloudMoonBrightness, 24.0f,
+               "Per-path stylistic multiplier on cloud-moon directional lighting + ambient airglow. "
+               "Default 24.0 = matches pre-Phase-2 silver-lining magnitude at m.brightness=1.0 under "
+               "FNV tonemapper; 1.0 = physically-pure; 0 = no moon-cloud illumination.");
+    RTX_OPTION("rtx.atmosphere", float, haloMoonBrightness, 5.0f,
+               "Per-path stylistic multiplier on disk halo Gaussian glow. "
+               "Default 5.0 = matches pre-Phase-2 halo magnitude at m.brightness=1.0 under "
+               "FNV tonemapper; 1.0 = physically-pure; 0 = no halo.");
 
     // Cloud parameters (procedural FBM cloud layer)
     RTX_OPTION("rtx.atmosphere", bool, cloudEnabled, true, "Enable procedural cloud rendering.");

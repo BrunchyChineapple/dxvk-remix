@@ -973,8 +973,10 @@ AtmosphereMoonSample sampleAtmosphereMoonLight(vec3 surfacePos, vec3 surfaceNorm
   // under the FNV tonemapper.
   vec3 sharedFactor = computeMoonSharedFactor(m, args, m.color);
   float moonSolidAngleSr = 2.0f * kPi * (1.0f - cos(m.angularRadius));
+  // Phase 3 (2026-05-08): args.surfaceMoonBrightness is the per-path stylistic
+  // multiplier on surface NEE (default 8.0 = tonemapper-corrected baseline).
   result.radiance = sharedFactor * phaseGlow * moonSolidAngleSr
-                  * args.moonNeeStrength * nightFactor;
+                  * args.moonNeeStrength * args.surfaceMoonBrightness * nightFactor;
 
   result.solidAnglePdf = pickPdf;
   result.valid         = any(result.radiance > vec3(0.0f));

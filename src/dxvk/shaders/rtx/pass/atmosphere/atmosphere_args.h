@@ -105,10 +105,15 @@ struct AtmosphereArgs {
   MoonParams moons[MAX_MOONS];
 
   // ----- Moon NEE / atmospheric-coupling strength sliders (fork) -----
-  float moonNeeStrength;                  // Multiplier on direct moon NEE contribution
-  float moonAtmosphericCouplingStrength;  // Multiplier on moon's contribution to atmospheric scattering
+  float moonNeeStrength;                  // World-side master multiplier (surface NEE + cloud + future volumetric)
+  float moonAtmosphericCouplingStrength;  // Sky-side multiplier (atmospheric scattering blue-dome)
+  float surfaceMoonBrightness;            // Per-path stylistic multiplier on surface NEE only (Phase 3, 2026-05-08)
+  float cloudMoonBrightness;             // Per-path stylistic multiplier on cloud-moon directional + ambient airglow (Phase 3)
+
+  float haloMoonBrightness;               // Per-path stylistic multiplier on disk halo Gaussian glow (Phase 3)
   float padMoonNee0;                      // 16-byte alignment
   float padMoonNee1;
+  float padMoonNee2;
 
   // ----- Cloud parameters (fork: procedural FBM cloud layer at fixed altitude) -----
   vec3 cloudColor;          // Cloud base color (typically white)

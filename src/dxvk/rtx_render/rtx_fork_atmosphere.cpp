@@ -458,10 +458,35 @@ namespace fork_hooks {
                             &RtxOptions::moonNeeStrengthObject(),
                             0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover(
-            "Multiplier on direct moon lighting in the world (surface NEE + cloud "
-            "illumination + future volumetric). 0 = moon does not light geometry/"
-            "clouds; 1 = default physical magnitude; >1 = brighten for stylized "
-            "scenes.");
+            "World-side master multiplier on direct moon lighting (surface NEE + "
+            "cloud illumination + future volumetric). 0 = moon does not light the "
+            "world; 1 = default physical-baseline; >1 = brighten across all world-"
+            "side paths simultaneously. Per-path fine-tuning via the three sliders "
+            "below.");
+
+        RemixGui::DragFloat("Surface Brightness",
+                            &RtxOptions::surfaceMoonBrightnessObject(),
+                            0.5f, 0.0f, 50.0f, "%.1f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Per-path stylistic multiplier on surface NEE (ground moonlight). "
+            "Default 8.0 = empirical visibility baseline under FNV tonemapper at "
+            "m.brightness=1.0. Set to 1.0 for physically-pure (very dim).");
+
+        RemixGui::DragFloat("Cloud Brightness",
+                            &RtxOptions::cloudMoonBrightnessObject(),
+                            0.5f, 0.0f, 100.0f, "%.1f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Per-path stylistic multiplier on cloud-moon lighting (directional silver-"
+            "lining + ambient airglow). Default 24.0 = matches pre-Phase-2 silver-"
+            "lining magnitude at m.brightness=1.0. Set to 1.0 for physically-pure.");
+
+        RemixGui::DragFloat("Halo Brightness",
+                            &RtxOptions::haloMoonBrightnessObject(),
+                            0.5f, 0.0f, 50.0f, "%.1f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Per-path stylistic multiplier on the disk halo Gaussian glow. "
+            "Default 5.0 = matches pre-Phase-2 halo magnitude at m.brightness=1.0. "
+            "Set to 1.0 for physically-pure.");
 
         for (int i = 0; i < static_cast<int>(MAX_MOONS); ++i) {
           renderMoonUI(i);
