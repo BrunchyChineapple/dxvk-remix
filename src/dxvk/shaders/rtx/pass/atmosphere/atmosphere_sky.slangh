@@ -851,11 +851,30 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args) {
   // Horizon fade applied uniformly per ray
   float horizonFade = smoothstep(0.02f, 0.15f, viewDir.y);
 
-  // Ray-march. Per-pixel hash jitter on the fractional step offset breaks
-  // the visible band-rings at low sample counts into noise that DLSS / temporal
+  // Ray-march. Per-pixel jitter on the fractional step offset breaks the
+  // visible band-rings at low sample counts into noise that DLSS / temporal
   // averaging blurs out — much cheaper than bumping cloudViewSamples.
+  //
+  // Phase 4 (2026-05-08): jitter is now Jimenez interleaved-gradient noise
+  // (approximate blue-noise spectrum) keyed on a synthetic 2D pixel coord
+  // derived from viewDir + a per-frame temporal phase advance. Replaces the
+  // prior hash31(viewDir) which was white-noise + frame-independent (DLSS
+  // could not denoise it because the noise pattern was deterministic per
+  // viewing direction). Two effects compound:
+  //   - Blue-noise distribution shifts spatial frequency content toward
+  //     the high frequencies the eye filters out. Perceptually flatter
+  //     than white noise at the same magnitude.
+  //   - Per-frame phase advance (timeSeconds × 60) rotates the jitter to
+  //     a fully-decorrelated position every frame. DLSS / TAA averages
+  //     4–8 frames → effective sample count rises ~4–8× at the same
+  //     shader cost.
+  // Constants from Jimenez, "Next Generation Post Processing in Call of Duty:
+  // Advanced Warfare" (SIGGRAPH 2014).
   float stepLen = (tExit - tEntry) / float(args.cloudViewSamples);
-  float jitter = hash31(viewDir);  // [0, 1) per pixel
+  vec2 ignPixel = vec2(viewDir.x, viewDir.z) * 1.0e4f
+                + vec2(args.timeSeconds * 60.0f, 0.0f);
+  float jitter = frac(52.9829189f * frac(0.06711056f * ignPixel.x
+                                       + 0.00583715f * ignPixel.y));
   vec3 accumRadiance = vec3(0.0f);
   float transmittance = 1.0f;
 
