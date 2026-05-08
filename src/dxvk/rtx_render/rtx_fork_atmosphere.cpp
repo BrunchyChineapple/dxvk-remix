@@ -458,9 +458,10 @@ namespace fork_hooks {
                             &RtxOptions::moonNeeStrengthObject(),
                             0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover(
-            "Multiplier on direct moon lighting via NEE (surface + volumetric). "
-            "0 = moon does not light geometry/volumes; 1 = default calibrated "
-            "magnitude; >1 = brighten for stylized scenes.");
+            "Multiplier on direct moon lighting in the world (surface NEE + cloud "
+            "illumination + future volumetric). 0 = moon does not light geometry/"
+            "clouds; 1 = default physical magnitude; >1 = brighten for stylized "
+            "scenes.");
 
         for (int i = 0; i < static_cast<int>(MAX_MOONS); ++i) {
           renderMoonUI(i);

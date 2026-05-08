@@ -518,8 +518,11 @@ initializer list and can't be lifted into a separate TU.
 - **Inline tweak** at `RtxOptions` class body (cloud spatial-variation block) — +21 / -11 net LOC.
   *Adds `cloudTypeMean`, `cloudTypeSpread`, `cloudTypeNoiseScale`, `cloudCoverageMean`, `cloudCoverageSpread`, `cloudCoverageNoiseScale`, `cloudAnvilBias`, `cloudWindShearStrength` RTX_OPTIONs (Nubis-style spatial variation, spec 2026-05-06; `cloudWindShearStrength` added as a tunable knob on the existing wind-shear UV perturbation in `sampleCloudDensity`). Replaces retired `cloudCoverage`, `cloudVariance`, `cloudVarianceScale`, `cloudVerticalProfile`.*
 
-- **Inline tweak** at `RtxOptions` class body (moon-lit cloud lighting) — +6 LOC.
-  *Adds `cloudMoonBrightness` RTX_OPTION controlling the strength of directional moon lighting on cloud volumes (Lambert + HG, single-bounce v1, no shadow march). Consumed by the `moonDirectLight` pre-compute in `evalClouds` (`atmosphere_sky.slangh`).*
+- **Inline tweak** at `RtxOptions` class body (moon-lighting strength sliders) — +10 LOC.
+  *Adds `moonNeeStrength` (default 1.0) and `moonAtmosphericCouplingStrength` (default 1.0) RTX_OPTIONs. `moonNeeStrength` scales all "moon lights the world" paths (surface NEE, cloud volumes, future volumetric). `moonAtmosphericCouplingStrength` scales the moon's contribution to atmospheric scattering (the blue-dome around the moon at night). Both consumed across `evalAtmosphereRadiance`, `evalClouds`, and `sampleAtmosphereMoonLight`. Added in Phase 1 (2026-05-07) of the moon sun-parity workstream.*
+
+- **Inline tweak** at `RtxOptions` class body (Phase 2 default migration) — net 0 LOC, value/text changes only.
+  *Phase 2 (2026-05-08) shifts the per-moon `brightness##N` default from 4.0 → 1.0 (physical neutral; was magic-number magnitude-cheat) and the per-moon `color##N` default from (0.85, 0.87, 0.92) → (0.12, 0.12, 0.12) (neutral lunar Bond albedo; the prior cool-blue tint was magnitude-cheating). Retires the `cloudMoonBrightness` RTX_OPTION (its job — scaling the cloud path's magic-number magnitude — was eliminated by the Phase 2 unified physical irradiance scaffold). See `2026-05-08-moon-physical-irradiance-design.md`.*
 
 - **Inline tweak** — remove `rtx.useLegacyACES` + `rtx.showLegacyACESOption` RtxOptions (superseded by `TonemapOperator::ACESLegacy` enum value).
   *Both options live at the `rtx` namespace (not `rtx.tonemap`); removed in the enum refactor.*

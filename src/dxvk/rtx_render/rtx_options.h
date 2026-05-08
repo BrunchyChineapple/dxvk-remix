@@ -1281,10 +1281,12 @@ namespace dxvk {
                "Enable moon " #N " rendering.");                                                \
     RTX_OPTION("rtx.atmosphere.moon" #N, float, angularRadius##N, 3.5f,                         \
                "Moon " #N " angular diameter in degrees.");                                     \
-    RTX_OPTION("rtx.atmosphere.moon" #N, float, brightness##N, 4.0f,                            \
-               "Moon " #N " brightness multiplier.");                                           \
-    RTX_OPTION("rtx.atmosphere.moon" #N, Vector3, color##N, Vector3(0.85f, 0.87f, 0.92f),       \
-               "Moon " #N " base color/albedo.");                                               \
+    RTX_OPTION("rtx.atmosphere.moon" #N, float, brightness##N, 1.0f,                            \
+               "Moon " #N " brightness multiplier. Default 1.0 = physical neutral; "            \
+               ">1 brightens for stylized scenes (e.g. 4.0 reproduces pre-Phase-2 look).");     \
+    RTX_OPTION("rtx.atmosphere.moon" #N, Vector3, color##N, Vector3(0.12f, 0.12f, 0.12f),       \
+               "Moon " #N " surface albedo. Default (0.12, 0.12, 0.12) ≈ Earth's lunar Bond "   \
+               "albedo; raise per-channel for tinted moons (blood-red, sulfur-yellow, etc.).");\
     RTX_OPTION("rtx.atmosphere.moon" #N, uint32_t, surfaceStyle##N, 0u,                         \
                "Moon " #N " surface preset: 0 = Rocky, 1 = Volcanic.");                         \
     RTX_OPTION("rtx.atmosphere.moon" #N, float, craterDensity##N, 1.0f,                         \
@@ -1369,12 +1371,6 @@ namespace dxvk {
                "Lateral cloud-top displacement along wind direction, scaled by cloud type [0,1+]. "
                "0=cloud tops vertical above base, 1=tops offset by ~thickness*type along wind. "
                "Reduces the visible per-cumulus 45-degree lean at default settings.");
-    RTX_OPTION("rtx.atmosphere", float, cloudMoonBrightness, 0.3f,
-               "Strength of directional moon lighting on clouds [0,1+]. "
-               "0=moonlit-cloud feature off (only nightSkyColor airglow + per-moon ambient remain), "
-               "1=full strength. Each enabled, above-horizon moon contributes Lambert+HG response "
-               "scaled by its phaseGlow (full at full moon, zero at new moon). No per-sample shadow "
-               "march — single-bounce only.");
     RTX_OPTION("rtx.atmosphere", float, cloudNoiseTileKm, 12.0f,
                "World-space tile period (km) for the prebaked 3D cloud noise texture. "
                "Smaller = more visible repetition; larger = lower-frequency cloud detail. "
