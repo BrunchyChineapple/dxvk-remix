@@ -976,7 +976,12 @@ vec3 evalSkyRadiance(
         // matching definition in evalClouds; mirrored here for the disk halo.
         float phaseGlow = 0.5f - 0.5f * cos(m.phase * 2.0f * kPi);
         phaseGlow = max(phaseGlow, 0.05f);  // minimal glow at new moon
-        vec3 glowColor = m.color * m.brightness * 0.003f * glow * phaseGlow * moonFade;
+        // Magnitude factor halved (0.003 -> 0.0015) to compensate for the
+        // phaseGlow formula correction in 34d7bf8b. The prior formula peaked
+        // at quarter moons (where halo was historically tuned); the fixed
+        // formula peaks at full moon, ~3x that peak. Halving brings the
+        // perceived halo magnitude back to roughly its pre-fix tuning.
+        vec3 glowColor = m.color * m.brightness * 0.0015f * glow * phaseGlow * moonFade;
         radiance += glowColor;
       }
     }
