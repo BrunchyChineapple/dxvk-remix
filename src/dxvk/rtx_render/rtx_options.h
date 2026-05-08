@@ -1314,7 +1314,8 @@ namespace dxvk {
 #undef DECLARE_MOON_OPTIONS
 
     // ----- Weather preset declarations (fork, 2026-05-08) -----
-    // 312 RTX_OPTIONs: 12 presets × 26 fields under rtx.weather.preset.<name>.
+    // 348 RTX_OPTIONs: 12 presets x 29 fields under rtx.weather.preset.<name>.
+    // (Buckets: 19 cloud + 3 atmosphere + 3 sky/moon mood + 4 volumetric.)
     // Neutral defaults here; per-archetype tuning lands in a follow-up commit.
     // Getter form: RtxOptions::clear_cloudDensity(), etc.
     // See src/dxvk/rtx_render/rtx_fork_weather.h for macro definitions.
