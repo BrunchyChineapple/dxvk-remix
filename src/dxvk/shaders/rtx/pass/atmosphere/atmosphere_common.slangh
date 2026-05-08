@@ -209,6 +209,32 @@ vec3 uvToSkyViewLutParams(vec2 uv, vec3 viewDir, vec3 sunDir, vec3 cameraPos, At
   return normalize(dir);
 }
 
+// ============================================================================
+// Per-moon physical irradiance scaffold (fork) — shared across all moon-
+// lighting consumers (disk, cloud, atmospheric coupling, surface NEE, halo).
+//
+// Returns: args.sunIlluminance × albedo × moonAirTrans × m.brightness / π
+//
+// Units: radiance (W/m²/sr equivalent in shader-normalized units). Represents
+// the surface radiance of the moon's lit hemisphere as seen through atmosphere.
+// Callers multiply per-path geometric / phase factors on top:
+//   Disk (per-pixel):   × surfaceDetail × diffuse × limbDarkening
+//   Cloud / NEE / atm:  × phaseGlow × moonSolidAngleSr × <strength slider>
+//   Halo:               × phaseGlow × glow × kHaloMagnitude
+//
+// `albedo` is parameterized so disk paths can pass per-pixel `surfaceColor`
+// (perturbed by surface noise) while uniform-albedo paths pass `m.color`.
+//
+// `moonAirTrans` (Kasten-Young + ozone + twilight) is computed internally via
+// getAtmosphericTransmittanceForDir; same atmospheric-extinction model the
+// sun NEE path uses. Forward-references that helper (defined later in this
+// file, line ~648); slang permits forward references to top-level functions.
+// ============================================================================
+vec3 computeMoonSharedFactor(MoonParams m, AtmosphereArgs args, vec3 albedo) {
+  vec3 moonAirTrans = getAtmosphericTransmittanceForDir(normalize(m.direction), args);
+  return args.sunIlluminance * albedo * moonAirTrans * m.brightness / kPi;
+}
+
 // Evaluate atmosphere radiance along a ray with multiscattering
 // This is used in direct evaluation
 vec3 evalAtmosphereRadiance(
