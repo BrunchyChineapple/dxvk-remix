@@ -745,30 +745,27 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args) {
         // zero at full) — defaulting all moonlit-cloud, ambient-airglow, and
         // moon-halo contributions to zero at the default phase=0.5.
         float phaseGlow = 0.5f - 0.5f * cos(m.phase * 2.0f * kPi);
-        nightLight += m.color * m.brightness * 0.0015f
+        // Phase 2 (2026-05-08): nightLight ambient airglow now uses
+        // sharedFactor for sun-following-ness consistency. Magnitude factor
+        // 0.0015 preserved as the stylistic ambient-bounce strength.
+        vec3 sharedFactorAmbient = computeMoonSharedFactor(m, args, m.color);
+        nightLight += sharedFactorAmbient * 0.0015f
                     * moonDot * phaseGlow * nightFactor;
 
         // Directional contribution — only moons above horizon matter for
         // direct illumination of the cloud body.
-        if (moonDir.y > 0.01f && args.cloudMoonBrightness > 0.001f) {
-          // Moon-specific cloud response gains -- separate from the sun's
-          // shared kDiffuseGain/kPhaseGain because moonlit clouds need a
-          // different diffuse-vs-phase balance to read correctly. With the
-          // sun's shared values (0.35 / 0.20 at args.cloudAnisotropy=0.6)
-          // the diffuse-everywhere term beats the view-dependent phase peak
-          // (0.27 > 0.16), so all clouds were uniformly lit and the silver
-          // lining failed to read against the uniform glow.
-          //
-          // Re-balance for the moon path:
-          //   kMoonDiffuseGain  0.10 (down from 0.35)  -- crush uniform glow
-          //   kMoonPhaseGain    0.30 (up from 0.20)    -- boost forward scatter
-          //   kMoonAnisotropy   0.85 (vs shared 0.60)  -- sharper HG peak
-          //
-          // Perceptual outcome: peak (cloud in front of moon) responds at
-          // ~1.13, off-axis (cloud 60deg from moon) at ~0.09 -- a ~14x
-          // contrast vs the prior ~1.6x, matching the IRL "bright silver
-          // lining only on the cloud in front of the moon, gentle glow
-          // elsewhere" look.
+        if (moonDir.y > 0.01f && args.moonNeeStrength > 0.001f) {
+          // Moon-specific cloud response shape (silver-lining contrast).
+          // These gains shape the spatial RESPONSE of cloud-moon coupling
+          // (peak vs off-axis), not its magnitude. The sun's shared
+          // kDiffuseGain/kPhaseGain were calibrated for daylight-magnitude
+          // illumination and produce an off-axis-biased response with the
+          // moon -- diffuse beats phase. Re-balanced here:
+          //   kMoonDiffuseGain  0.10 (vs sun's 0.35)  -- crush uniform glow
+          //   kMoonPhaseGain    0.30 (vs sun's 0.20)  -- boost forward scatter
+          //   kMoonAnisotropy   0.85 (vs sun's 0.60)  -- sharper HG peak
+          // Result: peak (cloud in front of moon) responds at ~1.13;
+          // off-axis (60deg from moon) at ~0.09 -- a ~13x contrast.
           const float kMoonDiffuseGain = 0.10f;
           const float kMoonPhaseGain   = 0.30f;
           const float kMoonAnisotropy  = 0.85f;
@@ -776,21 +773,28 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args) {
           float moonCosTheta = dot(viewDir, moonDir);
           float moonPhase    = hgPhase(moonCosTheta, kMoonAnisotropy);
           float moonResponse = kMoonDiffuseGain * moonLambert + kMoonPhaseGain * moonPhase;
-          // Convert m.brightness from disk-rendering units (where m.brightness=4
-          // makes a visible moon disk against the dark sky, multiplied by ~100
-          // in evalMoonDisk) to cloud-illumination units. Without this scale,
-          // moon-lit clouds at night render as bright as overcast daytime
-          // clouds (roughly 16% of sun's contribution), which reads as "way
-          // too bright" — real moonlight is ~1-3% of sun perceptually.
-          const float kMoonIllumScale = 0.05f;
-          // Atmospheric extinction along the moon direction — same Kasten-Young
-          // model as the sun. A moon near the horizon should redden and dim
-          // through ~40 air masses just like the sun does at sunset; folded
-          // into moonCoeff here so the per-sample march loop stays unchanged.
-          vec3 moonAirTrans = getAtmosphericTransmittanceForDir(moonDir, args);
-          moonCoeff[mi]   = m.color * m.brightness * moonResponse * phaseGlow
-                          * args.cloudMoonBrightness * kMoonIllumScale * nightFactor
-                          * moonAirTrans;
+          // Phase 2 (2026-05-08): physical irradiance scaffold.
+          // Replaces the prior kMoonIllumScale = 0.05 × cloudMoonBrightness magic-
+          // number magnitude (which lacked args.sunIlluminance entirely -- cloud
+          // moon contribution didn't track sun-intensity changes). Now uses the
+          // unified physical scaffold:
+          //   moonIrradiance = sharedFactor × phaseGlow × moonSolidAngleSr
+          //                  × moonNeeStrength × nightFactor
+          // Where sharedFactor = sunIlluminance × m.color × moonAirTrans
+          // × m.brightness / π. moonNeeStrength now scales cloud illumination
+          // (in addition to surface NEE) since clouds are part of "the world
+          // the moon lights." cloudMoonBrightness slider retires in Task 7.
+          //
+          // Magnitude at FNV defaults (full moon, zenith): peak ~2.45e-3,
+          // off-axis ~1.95e-4 -- a 24× drop vs prior magic-number magnitude
+          // (peak 0.058, off-axis 4.6e-3). Same 13× peak/off-axis contrast,
+          // but absolute off-axis falls below visibility threshold while
+          // peak stays visible. Silver lining reads correctly.
+          vec3 sharedFactor = computeMoonSharedFactor(m, args, m.color);
+          float moonSolidAngleSr = 2.0f * kPi * (1.0f - cos(m.angularRadius));
+          vec3 moonIrradiance = sharedFactor * phaseGlow * moonSolidAngleSr
+                              * args.moonNeeStrength * nightFactor;
+          moonCoeff[mi]   = moonIrradiance * moonResponse;
           moonDirNorm[mi] = moonDir;
         }
       }
