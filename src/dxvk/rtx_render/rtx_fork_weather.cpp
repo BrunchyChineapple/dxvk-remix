@@ -87,6 +87,11 @@ namespace dxvk { namespace fork_weather { namespace {
   }
 
   // --- Preset name validation ---
+  //
+  // KEEP IN SYNC WITH readPresetValues below: every name listed here must
+  // also have a branch in readPresetValues, and vice versa. Adding a new
+  // preset requires editing both lists and the DECLARE_ALL_WEATHER_PRESETS
+  // macro in rtx_fork_weather.h.
 
   bool isKnownPresetName(const std::string& name) {
     return name == "clear"
@@ -109,8 +114,13 @@ namespace dxvk { namespace fork_weather { namespace {
   // Returns false when the preset name is unknown (caller treats blender as
   // dormant). Each branch reads all 29 fields from RtxOptions::<preset>_<field>.
   //
-  // Field order matches WEATHER_PRESET_FIELD_LIST exactly (cloud 19, atm 3,
-  // sky/moon 3, volumetric 4).
+  // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 5 sites:
+  // applyBlendedValues, retarget block in update(), readPresetValues' 12
+  // branches, snapshotRenderer, writeBlendedToDerivedLayer). All five must
+  // stay in sync if a field is added.
+  //
+  // KEEP NAME LIST IN SYNC WITH isKnownPresetName above: every preset that
+  // passes validation there must have a branch here.
   // ---------------------------------------------------------------------------
   bool readPresetValues(const std::string& name, WeatherSnapshot& out) {
     if (name == "clear") {
@@ -625,6 +635,10 @@ namespace dxvk { namespace fork_weather {
         m_previousPresetName  = "(initial)";
       } else {
         // Mid-blend retarget: capture the partially-blended state.
+        // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 5 sites:
+        // applyBlendedValues, this retarget block, readPresetValues' 12
+        // branches, snapshotRenderer, writeBlendedToDerivedLayer). All five
+        // must stay in sync if a field is added.
         float currentT = saturate(
           (m_currentTimeSec - m_blendStartTimeSec) / std::max(0.001f, m_blendDurationSec));
 
@@ -693,15 +707,6 @@ namespace dxvk { namespace fork_weather {
   // ---------------------------------------------------------------------------
   WeatherSnapshot WeatherBlender::snapshotCurrentValues() const {
     return snapshotRenderer();
-  }
-
-  // ---------------------------------------------------------------------------
-  // readTargetPresetValues — delegates to the free helper.
-  // ---------------------------------------------------------------------------
-  WeatherSnapshot WeatherBlender::readTargetPresetValues(const std::string& presetName) const {
-    WeatherSnapshot s;
-    readPresetValues(presetName, s);
-    return s;
   }
 
   // ---------------------------------------------------------------------------

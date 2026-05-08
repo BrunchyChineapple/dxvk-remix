@@ -185,12 +185,10 @@ namespace dxvk { namespace fork_weather {
     void applyBlendedValues(float t);
 
     // Returns a WeatherSnapshot populated from the current renderer RTX_OPTION
-    // getters (not from any preset table).
+    // getters (not from any preset table). Used at first-activation to seed
+    // m_previousSnapshot so the initial blend transitions smoothly from
+    // whatever the renderer was already doing.
     WeatherSnapshot snapshotCurrentValues() const;
-
-    // Returns a WeatherSnapshot populated from the named preset's RTX_OPTION
-    // getters (RtxOptions::<presetName>_<fieldName>()).
-    WeatherSnapshot readTargetPresetValues(const std::string& presetName) const;
 
     // Writes blend progress state back to the GameStateStore.
     void publishStateToGameStateStore(float t) const;
