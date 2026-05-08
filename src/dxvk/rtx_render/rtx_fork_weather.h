@@ -116,3 +116,84 @@
   DECLARE_WEATHER_PRESET(blizzard)      \
   DECLARE_WEATHER_PRESET(sandstorm)     \
   DECLARE_WEATHER_PRESET(smoggy)
+
+// ---------------------------------------------------------------------------
+// WeatherSnapshot + WeatherBlender — Task 2 additions.
+// Lives in dxvk::fork_weather namespace. Included by rtx_fork_weather.cpp;
+// forward-use in rtx_fork_hooks.h needs only the hook forward declarations
+// (no WeatherBlender include required there).
+// ---------------------------------------------------------------------------
+#include <string>
+
+namespace dxvk { namespace fork_weather {
+
+  // -------------------------------------------------------------------------
+  // WeatherSnapshot — a plain-value copy of all 29 renderer weather params.
+  // Members are auto-generated from the single-source-of-truth X-macro so
+  // that any field addition automatically propagates here.
+  // -------------------------------------------------------------------------
+  struct WeatherSnapshot {
+#define WEATHER_PRESET_FIELD_AS_MEMBER_(type, name, defaultValue) type name = defaultValue;
+    WEATHER_PRESET_FIELD_LIST(WEATHER_PRESET_FIELD_AS_MEMBER_)
+#undef WEATHER_PRESET_FIELD_AS_MEMBER_
+  };
+
+  // -------------------------------------------------------------------------
+  // WeatherBlender — per-frame lerp pipeline.
+  //
+  // Reads __weather.target + __weather.blend_seconds from the GameStateStore,
+  // lerps from m_previousSnapshot toward the named preset's RTX_OPTION values
+  // over m_blendDurationSec seconds, and writes interpolated values into the
+  // Derived layer of each underlying RTX_OPTION via setImmediately().
+  //
+  // Dormant when __weather.target is absent or unknown — zero upstream
+  // behavioural change.
+  //
+  // Caller (Task 3) provides deltaTimeSeconds from the per-frame render loop.
+  // ImGui surface (Task 4) implemented in showImguiSettings().
+  // -------------------------------------------------------------------------
+  class WeatherBlender {
+  public:
+    WeatherBlender() = default;
+
+    // Called once per frame from fork_hooks::updateWeatherBlender (Task 3).
+    void update(float deltaTimeSeconds);
+
+    // Renders the ImGui weather-preset panel. Placeholder until Task 4.
+    void showImguiSettings();
+
+    bool isPaused() const { return m_paused; }
+    void setPaused(bool paused) { m_paused = paused; }
+
+  private:
+    // Preset cache — empty string means "not yet active".
+    std::string m_previousPresetName;
+    std::string m_targetPresetName;
+
+    // Blend timeline.
+    float m_blendStartTimeSec  = 0.0f;
+    float m_blendDurationSec   = 1.0f;
+    float m_currentTimeSec     = 0.0f;
+
+    bool m_paused = false;
+
+    // Snapshot of renderer state at the moment the last blend began (or the
+    // retarget mid-blend captured the partially-blended state).
+    WeatherSnapshot m_previousSnapshot;
+
+    // Writes interpolated snapshot values to the Derived RTX_OPTION layer.
+    void applyBlendedValues(float t);
+
+    // Returns a WeatherSnapshot populated from the current renderer RTX_OPTION
+    // getters (not from any preset table).
+    WeatherSnapshot snapshotCurrentValues() const;
+
+    // Returns a WeatherSnapshot populated from the named preset's RTX_OPTION
+    // getters (RtxOptions::<presetName>_<fieldName>()).
+    WeatherSnapshot readTargetPresetValues(const std::string& presetName) const;
+
+    // Writes blend progress state back to the GameStateStore.
+    void publishStateToGameStateStore(float t) const;
+  };
+
+} }  // namespace dxvk::fork_weather
