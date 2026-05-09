@@ -429,6 +429,11 @@ void RtxAtmosphere::createLutResources(Rc<DxvkContext> ctx) {
     VkClearColorValue{}, // clearValue
     1 // mipLevels
   );
+
+  // EA Importance-Sampled FAST noise (128x128x32 RG8 Texture2DArray) used for
+  // cloud ray-march jitter. One-shot upload of the embedded byte data; no-op on
+  // subsequent calls.
+  m_fastNoise.initialize(ctx);
 }
 
 void RtxAtmosphere::computeLuts(Rc<DxvkContext> ctx) {
@@ -615,6 +620,9 @@ void RtxAtmosphere::bindResources(Rc<DxvkContext> ctx, VkPipelineBindPoint pipel
   }
   if (m_cloudNoise3D.isValid()) {
     ctx->bindResourceView(BINDING_ATMOSPHERE_CLOUD_NOISE_3D, m_cloudNoise3D.view, nullptr);
+  }
+  if (m_fastNoise.isValid()) {
+    ctx->bindResourceView(BINDING_ATMOSPHERE_FAST_NOISE, m_fastNoise.getView(), nullptr);
   }
 }
 

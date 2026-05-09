@@ -118,6 +118,7 @@ namespace fork_hooks {
     auto multiscatteringLut = ctx.m_atmosphere->getMultiscatteringLut();
     auto skyViewLut         = ctx.m_atmosphere->getSkyViewLut();
     auto cloudNoise3D       = ctx.m_atmosphere->getCloudNoise3D();  // Stage C
+    auto fastNoiseView      = ctx.m_atmosphere->getFastNoiseView();  // EA importance-sampled FAST noise
 
     // Always bind the LUTs (they're declared in shaders unconditionally)
     if (transmittanceLut.isValid()) {
@@ -131,6 +132,9 @@ namespace fork_hooks {
     }
     if (cloudNoise3D.isValid()) {
       ctx.bindResourceView(BINDING_ATMOSPHERE_CLOUD_NOISE_3D, cloudNoise3D.view, nullptr);
+    }
+    if (fastNoiseView != nullptr) {
+      ctx.bindResourceView(BINDING_ATMOSPHERE_FAST_NOISE, fastNoiseView, nullptr);
     }
 
     // Bind a linear/REPEAT sampler for the cloud noise volume.

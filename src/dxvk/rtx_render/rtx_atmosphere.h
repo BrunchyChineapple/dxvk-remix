@@ -23,6 +23,7 @@
 
 #include "rtx_resources.h"
 #include "rtx_common_object.h"
+#include "rtx_fast_noise.h"
 #include "rtx/pass/atmosphere/atmosphere_args.h"
 
 namespace dxvk {
@@ -84,6 +85,13 @@ public:
   Resources::Resource getCloudNoise3D() const { return m_cloudNoise3D; }  // Stage C
 
   /**
+   * \brief Get the EA Importance-Sampled FAST noise view for descriptor binding
+   *
+   * Returns nullptr if the FAST noise has not been initialized.
+   */
+  Rc<DxvkImageView> getFastNoiseView() const { return m_fastNoise.isValid() ? m_fastNoise.getView() : Rc<DxvkImageView>(); }
+
+  /**
    * \brief Get current atmosphere parameters
    */
   AtmosphereArgs getAtmosphereArgs() const;
@@ -111,7 +119,8 @@ private:
   Resources::Resource m_multiscatteringLut;
   Resources::Resource m_skyViewLut;
   Resources::Resource m_cloudNoise3D;  // Stage C: prebaked 3D Perlin FBM
-  
+  RtxFastNoise m_fastNoise;            // EA Importance-Sampled FAST noise (cloud ray-march jitter)
+
   Rc<DxvkBuffer> m_constantsBuffer;
 
   AtmosphereArgs m_cachedArgs;
