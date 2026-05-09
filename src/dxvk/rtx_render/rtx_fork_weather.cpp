@@ -805,6 +805,27 @@ namespace dxvk { namespace fork_weather {
       return;
     }
 
+    // Drift state advance — happens on every non-paused frame, regardless of
+    // whether the blender is dormant. Smoothing reads raw values from
+    // GameStateStore, low-pass-filters toward them with tau = 1.0s, then
+    // advances the phase. Negative raw values are clamped to 0 at read time.
+    {
+      constexpr float kSmoothTau = 1.0f;
+      const float alpha = (deltaTimeSeconds > 0.0f)
+        ? (1.0f - std::exp(-deltaTimeSeconds / kSmoothTau))
+        : 0.0f;
+      const float driftSpeedRaw     = std::max(0.0f,
+        readFloatFromGameStateStore("__weather.drift_speed",     1.0f));
+      const float driftIntensityRaw = std::max(0.0f,
+        readFloatFromGameStateStore("__weather.drift_intensity", 1.0f));
+      m_driftSpeedSmoothed     += alpha * (driftSpeedRaw     - m_driftSpeedSmoothed);
+      m_driftIntensitySmoothed += alpha * (driftIntensityRaw - m_driftIntensitySmoothed);
+      // Belt-and-braces clamp against any pathological smoothed value.
+      m_driftSpeedSmoothed     = std::min(std::max(m_driftSpeedSmoothed,     0.0f), 100.0f);
+      m_driftIntensitySmoothed = std::min(std::max(m_driftIntensitySmoothed, 0.0f), 100.0f);
+      m_driftPhaseSeconds += deltaTimeSeconds * m_driftSpeedSmoothed;
+    }
+
     // Step 3: read and validate target preset.
     std::string newTarget = readStringFromGameStateStore("__weather.target");
     if (newTarget.empty()) {
@@ -1031,6 +1052,7 @@ namespace dxvk { namespace fork_weather {
       return;
     }
     WeatherSnapshot interp = lerpSnapshot(m_previousSnapshot, targetValues, t);
+    applyDriftToSnapshot(interp, m_driftPhaseSeconds, m_driftIntensitySmoothed);
     writeBlendedToDerivedLayer(interp);
   }
 
