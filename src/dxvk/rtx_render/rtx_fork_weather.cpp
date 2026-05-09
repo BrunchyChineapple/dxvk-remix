@@ -1029,6 +1029,54 @@ namespace dxvk { namespace fork_weather {
 
       ImGui::TreePop();
     }
+
+    // ---- Cloud Drift sub-tree ----
+    ImGui::Separator();
+    if (ImGui::TreeNode("Cloud Drift")) {
+      // Read raw values from GameStateStore so the sliders show the current
+      // plugin-or-dev-menu-written intent, not the smoothed internal state.
+      // (The smoothed values are read-only and shown below.)
+      float driftSpeed     = readFloatFromGameStateStore("__weather.drift_speed",     1.0f);
+      float driftIntensity = readFloatFromGameStateStore("__weather.drift_intensity", 1.0f);
+
+      bool changedSpeed     = ImGui::SliderFloat("Drift speed multiplier",     &driftSpeed,     0.0f, 4.0f, "%.2f");
+      RemixGui::SetTooltipToLastWidgetOnHover(
+        "Scales how fast the drift evolves. 0 = drift frozen. "
+        "Recommended values per preset: clear 0.6, overcast 0.7, "
+        "thunderstorm 2.0. Smoothed with tau = 1.0s.");
+
+      bool changedIntensity = ImGui::SliderFloat("Drift intensity multiplier", &driftIntensity, 0.0f, 3.0f, "%.2f");
+      RemixGui::SetTooltipToLastWidgetOnHover(
+        "Scales how big the drift swings are around the preset midpoint. "
+        "0 = drift fully off. Recommended values per preset: clear 0.5, "
+        "overcast 0.7, thunderstorm 1.6.");
+
+      if (changedSpeed) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.6f", driftSpeed);
+        fork_game_state::GameStateStore::get().set("__weather.drift_speed", buf);
+      }
+      if (changedIntensity) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.6f", driftIntensity);
+        fork_game_state::GameStateStore::get().set("__weather.drift_intensity", buf);
+      }
+
+      ImGui::Text("Drift phase:        %.2f s",  m_driftPhaseSeconds);
+      ImGui::Text("Speed (smoothed):    %.3f",   m_driftSpeedSmoothed);
+      ImGui::Text("Intensity (smoothed):%.3f",   m_driftIntensitySmoothed);
+
+      if (ImGui::Button("Reset drift to defaults")) {
+        fork_game_state::GameStateStore::get().set("__weather.drift_speed",     "1.0");
+        fork_game_state::GameStateStore::get().set("__weather.drift_intensity", "1.0");
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Disable drift")) {
+        fork_game_state::GameStateStore::get().set("__weather.drift_intensity", "0.0");
+      }
+
+      ImGui::TreePop();
+    }
   }
 
   // ---------------------------------------------------------------------------
