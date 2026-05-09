@@ -38,3 +38,6 @@ Texture3D<float> AtmosphereCloudNoise3D;
 
 layout(binding = BINDING_ATMOSPHERE_CLOUD_NOISE_SAMPLER)
 SamplerState AtmosphereCloudNoise3DSampler;
+
+layout(binding = BINDING_ATMOSPHERE_FAST_NOISE)
+Texture2DArray<float2> AtmosphereFastNoise;
