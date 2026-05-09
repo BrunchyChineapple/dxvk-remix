@@ -1891,6 +1891,7 @@ void geometryResolverVertex(
     else if (cb.skyMode == 1)
     {
       skyRadiance = evalSkyRadiance(ray.direction, cb.atmosphereArgs,
+                                     geometryResolverState.pixelCoordinate, cb.frameIdx,
                                      cb.isZUp != 0);
     }
 #endif
@@ -2541,6 +2542,7 @@ void geometryPSRResolverVertex(
     {
       // Physical atmosphere mode
       vec3 skyRadiance = evalSkyRadiance(ray.direction, cb.atmosphereArgs,
+                                          geometryPSRResolverState.pixelCoordinate, cb.frameIdx,
                                           cb.isZUp != 0);
       emissiveRadiance += skyRadiance * radianceAttenuation;
     }
