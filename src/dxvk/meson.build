@@ -223,6 +223,8 @@ dxvk_src = files([
   'rtx_render/rtx_dust_particles.h',
   'rtx_render/rtx_env.cpp',
   'rtx_render/rtx_env.h',
+  'rtx_render/rtx_fast_noise.cpp',
+  'rtx_render/rtx_fast_noise.h',
   'rtx_render/rtx_file_watch.cpp',
   'rtx_render/rtx_file_watch.h',
   'rtx_render/rtx_fork_api_entry.cpp',
