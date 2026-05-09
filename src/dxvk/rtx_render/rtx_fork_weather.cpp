@@ -72,6 +72,48 @@ namespace dxvk { namespace fork_weather { namespace {
     return a + delta * t;
   }
 
+  // Per-field lerp from one snapshot to another at parameter t. FIELD ORDER
+  // matches WEATHER_PRESET_FIELD_LIST. cloudWindDirection uses lerpAngleDeg
+  // (shortest-path angular wrap); Vector3 fields use lerpV3; all other floats
+  // use lerp.
+  WeatherSnapshot lerpSnapshot(const WeatherSnapshot& a, const WeatherSnapshot& b, float t) {
+    WeatherSnapshot out;
+    // Cloud (19)
+    out.cloudDensity            = lerp(a.cloudDensity,            b.cloudDensity,            t);
+    out.cloudCoverageMean       = lerp(a.cloudCoverageMean,       b.cloudCoverageMean,       t);
+    out.cloudCoverageSpread     = lerp(a.cloudCoverageSpread,     b.cloudCoverageSpread,     t);
+    out.cloudCoverageNoiseScale = lerp(a.cloudCoverageNoiseScale, b.cloudCoverageNoiseScale, t);
+    out.cloudTypeMean           = lerp(a.cloudTypeMean,           b.cloudTypeMean,           t);
+    out.cloudTypeSpread         = lerp(a.cloudTypeSpread,         b.cloudTypeSpread,         t);
+    out.cloudTypeNoiseScale     = lerp(a.cloudTypeNoiseScale,     b.cloudTypeNoiseScale,     t);
+    out.cloudAnvilBias          = lerp(a.cloudAnvilBias,          b.cloudAnvilBias,          t);
+    out.cloudWindShearStrength  = lerp(a.cloudWindShearStrength,  b.cloudWindShearStrength,  t);
+    out.cloudColor              = lerpV3(a.cloudColor,            b.cloudColor,              t);
+    out.cloudWindSpeed          = lerp(a.cloudWindSpeed,          b.cloudWindSpeed,          t);
+    out.cloudWindDirection      = lerpAngleDeg(a.cloudWindDirection, b.cloudWindDirection,   t);
+    out.cloudShadowStrength     = lerp(a.cloudShadowStrength,     b.cloudShadowStrength,     t);
+    out.cloudAnisotropy         = lerp(a.cloudAnisotropy,         b.cloudAnisotropy,         t);
+    out.cloudThickness          = lerp(a.cloudThickness,          b.cloudThickness,          t);
+    out.cloudDetailWeight       = lerp(a.cloudDetailWeight,       b.cloudDetailWeight,       t);
+    out.cloudShadowTint         = lerpV3(a.cloudShadowTint,       b.cloudShadowTint,         t);
+    out.cloudShadowTintStrength = lerp(a.cloudShadowTintStrength, b.cloudShadowTintStrength, t);
+    out.cloudSunsetWarmth       = lerp(a.cloudSunsetWarmth,       b.cloudSunsetWarmth,       t);
+    // Atmosphere (3)
+    out.airDensity              = lerp(a.airDensity,              b.airDensity,              t);
+    out.aerosolDensity          = lerp(a.aerosolDensity,          b.aerosolDensity,          t);
+    out.sunIlluminance          = lerpV3(a.sunIlluminance,        b.sunIlluminance,          t);
+    // Sky/moon mood (3)
+    out.nightSkyBrightness      = lerp(a.nightSkyBrightness,      b.nightSkyBrightness,      t);
+    out.moonNeeStrength         = lerp(a.moonNeeStrength,         b.moonNeeStrength,         t);
+    out.moonAtmosphericCouplingStrength = lerp(a.moonAtmosphericCouplingStrength, b.moonAtmosphericCouplingStrength, t);
+    // Volumetric (4)
+    out.transmittanceColor                    = lerpV3(a.transmittanceColor, b.transmittanceColor, t);
+    out.transmittanceMeasurementDistanceMeters = lerp(a.transmittanceMeasurementDistanceMeters, b.transmittanceMeasurementDistanceMeters, t);
+    out.singleScatteringAlbedo                = lerpV3(a.singleScatteringAlbedo, b.singleScatteringAlbedo, t);
+    out.volumetricAnisotropy                  = lerp(a.volumetricAnisotropy, b.volumetricAnisotropy, t);
+    return out;
+  }
+
   // --- GameStateStore wrappers ---
 
   float readFloatFromGameStateStore(const std::string& key, float defaultValue) {
@@ -124,10 +166,10 @@ namespace dxvk { namespace fork_weather { namespace {
   // Returns false when the preset name is unknown (caller treats blender as
   // dormant). Each branch reads all 29 fields from RtxOptions::<preset>_<field>.
   //
-  // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 5 sites:
-  // applyBlendedValues, retarget block in update(), readPresetValues' 12
-  // branches, snapshotRenderer, writeBlendedToDerivedLayer). All five must
-  // stay in sync if a field is added.
+  // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 4 sites:
+  // lerpSnapshot, readPresetValues' 12 branches, snapshotRenderer,
+  // writeBlendedToDerivedLayer). All four must stay in sync if a field
+  // is added.
   //
   // KEEP NAME LIST IN SYNC WITH isKnownPresetName above: every preset that
   // passes validation there must have a branch here.
@@ -506,7 +548,7 @@ namespace dxvk { namespace fork_weather { namespace {
   // ---------------------------------------------------------------------------
   // snapshotRenderer — reads current live renderer RTX_OPTION values.
   //
-  // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 3 sites).
+  // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 4 sites).
   // Cloud fields: RtxOptions::xxx()
   // Atmosphere fields: RtxOptions::xxx()
   // Volumetric fields: RtxGlobalVolumetrics::xxx()
@@ -555,7 +597,7 @@ namespace dxvk { namespace fork_weather { namespace {
   // writeBlendedToDerivedLayer — writes each field of interp to the Derived
   // layer of its underlying RTX_OPTION via setImmediately().
   //
-  // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 3 sites).
+  // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 4 sites).
   // ---------------------------------------------------------------------------
   void writeBlendedToDerivedLayer(const WeatherSnapshot& interp) {
     // Cloud (19)
@@ -670,50 +712,15 @@ namespace dxvk { namespace fork_weather {
         m_previousPresetName  = "(initial)";
       } else {
         // Mid-blend retarget: capture the partially-blended state.
-        // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 5 sites:
-        // applyBlendedValues, this retarget block, readPresetValues' 12
-        // branches, snapshotRenderer, writeBlendedToDerivedLayer). All five
-        // must stay in sync if a field is added.
+        // Lerp logic lives in lerpSnapshot (anonymous namespace).
         float currentT = saturate(
           (m_currentTimeSec - m_blendStartTimeSec) / std::max(0.001f, m_blendDurationSec));
 
-        // Read old target values once.
         WeatherSnapshot oldTargetValues;
         readPresetValues(m_targetPresetName, oldTargetValues);
 
         // Build retarget snapshot by lerping prev toward the old target at currentT.
-        WeatherSnapshot retarget;
-        retarget.cloudDensity            = lerp(m_previousSnapshot.cloudDensity,            oldTargetValues.cloudDensity,            currentT);
-        retarget.cloudCoverageMean       = lerp(m_previousSnapshot.cloudCoverageMean,       oldTargetValues.cloudCoverageMean,       currentT);
-        retarget.cloudCoverageSpread     = lerp(m_previousSnapshot.cloudCoverageSpread,     oldTargetValues.cloudCoverageSpread,     currentT);
-        retarget.cloudCoverageNoiseScale = lerp(m_previousSnapshot.cloudCoverageNoiseScale, oldTargetValues.cloudCoverageNoiseScale, currentT);
-        retarget.cloudTypeMean           = lerp(m_previousSnapshot.cloudTypeMean,           oldTargetValues.cloudTypeMean,           currentT);
-        retarget.cloudTypeSpread         = lerp(m_previousSnapshot.cloudTypeSpread,         oldTargetValues.cloudTypeSpread,         currentT);
-        retarget.cloudTypeNoiseScale     = lerp(m_previousSnapshot.cloudTypeNoiseScale,     oldTargetValues.cloudTypeNoiseScale,     currentT);
-        retarget.cloudAnvilBias          = lerp(m_previousSnapshot.cloudAnvilBias,          oldTargetValues.cloudAnvilBias,          currentT);
-        retarget.cloudWindShearStrength  = lerp(m_previousSnapshot.cloudWindShearStrength,  oldTargetValues.cloudWindShearStrength,  currentT);
-        retarget.cloudColor              = lerpV3(m_previousSnapshot.cloudColor,             oldTargetValues.cloudColor,              currentT);
-        retarget.cloudWindSpeed          = lerp(m_previousSnapshot.cloudWindSpeed,          oldTargetValues.cloudWindSpeed,          currentT);
-        retarget.cloudWindDirection      = lerpAngleDeg(m_previousSnapshot.cloudWindDirection, oldTargetValues.cloudWindDirection,   currentT);
-        retarget.cloudShadowStrength     = lerp(m_previousSnapshot.cloudShadowStrength,     oldTargetValues.cloudShadowStrength,     currentT);
-        retarget.cloudAnisotropy         = lerp(m_previousSnapshot.cloudAnisotropy,         oldTargetValues.cloudAnisotropy,         currentT);
-        retarget.cloudThickness          = lerp(m_previousSnapshot.cloudThickness,          oldTargetValues.cloudThickness,          currentT);
-        retarget.cloudDetailWeight       = lerp(m_previousSnapshot.cloudDetailWeight,       oldTargetValues.cloudDetailWeight,       currentT);
-        retarget.cloudShadowTint         = lerpV3(m_previousSnapshot.cloudShadowTint,        oldTargetValues.cloudShadowTint,         currentT);
-        retarget.cloudShadowTintStrength = lerp(m_previousSnapshot.cloudShadowTintStrength, oldTargetValues.cloudShadowTintStrength, currentT);
-        retarget.cloudSunsetWarmth       = lerp(m_previousSnapshot.cloudSunsetWarmth,       oldTargetValues.cloudSunsetWarmth,       currentT);
-        retarget.airDensity              = lerp(m_previousSnapshot.airDensity,              oldTargetValues.airDensity,              currentT);
-        retarget.aerosolDensity          = lerp(m_previousSnapshot.aerosolDensity,          oldTargetValues.aerosolDensity,          currentT);
-        retarget.sunIlluminance          = lerpV3(m_previousSnapshot.sunIlluminance,         oldTargetValues.sunIlluminance,          currentT);
-        retarget.nightSkyBrightness      = lerp(m_previousSnapshot.nightSkyBrightness,      oldTargetValues.nightSkyBrightness,      currentT);
-        retarget.moonNeeStrength         = lerp(m_previousSnapshot.moonNeeStrength,         oldTargetValues.moonNeeStrength,         currentT);
-        retarget.moonAtmosphericCouplingStrength = lerp(m_previousSnapshot.moonAtmosphericCouplingStrength, oldTargetValues.moonAtmosphericCouplingStrength, currentT);
-        retarget.transmittanceColor                    = lerpV3(m_previousSnapshot.transmittanceColor, oldTargetValues.transmittanceColor, currentT);
-        retarget.transmittanceMeasurementDistanceMeters = lerp(m_previousSnapshot.transmittanceMeasurementDistanceMeters, oldTargetValues.transmittanceMeasurementDistanceMeters, currentT);
-        retarget.singleScatteringAlbedo                = lerpV3(m_previousSnapshot.singleScatteringAlbedo, oldTargetValues.singleScatteringAlbedo, currentT);
-        retarget.volumetricAnisotropy                  = lerp(m_previousSnapshot.volumetricAnisotropy, oldTargetValues.volumetricAnisotropy, currentT);
-
-        m_previousSnapshot   = retarget;
+        m_previousSnapshot   = lerpSnapshot(m_previousSnapshot, oldTargetValues, currentT);
         m_previousPresetName = m_targetPresetName;
       }
 
@@ -888,51 +895,16 @@ namespace dxvk { namespace fork_weather {
   // applyBlendedValues — lerp prev snapshot toward target at t, write to
   // Derived layer.
   //
-  // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 3 sites).
-  // cloudWindDirection uses lerpAngleDeg (shortest-path angular).
-  // All other floats use lerp; all Vector3s use lerpV3.
+  // Lerp logic lives in lerpSnapshot (anonymous namespace). This member
+  // reads the target preset, lerps from the previous snapshot toward it,
+  // and writes the result to the Derived layer.
   // ---------------------------------------------------------------------------
   void WeatherBlender::applyBlendedValues(float t) {
     WeatherSnapshot targetValues;
     if (!readPresetValues(m_targetPresetName, targetValues)) {
       return;
     }
-
-    WeatherSnapshot interp;
-    // Cloud (19)
-    interp.cloudDensity            = lerp(m_previousSnapshot.cloudDensity,            targetValues.cloudDensity,            t);
-    interp.cloudCoverageMean       = lerp(m_previousSnapshot.cloudCoverageMean,       targetValues.cloudCoverageMean,       t);
-    interp.cloudCoverageSpread     = lerp(m_previousSnapshot.cloudCoverageSpread,     targetValues.cloudCoverageSpread,     t);
-    interp.cloudCoverageNoiseScale = lerp(m_previousSnapshot.cloudCoverageNoiseScale, targetValues.cloudCoverageNoiseScale, t);
-    interp.cloudTypeMean           = lerp(m_previousSnapshot.cloudTypeMean,           targetValues.cloudTypeMean,           t);
-    interp.cloudTypeSpread         = lerp(m_previousSnapshot.cloudTypeSpread,         targetValues.cloudTypeSpread,         t);
-    interp.cloudTypeNoiseScale     = lerp(m_previousSnapshot.cloudTypeNoiseScale,     targetValues.cloudTypeNoiseScale,     t);
-    interp.cloudAnvilBias          = lerp(m_previousSnapshot.cloudAnvilBias,          targetValues.cloudAnvilBias,          t);
-    interp.cloudWindShearStrength  = lerp(m_previousSnapshot.cloudWindShearStrength,  targetValues.cloudWindShearStrength,  t);
-    interp.cloudColor              = lerpV3(m_previousSnapshot.cloudColor,            targetValues.cloudColor,              t);
-    interp.cloudWindSpeed          = lerp(m_previousSnapshot.cloudWindSpeed,          targetValues.cloudWindSpeed,          t);
-    interp.cloudWindDirection      = lerpAngleDeg(m_previousSnapshot.cloudWindDirection, targetValues.cloudWindDirection,   t);  // angular wrap
-    interp.cloudShadowStrength     = lerp(m_previousSnapshot.cloudShadowStrength,     targetValues.cloudShadowStrength,     t);
-    interp.cloudAnisotropy         = lerp(m_previousSnapshot.cloudAnisotropy,         targetValues.cloudAnisotropy,         t);
-    interp.cloudThickness          = lerp(m_previousSnapshot.cloudThickness,          targetValues.cloudThickness,          t);
-    interp.cloudDetailWeight       = lerp(m_previousSnapshot.cloudDetailWeight,       targetValues.cloudDetailWeight,       t);
-    interp.cloudShadowTint         = lerpV3(m_previousSnapshot.cloudShadowTint,       targetValues.cloudShadowTint,         t);
-    interp.cloudShadowTintStrength = lerp(m_previousSnapshot.cloudShadowTintStrength, targetValues.cloudShadowTintStrength, t);
-    interp.cloudSunsetWarmth       = lerp(m_previousSnapshot.cloudSunsetWarmth,       targetValues.cloudSunsetWarmth,       t);
-    // Atmosphere (3)
-    interp.airDensity              = lerp(m_previousSnapshot.airDensity,              targetValues.airDensity,              t);
-    interp.aerosolDensity          = lerp(m_previousSnapshot.aerosolDensity,          targetValues.aerosolDensity,          t);
-    interp.sunIlluminance          = lerpV3(m_previousSnapshot.sunIlluminance,        targetValues.sunIlluminance,          t);
-    // Sky/moon mood (3)
-    interp.nightSkyBrightness      = lerp(m_previousSnapshot.nightSkyBrightness,      targetValues.nightSkyBrightness,      t);
-    interp.moonNeeStrength         = lerp(m_previousSnapshot.moonNeeStrength,         targetValues.moonNeeStrength,         t);
-    interp.moonAtmosphericCouplingStrength = lerp(m_previousSnapshot.moonAtmosphericCouplingStrength, targetValues.moonAtmosphericCouplingStrength, t);
-    // Volumetric (4)
-    interp.transmittanceColor                    = lerpV3(m_previousSnapshot.transmittanceColor, targetValues.transmittanceColor, t);
-    interp.transmittanceMeasurementDistanceMeters = lerp(m_previousSnapshot.transmittanceMeasurementDistanceMeters, targetValues.transmittanceMeasurementDistanceMeters, t);
-    interp.singleScatteringAlbedo                = lerpV3(m_previousSnapshot.singleScatteringAlbedo, targetValues.singleScatteringAlbedo, t);
-    interp.volumetricAnisotropy                  = lerp(m_previousSnapshot.volumetricAnisotropy, targetValues.volumetricAnisotropy, t);
-
+    WeatherSnapshot interp = lerpSnapshot(m_previousSnapshot, targetValues, t);
     writeBlendedToDerivedLayer(interp);
   }
 
