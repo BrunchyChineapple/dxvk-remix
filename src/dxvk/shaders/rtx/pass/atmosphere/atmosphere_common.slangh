@@ -1119,6 +1119,16 @@ vec3 getAnalyticalMultiscattering(float altitude, float sunZenithCosAngle, Atmos
   return groundReflect + airScatter;
 }
 
+// EA Importance-Sampled FAST Noise lookup. Returns a stratified 2D sample
+// in [0, 1)^2 with provably blue spatial distribution + filter-adapted
+// temporal sequence over 32 frames. AtmosphereFastNoise is a 128x128x32
+// Texture2DArray<float2> uploaded once by RtxFastNoise. Channel x is reserved
+// for cloud view-march jitter; channel y for sun-shadow tap jitter.
+float2 fastJitter(uint2 pixelCoord, uint frameIdx) {
+  uint3 coord = uint3(pixelCoord & 127u, frameIdx & 31u);
+  return AtmosphereFastNoise.Load(int4(int3(coord), 0));
+}
+
 // Procedural noise utilities — shared by the cloud layer
 // (sampleCloudDensityTextured / evalClouds via fbmNoise2D below) and the sky-path
 // star / moon / night-sky shaders in atmosphere_sky.slangh. Based on integer
