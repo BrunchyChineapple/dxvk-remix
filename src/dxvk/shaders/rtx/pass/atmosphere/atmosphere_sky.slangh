@@ -619,8 +619,13 @@ float sampleCloudSunTransmittance(vec3 cloudHitPos, vec3 sunDir,
   const float kStepKm = 0.8f;
   float opticalDepth = 0.0f;
 
+  // Channel y of the FAST sample — decorrelated from the view-march jitter
+  // (channel x) under spatial filtering. Shifts taps from deterministic
+  // end-of-step positions to stratified positions inside [0, kTaps]*kStepKm.
+  float shadowJitter = fastJitter(pixelCoord, frameIdx).y;
+
   for (int i = 0; i < kTaps; ++i) {
-    vec3 p = cloudHitPos + sunDir * (kStepKm * float(i + 1));
+    vec3 p = cloudHitPos + sunDir * (kStepKm * (float(i) + shadowJitter));
     // Project to horizontal plane and compute heightFraction at the tap.
     // Taps that march above the slab top get hf=1 → bell→0 → density=0,
     // which is correct (no clouds outside the slab).
