@@ -92,6 +92,37 @@ public:
   Rc<DxvkImageView> getFastNoiseView() const { return m_fastNoise.isValid() ? m_fastNoise.getView() : Rc<DxvkImageView>(); }
 
   /**
+   * \brief Ensure the cloud history ping-pong textures exist at the requested
+   *        screen-space dimensions, recreating them on resize.
+   *
+   * Call once per frame (cheap when extent is unchanged). Allocated on the
+   * downscaled render extent — the resolution at which the geometry resolver
+   * raygen writes pixels (and the resolution DLSS sees as its input).
+   */
+  void ensureCloudHistoryResources(Rc<DxvkContext> ctx, const VkExtent3D& downscaledExtent);
+
+  /**
+   * \brief Swap the cloud history ping-pong index when a new frame starts.
+   *
+   * Idempotent across multiple calls within the same frame — uses the device
+   * frame counter to detect frame transitions. Safe to call from each
+   * raygen-bind site without double-swapping.
+   */
+  void onFrameAdvanceForCloudHistory(uint32_t currentFrameId);
+
+  /**
+   * \brief Get the current frame's cloud history (write target this frame).
+   *
+   * Returns an invalid resource if ensureCloudHistoryResources hasn't yet run.
+   */
+  const Resources::Resource& getCurrentCloudHistory() const { return m_cloudHistory[m_cloudHistorySwap ? 1u : 0u]; }
+
+  /**
+   * \brief Get the previous frame's cloud history (read source this frame).
+   */
+  const Resources::Resource& getPreviousCloudHistory() const { return m_cloudHistory[m_cloudHistorySwap ? 0u : 1u]; }
+
+  /**
    * \brief Get current atmosphere parameters
    */
   AtmosphereArgs getAtmosphereArgs() const;
@@ -120,6 +151,20 @@ private:
   Resources::Resource m_skyViewLut;
   Resources::Resource m_cloudNoise3D;  // Stage C: prebaked 3D Perlin FBM
   RtxFastNoise m_fastNoise;            // EA Importance-Sampled FAST noise (cloud ray-march jitter)
+
+  // Cloud history ping-pong (fork). Screen-space RGBA16F (premultiplied
+  // radiance, alpha) used by the temporal-smoothing path inside
+  // evalSkyRadiance. Allocated lazily at downscaled render extent; recreated
+  // on resize. m_cloudHistorySwap toggles each frame; getCurrentCloudHistory
+  // is the WRITE target (this frame's accumulator), getPreviousCloudHistory
+  // is the READ source (last frame's accumulator).
+  Resources::Resource m_cloudHistory[2];
+  VkExtent3D          m_cloudHistoryExtent = { 0u, 0u, 0u };
+  bool                m_cloudHistorySwap = false;
+  // Frame ID at which the swap last advanced. UINT32_MAX is a sentinel meaning
+  // "never advanced yet" (first frame keeps swap = false; subsequent frames
+  // toggle).
+  uint32_t            m_cloudHistoryLastFrameId = UINT32_MAX;
 
   Rc<DxvkBuffer> m_constantsBuffer;
 

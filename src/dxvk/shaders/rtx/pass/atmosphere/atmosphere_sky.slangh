@@ -967,13 +967,32 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args, uint2 pixelCoord, uint frameI
 // Sky entry point
 // ============================================================================
 
-// Main evaluation function - computes atmosphere directly instead of using sky view LUT
+// Main evaluation function - computes atmosphere directly instead of using sky view LUT.
+//
+// `enableCloudTemporalSmoothing` (fork) — when true, the cloud layer alpha
+// blends against the previous frame's screen-space cloud history at the same
+// pixel coordinate before compositing. Kills the DLSS-perceived flatness that
+// the per-frame FAST-noise jitter (added in commits 148e3fa5 and d327f3d8)
+// otherwise produces. The blend uses a fixed history weight (0.92) which
+// matches the volumetric system's age-EMA settled state after ~10 frames.
+//
+// History rejection: pixels whose reprojected previous coordinate falls
+// off-screen, OR whose previous-alpha is near zero (treated as a
+// disocclusion / no-cloud-history-here), reset to the raw current value.
+//
+// Pass true ONLY from the primary view ray (geometry_resolver miss path).
+// PSR / indirect / NRC paths must pass false — they call evalSkyRadiance with
+// non-primary directions, so the screen-space history at their pixelCoord
+// would be visually wrong (would smear primary cloud into reflections).
 vec3 evalSkyRadiance(
   vec3 viewDir,
   AtmosphereArgs args,
   uint2 pixelCoord,
   uint frameIdx,
-  bool isZUp = false
+  bool isZUp = false,
+  bool enableCloudTemporalSmoothing = false,
+  vec2 motionVectorPixels = vec2(0.0f, 0.0f),
+  uint2 historyResolution = uint2(0u, 0u)
 ) {
   // Transform view direction to Y-up space if needed
   vec3 viewDirYUp = isZUp ? vec3(viewDir.x, viewDir.z, viewDir.y) : viewDir;
@@ -1069,7 +1088,75 @@ vec3 evalSkyRadiance(
   // Clouds render on top of everything (atmosphere + stars + moons). They
   // occlude whatever is behind them based on their alpha.
   vec4 cloudLayer = evalClouds(viewDirYUp, args, pixelCoord, frameIdx);
-  radiance = mix(radiance, cloudLayer.rgb, cloudLayer.a);
+
+  // Temporal cloud smoothing (fork). Per-frame FAST-noise jitter on the cloud
+  // ray-march (commits 148e3fa5 / d327f3d8) creates brightness variance that
+  // DLSS sees as noise and averages out, producing visible flatness. We blend
+  // the raw current cloud against a screen-space history at the reprojected
+  // previous-frame pixel to give DLSS a stable signal while preserving the
+  // jitter's anti-banding benefits.
+  //
+  // Algorithm shape mirrors the volumetric system's age-EMA (see
+  // submodules/rtxdi/.../volume_integrator.slangh:125-142). v1 uses a fixed
+  // history weight (0.92) which matches the volumetric EMA's settled state
+  // after ~10 frames; explicit age tracking is a follow-up if needed.
+  //
+  // Storage convention: AtmosphereCloudHistory stores
+  //   (rgb = cloudLayer.rgb * cloudLayer.a, a = cloudLayer.a)
+  // — premultiplied radiance. This means an off-screen / disocclusion fallback
+  // (zero history) blends to "no clouds" cleanly, and the final composite is
+  // `radiance + smoothed.rgb - radiance * smoothed.a` which equals
+  // `mix(radiance, smoothed.rgb / max(smoothed.a, eps), smoothed.a)` for
+  // smoothed.a > 0 and `radiance` otherwise. We use the additive form to
+  // skip the divide.
+  vec4 smoothedCloud = cloudLayer;  // default: no smoothing
+  if (enableCloudTemporalSmoothing && all(historyResolution > uint2(0u, 0u))) {
+    vec4 currentPremul = vec4(cloudLayer.rgb * cloudLayer.a, cloudLayer.a);
+
+    // Reproject: previous-frame pixel = current pixel + motion-vector (in pixels).
+    // calcMotionVectorForRayMiss returns NDC-delta * resolution, so adding it
+    // to the current pixel yields the previous frame's screen-space pixel.
+    vec2 prevPixelF = vec2(pixelCoord) + motionVectorPixels;
+    int2 prevPixel = int2(floor(prevPixelF + 0.5f));
+
+    bool reprojValid = all(prevPixel >= int2(0, 0))
+                    && all(prevPixel < int2(historyResolution));
+
+    if (reprojValid) {
+      vec4 history = AtmosphereCloudHistoryPrev[prevPixel];
+
+      // Disocclusion guard: if the previous-frame alpha at this pixel was
+      // essentially zero (no cloud was there last frame), don't blend — we'd
+      // just be averaging against noise / a different surface. Treat as a
+      // fresh sample. The 0.001 threshold matches the early-exit gate inside
+      // evalClouds itself.
+      bool historyValid = (history.a > 0.001f) || (currentPremul.a < 0.001f);
+      if (historyValid) {
+        // Fixed history weight. Higher = smoother but slower to respond to
+        // genuine sky changes (sun motion, weather preset changes); lower =
+        // less smoothing benefit. 0.92 was picked to settle to within 1% of
+        // a stable signal in ~30 frames at 60Hz (~0.5s) while still strongly
+        // suppressing the per-frame jitter variance DLSS sees.
+        const float kHistoryWeight = 0.92f;
+        vec4 blended = lerp(currentPremul, history, kHistoryWeight);
+        smoothedCloud = vec4(blended.rgb, blended.a);
+      } else {
+        smoothedCloud = currentPremul;
+      }
+    } else {
+      smoothedCloud = currentPremul;
+    }
+
+    // Write current frame's premultiplied accumulator for next frame to read.
+    AtmosphereCloudHistoryCurr[pixelCoord] = smoothedCloud;
+
+    // Composite: smoothedCloud is premultiplied, so the standard "over" op
+    // is `radiance * (1 - alpha) + premul.rgb`.
+    radiance = radiance * (1.0f - smoothedCloud.a) + smoothedCloud.rgb;
+  } else {
+    // No temporal smoothing — original composite path.
+    radiance = mix(radiance, cloudLayer.rgb, cloudLayer.a);
+  }
 
   return max(radiance, vec3(0.0f));
 }
