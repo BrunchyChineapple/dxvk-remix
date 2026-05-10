@@ -84,12 +84,11 @@ struct CloudShadowMapPushArgs {
   float cloudAnvilBias;         // [0..1] cumulus top inflation strength
 
   vec2  cloudWindOffset;        // accumulated wind UV offset (km), passed through to sampleCloudDensityTextured
-  vec2  mapOriginXZ;            // bottom-left world XZ corner of the map
+  vec2  mapOriginXZ;            // bottom-left world XZ corner of the map (meters, world coords -- matches sampling consumers)
 
-  float texelSize;              // world-space size of one texel (m or km depending on game unit; matches AtmosphereArgs.cloudShadowMapTexelSize)
+  vec2  cameraWorldXZ;          // camera world XZ (meters) -- subtracted from worldXZ in shader to get camera-relative offset, then * 0.001 to km for the cloud-march planet math (cloudAltitude / cloudPlanetRadius are in km).
+  float texelSize;              // world-space size of one texel (meters; matches AtmosphereArgs.cloudShadowMapTexelSize)
   uint  resolution;             // texture resolution (square; e.g. 512)
-  float pad0;
-  float pad1;
 };
 
 layout(push_constant)

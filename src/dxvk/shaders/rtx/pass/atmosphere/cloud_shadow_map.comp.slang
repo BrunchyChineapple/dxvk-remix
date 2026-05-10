@@ -129,10 +129,21 @@ void main(uint2 threadID : SV_DispatchThreadID) {
     return;
   }
 
-  // World position of this texel's ground point. +0.5 centers the sample
-  // on the texel; mapOriginXZ is the bottom-left corner pre-snapped on CPU.
-  vec2 worldXZ   = cb.mapOriginXZ + (vec2(threadID) + 0.5f) * cb.texelSize;
-  vec3 groundPos = vec3(worldXZ.x, 0.0f, worldXZ.y);
+  // World position of this texel's ground point in world meters. The cloud-
+  // march math below works in KILOMETERS (cloudAltitude, cloudPlanetRadius
+  // ~6371 are in km; cloudNoiseTileKm tiles in km), and the cloud system is
+  // CAMERA-RELATIVE (intersectSphere treats vec3(0) as the camera origin
+  // with planet center at (0, -cloudR_km, 0)). So we convert worldXZ_m to
+  // camera-relative km before feeding it to the slab intersection / sample
+  // march.
+  //
+  // Without this conversion, intersectSphere's discriminant comes out of
+  // mixed-unit arithmetic (oc = m - km) and returns false for ~every
+  // texel, leaving the shadow map filled with the no-intersection fallback
+  // 1.0 -- which is exactly the symptom that prompted this fix.
+  vec2 worldXZ_m = cb.mapOriginXZ + (vec2(threadID) + 0.5f) * cb.texelSize;
+  vec2 relXZ_km  = (worldXZ_m - cb.cameraWorldXZ) * 0.001f;
+  vec3 groundPos = vec3(relXZ_km.x, 0.0f, relXZ_km.y);
 
   // Synthesize the partial AtmosphereArgs that the called helpers need.
   // All other members default-initialize to 0 and are never touched on the

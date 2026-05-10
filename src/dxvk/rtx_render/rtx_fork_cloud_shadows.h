@@ -62,11 +62,14 @@ namespace dxvk {
     vec2  cloudWindOffset;
     vec2  mapOriginXZ;
 
-    // Row 5: float + uint + 2x pad float
+    // Row 5: vec2 + float + uint
+    // cameraWorldXZ replaces the previous pad0/pad1 floats. The compute
+    // shader subtracts it from worldXZ to get a camera-relative offset in
+    // meters, then scales to km for the cloud-march planet math (which is
+    // in km natively -- see cloud_shadow_map.comp.slang for the rationale).
+    vec2     cameraWorldXZ;
     float    texelSize;
     uint32_t resolution;
-    float    pad0;
-    float    pad1;
   };
   static_assert(sizeof(CloudShadowMapPushArgs) == 96,
                 "CloudShadowMapPushArgs must be 96 bytes -- mirror of "

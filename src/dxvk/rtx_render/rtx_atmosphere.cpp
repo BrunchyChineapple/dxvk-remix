@@ -696,10 +696,12 @@ void RtxAtmosphere::dispatchCloudShadowMap(Rc<DxvkContext> ctx,
   pushArgs.mapOriginXZ             = vec2(anchor.mapOriginXZ.x,
                                           anchor.mapOriginXZ.y);
 
+  // Camera world XZ (meters). The compute shader uses this to convert per-
+  // texel groundPos from world meters to camera-relative km before doing
+  // the cloud-march planet math (which lives in km natively).
+  pushArgs.cameraWorldXZ           = vec2(cameraWorldPos.x, cameraWorldPos.z);
   pushArgs.texelSize               = anchor.texelSize;
   pushArgs.resolution              = static_cast<uint32_t>(anchor.resolution);
-  pushArgs.pad0                    = 0.f;
-  pushArgs.pad1                    = 0.f;
 
   // Cloud-noise sampler: linear / repeat. Same setup as bindAtmosphereLuts'
   // BINDING_ATMOSPHERE_CLOUD_NOISE_SAMPLER block; the device caches identical
