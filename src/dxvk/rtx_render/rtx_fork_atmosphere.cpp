@@ -167,7 +167,7 @@ namespace fork_hooks {
     // projection of cloud transmittance along sun direction. Consumers (every
     // raytracing pass that pulls in atmosphere_bindings.slangh) sample by
     // world (X, Z) via evalCloudShadowAtWorld in atmosphere_common.slangh,
-    // replacing the legacy uniform-sun-dimmer evalCloudGroundShadow hack.
+    // replacing the legacy uniform-sun-dimmer hack.
     //
     // The dispatch must happen BEFORE the per-pass binds so the shadow map
     // contents are visible to any ray-tracing read in this command list (the

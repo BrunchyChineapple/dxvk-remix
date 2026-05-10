@@ -55,10 +55,10 @@ RWTexture2D<float4> AtmosphereCloudHistoryCurr;
 // Cloud shadow map (fork). 2D R8 ground-plane projection of cloud
 // transmittance along sun direction. Sampled by world (X, Z) via
 // evalCloudShadowAtWorld in atmosphere_common.slangh -- replaces the
-// uniform-sun-dimmer evalCloudGroundShadow hack. Declared unconditionally
-// because the slot lives in COMMON_RAYTRACING_BINDINGS, matching the cloud-
-// history binding pattern; ATMOSPHERE_AVAILABLE gating happens at the
-// consumer-side helper, not here.
+// legacy uniform-sun-dimmer hack that sampled at world origin only.
+// Declared unconditionally because the slot lives in
+// COMMON_RAYTRACING_BINDINGS, matching the cloud-history binding pattern;
+// ATMOSPHERE_AVAILABLE gating happens at the consumer-side helper, not here.
 layout(binding = BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP)
 Texture2D<float> AtmosphereCloudShadowMap;
 

@@ -62,8 +62,8 @@ namespace dxvk {
     );
 
     // Linear sampler with clamp-to-border using white (R=1) border so any
-    // off-grid sample reads as "no cloud shadow", matching the legacy
-    // evalCloudGroundShadow ATMOSPHERE_AVAILABLE early-return contract.
+    // off-grid sample reads as "no cloud shadow", matching the
+    // evalCloudShadowAtWorld ATMOSPHERE_AVAILABLE early-return contract.
     // dxvk's DxvkSamplerCreateInfo uses field names mipmapLodMin/Max (not
     // minLod/maxLod) and borderColor is VkClearColorValue (a union), not
     // VkBorderColor (the Vulkan enum). White border = 1.0f on all four

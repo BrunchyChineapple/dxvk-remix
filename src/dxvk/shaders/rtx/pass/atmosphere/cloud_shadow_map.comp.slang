@@ -169,9 +169,9 @@ void main(uint2 threadID : SV_DispatchThreadID) {
     vec3 sp  = groundPos + sunDir * t;
     vec2 spXZ = vec2(sp.x, sp.z);
 
-    // Same Nubis weather-noise scheme as evalCloudGroundShadow /
-    // evalSkyRadiance: independent smoothNoise2D evals with separate seeds
-    // produce spatially-decorrelated type and coverage fields.
+    // Same Nubis weather-noise scheme as evalSkyRadiance: independent
+    // smoothNoise2D evals with separate seeds produce spatially-
+    // decorrelated type and coverage fields.
     float typeNoise     = smoothNoise2D(spXZ * cb.cloudTypeNoiseScale,     200.0f);
     float coverageNoise = smoothNoise2D(spXZ * cb.cloudCoverageNoiseScale, 250.0f);
     float typeLocal     = saturate(cb.cloudTypeMean
@@ -187,10 +187,10 @@ void main(uint2 threadID : SV_DispatchThreadID) {
     opticalDepth += density;
   }
 
-  // Beer-Lambert. The 2.0 factor matches evalCloudGroundShadow's existing
-  // calibration so cloud-shadow darkness is consistent between the legacy
-  // single-point path and the new per-texel map (transmittance = exp(-density
-  // * cloudDensity * 2.0f) at the same density value).
+  // Beer-Lambert. The 2.0 factor preserves the calibration from the legacy
+  // single-point sun-shadow path so cloud-shadow darkness is consistent
+  // between historical settings and the new per-texel map (transmittance =
+  // exp(-density * cloudDensity * 2.0f) at the same density value).
   float transmittance = exp(-opticalDepth * dt * 2.0f * cb.cloudDensity);
   CloudShadowMapOutput[threadID] = transmittance;
 }
