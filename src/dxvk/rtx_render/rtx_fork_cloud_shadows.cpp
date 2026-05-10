@@ -1,0 +1,225 @@
+/*
+* Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+* THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+* FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+* DEALINGS IN THE SOFTWARE.
+*/
+#include "rtx_fork_cloud_shadows.h"
+
+#include "../dxvk_context.h"
+#include "../dxvk_device.h"
+#include "rtx_shader_manager.h"
+#include "rtx/pass/atmosphere/atmosphere_args.h"
+#include "rtx/pass/common_binding_indices.h"
+
+#include <cmath>
+
+namespace dxvk {
+
+  namespace {
+    // Mirrors CloudShadowMapPushArgs from cloud_shadow_map_bindings.slangh.
+    // Field order MUST match exactly; std430 / Vulkan push-constant alignment
+    // requires the same hand-padded 16-byte rows as the slang struct. Total
+    // 96 bytes, well under the 128-byte minimum guaranteed push-constant
+    // range. Keep this in lock-step with the .slangh struct -- if either is
+    // edited, both must be.
+    struct CloudShadowMapPushArgs {
+      // Row 0: vec3 + float
+      vec3  sunDirection;
+      float planetRadius;
+
+      // Row 1: 4x float
+      float cloudAltitude;
+      float cloudThickness;
+      float cloudCurvature;
+      float cloudDensity;
+
+      // Row 2: 4x float
+      float cloudCoverageMean;
+      float cloudCoverageSpread;
+      float cloudCoverageNoiseScale;
+      float cloudTypeMean;
+
+      // Row 3: 4x float
+      float cloudTypeSpread;
+      float cloudTypeNoiseScale;
+      float cloudNoiseTileKm;
+      float cloudAnvilBias;
+
+      // Row 4: 2x vec2
+      vec2  cloudWindOffset;
+      vec2  mapOriginXZ;
+
+      // Row 5: float + uint + 2x pad float
+      float    texelSize;
+      uint32_t resolution;
+      float    pad0;
+      float    pad1;
+    };
+    static_assert(sizeof(CloudShadowMapPushArgs) == 96,
+                  "CloudShadowMapPushArgs must be 96 bytes -- mirror of "
+                  "cloud_shadow_map_bindings.slangh::CloudShadowMapPushArgs");
+  }
+
+  void RtxCloudShadowMap::initialize(Rc<DxvkContext> ctx) {
+    if (m_initialized) {
+      return;
+    }
+
+    // Allocate the VkImage as a 2D R8_UNORM with both STORAGE (compute write)
+    // and SAMPLED (consumer read) usage. Resources::createImageResource adds
+    // STORAGE+SAMPLED+TRANSFER_DST internally; the extra-usage parameter is
+    // just there to inject any additional bits. We don't need any beyond the
+    // defaults, so pass 0.
+    const VkExtent3D extent = { kResolution, kResolution, 1 };
+    m_image = Resources::createImageResource(
+      ctx,
+      "Atmosphere Cloud Shadow Map",
+      extent,
+      VK_FORMAT_R8_UNORM,
+      1,                                 // numLayers
+      VK_IMAGE_TYPE_2D,
+      VK_IMAGE_VIEW_TYPE_2D,
+      0,                                 // imageCreateFlags
+      0,                                 // extraUsageFlags (defaults already cover STORAGE+SAMPLED+TRANSFER_DST)
+      VkClearColorValue{},               // clearValue (unused)
+      1                                  // mipLevels
+    );
+
+    // Linear sampler with clamp-to-border using white (R=1) border so any
+    // off-grid sample reads as "no cloud shadow", matching the legacy
+    // evalCloudGroundShadow ATMOSPHERE_AVAILABLE early-return contract.
+    // dxvk's DxvkSamplerCreateInfo uses field names mipmapLodMin/Max (not
+    // minLod/maxLod) and borderColor is VkClearColorValue (a union), not
+    // VkBorderColor (the Vulkan enum). White border = 1.0f on all four
+    // channels.
+    DxvkSamplerCreateInfo sampInfo = {};
+    sampInfo.magFilter      = VK_FILTER_LINEAR;
+    sampInfo.minFilter      = VK_FILTER_LINEAR;
+    sampInfo.mipmapMode     = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampInfo.mipmapLodBias  = 0.f;
+    sampInfo.mipmapLodMin   = 0.f;
+    sampInfo.mipmapLodMax   = 0.f;
+    sampInfo.useAnisotropy  = VK_FALSE;
+    sampInfo.maxAnisotropy  = 1.f;
+    sampInfo.addressModeU   = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    sampInfo.addressModeV   = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    sampInfo.addressModeW   = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    sampInfo.compareToDepth = VK_FALSE;
+    sampInfo.compareOp      = VK_COMPARE_OP_NEVER;
+    sampInfo.borderColor.float32[0] = 1.f;
+    sampInfo.borderColor.float32[1] = 1.f;
+    sampInfo.borderColor.float32[2] = 1.f;
+    sampInfo.borderColor.float32[3] = 1.f;
+    sampInfo.usePixelCoord  = VK_FALSE;
+
+    m_sampler = ctx->getDevice()->createSampler(sampInfo);
+    m_initialized = true;
+  }
+
+  void RtxCloudShadowMap::dispatch(Rc<DxvkContext> ctx,
+                                   const AtmosphereArgs& atmosphereArgs,
+                                   const Vector3& cameraWorldPos) {
+    if (!m_initialized) {
+      return;
+    }
+
+    // Snap camera XZ to texel boundary so a given world point lands on the
+    // same texel across consecutive frames (until the camera crosses a texel
+    // boundary, ~15.6 m at default config). The snap eliminates per-frame
+    // sample shimmer that would otherwise show up as cloud-shadow flicker.
+    const Vector2 cameraXZ(cameraWorldPos.x, cameraWorldPos.z);
+    const Vector2 snappedXZ(
+      std::floor(cameraXZ.x / kTexelSize) * kTexelSize,
+      std::floor(cameraXZ.y / kTexelSize) * kTexelSize);
+    const Vector2 mapOriginXZ(
+      snappedXZ.x - 0.5f * kExtentMeters,
+      snappedXZ.y - 0.5f * kExtentMeters);
+
+    m_anchor.mapOriginXZ = mapOriginXZ;
+    m_anchor.texelSize   = kTexelSize;
+    m_anchor.resolution  = float(kResolution);
+
+    // Bail when clouds are off -- leave the previous frame's contents alone.
+    // Consumers' (cloudShadowStrength=0 || cloudEnabled=0) short-circuit
+    // skips the read anyway.
+    if (atmosphereArgs.cloudEnabled < 0.5f) {
+      return;
+    }
+
+    // ---- Build push-constant args ----
+    CloudShadowMapPushArgs pushArgs = {};
+    pushArgs.sunDirection           = atmosphereArgs.sunDirection;
+    pushArgs.planetRadius           = atmosphereArgs.planetRadius;
+
+    pushArgs.cloudAltitude          = atmosphereArgs.cloudAltitude;
+    pushArgs.cloudThickness         = atmosphereArgs.cloudThickness;
+    pushArgs.cloudCurvature         = atmosphereArgs.cloudCurvature;
+    pushArgs.cloudDensity           = atmosphereArgs.cloudDensity;
+
+    pushArgs.cloudCoverageMean      = atmosphereArgs.cloudCoverageMean;
+    pushArgs.cloudCoverageSpread    = atmosphereArgs.cloudCoverageSpread;
+    pushArgs.cloudCoverageNoiseScale= atmosphereArgs.cloudCoverageNoiseScale;
+    pushArgs.cloudTypeMean          = atmosphereArgs.cloudTypeMean;
+
+    pushArgs.cloudTypeSpread        = atmosphereArgs.cloudTypeSpread;
+    pushArgs.cloudTypeNoiseScale    = atmosphereArgs.cloudTypeNoiseScale;
+    pushArgs.cloudNoiseTileKm       = atmosphereArgs.cloudNoiseTileKm;
+    pushArgs.cloudAnvilBias         = atmosphereArgs.cloudAnvilBias;
+
+    pushArgs.cloudWindOffset        = atmosphereArgs.cloudWindOffset;
+    pushArgs.mapOriginXZ            = vec2(mapOriginXZ.x, mapOriginXZ.y);
+
+    pushArgs.texelSize              = kTexelSize;
+    pushArgs.resolution             = kResolution;
+    pushArgs.pad0                   = 0.f;
+    pushArgs.pad1                   = 0.f;
+
+    // ---- GPU dispatch (Task 4 wiring) ----
+    //
+    // The GPU work itself -- bindShader / bindResourceView for the cloud-noise
+    // SRV / actual ctx->dispatch -- is intentionally left for Task 4 to wire
+    // from inside RtxAtmosphere::dispatchCloudShadowMap, where the cloud-noise
+    // view and sampler (m_cloudNoise3D + the noise sampler) are reachable as
+    // members. This dispatch() method's signature is fixed at
+    // (ctx, atmosphereArgs, cameraWorldPos) per the spec, which doesn't allow
+    // passing the noise resources through. Two viable Task 4 patterns:
+    //
+    //   1. Have RtxAtmosphere::dispatchCloudShadowMap register the
+    //      CloudShadowMapShader (SHADER_SOURCE + PREWARM_SHADER_PIPELINE in
+    //      the rtx_atmosphere.cpp anonymous namespace, alongside
+    //      CloudNoiseBakerShader), bind the noise SRV / sampler / output view
+    //      / push args itself, then ctx->dispatch(32, 32, 1). m_cloudShadowMap
+    //      provides the output view via getView(), the anchor via getAnchor(),
+    //      and the texel-snap math is already done by this dispatch() call.
+    //
+    //   2. Extend this method's signature to accept the noise view + sampler
+    //      (an additive change to the .h) and do the full bindShader+dispatch
+    //      here. Cleaner ownership, but requires the .h to include
+    //      DxvkImageView / DxvkSampler usage details.
+    //
+    // Pattern 1 matches dispatchCloudNoise3DBake's structure and keeps this
+    // class purely a resource-and-anchor manager. Pattern 2 is more cohesive
+    // but requires touching the spec'd signature.
+    //
+    // For this task the anchor + push-arg construction is the load-bearing
+    // contribution; Task 4 picks the wiring style and finishes the pipeline.
+    (void)pushArgs;
+  }
+
+}

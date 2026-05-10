@@ -230,6 +230,8 @@ dxvk_src = files([
   'rtx_render/rtx_fork_api_entry.cpp',
   'rtx_render/rtx_fork_atmosphere.cpp',
   'rtx_render/rtx_fork_capture.cpp',
+  'rtx_render/rtx_fork_cloud_shadows.cpp',
+  'rtx_render/rtx_fork_cloud_shadows.h',
   'rtx_render/rtx_fork_hooks.h',
   'rtx_render/rtx_fork_light.cpp',
   'rtx_render/rtx_fork_overlay.cpp',
