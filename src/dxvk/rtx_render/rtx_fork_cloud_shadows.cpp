@@ -31,50 +31,10 @@
 
 namespace dxvk {
 
-  namespace {
-    // Mirrors CloudShadowMapPushArgs from cloud_shadow_map_bindings.slangh.
-    // Field order MUST match exactly; std430 / Vulkan push-constant alignment
-    // requires the same hand-padded 16-byte rows as the slang struct. Total
-    // 96 bytes, well under the 128-byte minimum guaranteed push-constant
-    // range. Keep this in lock-step with the .slangh struct -- if either is
-    // edited, both must be.
-    struct CloudShadowMapPushArgs {
-      // Row 0: vec3 + float
-      vec3  sunDirection;
-      float planetRadius;
-
-      // Row 1: 4x float
-      float cloudAltitude;
-      float cloudThickness;
-      float cloudCurvature;
-      float cloudDensity;
-
-      // Row 2: 4x float
-      float cloudCoverageMean;
-      float cloudCoverageSpread;
-      float cloudCoverageNoiseScale;
-      float cloudTypeMean;
-
-      // Row 3: 4x float
-      float cloudTypeSpread;
-      float cloudTypeNoiseScale;
-      float cloudNoiseTileKm;
-      float cloudAnvilBias;
-
-      // Row 4: 2x vec2
-      vec2  cloudWindOffset;
-      vec2  mapOriginXZ;
-
-      // Row 5: float + uint + 2x pad float
-      float    texelSize;
-      uint32_t resolution;
-      float    pad0;
-      float    pad1;
-    };
-    static_assert(sizeof(CloudShadowMapPushArgs) == 96,
-                  "CloudShadowMapPushArgs must be 96 bytes -- mirror of "
-                  "cloud_shadow_map_bindings.slangh::CloudShadowMapPushArgs");
-  }
+  // CloudShadowMapPushArgs lives in rtx_fork_cloud_shadows.h so that
+  // rtx_atmosphere.cpp's dispatch path can construct one without duplicating
+  // the layout. See the header for the static_assert and field-by-field
+  // mirror of cloud_shadow_map_bindings.slangh.
 
   void RtxCloudShadowMap::initialize(Rc<DxvkContext> ctx) {
     if (m_initialized) {
@@ -135,6 +95,9 @@ namespace dxvk {
   void RtxCloudShadowMap::dispatch(Rc<DxvkContext> ctx,
                                    const AtmosphereArgs& atmosphereArgs,
                                    const Vector3& cameraWorldPos) {
+    (void)ctx;
+    (void)atmosphereArgs;
+
     if (!m_initialized) {
       return;
     }
@@ -155,71 +118,12 @@ namespace dxvk {
     m_anchor.texelSize   = kTexelSize;
     m_anchor.resolution  = float(kResolution);
 
-    // Bail when clouds are off -- leave the previous frame's contents alone.
-    // Consumers' (cloudShadowStrength=0 || cloudEnabled=0) short-circuit
-    // skips the read anyway.
-    if (atmosphereArgs.cloudEnabled < 0.5f) {
-      return;
-    }
-
-    // ---- Build push-constant args ----
-    CloudShadowMapPushArgs pushArgs = {};
-    pushArgs.sunDirection           = atmosphereArgs.sunDirection;
-    pushArgs.planetRadius           = atmosphereArgs.planetRadius;
-
-    pushArgs.cloudAltitude          = atmosphereArgs.cloudAltitude;
-    pushArgs.cloudThickness         = atmosphereArgs.cloudThickness;
-    pushArgs.cloudCurvature         = atmosphereArgs.cloudCurvature;
-    pushArgs.cloudDensity           = atmosphereArgs.cloudDensity;
-
-    pushArgs.cloudCoverageMean      = atmosphereArgs.cloudCoverageMean;
-    pushArgs.cloudCoverageSpread    = atmosphereArgs.cloudCoverageSpread;
-    pushArgs.cloudCoverageNoiseScale= atmosphereArgs.cloudCoverageNoiseScale;
-    pushArgs.cloudTypeMean          = atmosphereArgs.cloudTypeMean;
-
-    pushArgs.cloudTypeSpread        = atmosphereArgs.cloudTypeSpread;
-    pushArgs.cloudTypeNoiseScale    = atmosphereArgs.cloudTypeNoiseScale;
-    pushArgs.cloudNoiseTileKm       = atmosphereArgs.cloudNoiseTileKm;
-    pushArgs.cloudAnvilBias         = atmosphereArgs.cloudAnvilBias;
-
-    pushArgs.cloudWindOffset        = atmosphereArgs.cloudWindOffset;
-    pushArgs.mapOriginXZ            = vec2(mapOriginXZ.x, mapOriginXZ.y);
-
-    pushArgs.texelSize              = kTexelSize;
-    pushArgs.resolution             = kResolution;
-    pushArgs.pad0                   = 0.f;
-    pushArgs.pad1                   = 0.f;
-
-    // ---- GPU dispatch (Task 4 wiring) ----
-    //
-    // The GPU work itself -- bindShader / bindResourceView for the cloud-noise
-    // SRV / actual ctx->dispatch -- is intentionally left for Task 4 to wire
-    // from inside RtxAtmosphere::dispatchCloudShadowMap, where the cloud-noise
-    // view and sampler (m_cloudNoise3D + the noise sampler) are reachable as
-    // members. This dispatch() method's signature is fixed at
-    // (ctx, atmosphereArgs, cameraWorldPos) per the spec, which doesn't allow
-    // passing the noise resources through. Two viable Task 4 patterns:
-    //
-    //   1. Have RtxAtmosphere::dispatchCloudShadowMap register the
-    //      CloudShadowMapShader (SHADER_SOURCE + PREWARM_SHADER_PIPELINE in
-    //      the rtx_atmosphere.cpp anonymous namespace, alongside
-    //      CloudNoiseBakerShader), bind the noise SRV / sampler / output view
-    //      / push args itself, then ctx->dispatch(32, 32, 1). m_cloudShadowMap
-    //      provides the output view via getView(), the anchor via getAnchor(),
-    //      and the texel-snap math is already done by this dispatch() call.
-    //
-    //   2. Extend this method's signature to accept the noise view + sampler
-    //      (an additive change to the .h) and do the full bindShader+dispatch
-    //      here. Cleaner ownership, but requires the .h to include
-    //      DxvkImageView / DxvkSampler usage details.
-    //
-    // Pattern 1 matches dispatchCloudNoise3DBake's structure and keeps this
-    // class purely a resource-and-anchor manager. Pattern 2 is more cohesive
-    // but requires touching the spec'd signature.
-    //
-    // For this task the anchor + push-arg construction is the load-bearing
-    // contribution; Task 4 picks the wiring style and finishes the pipeline.
-    (void)pushArgs;
+    // The actual GPU dispatch (bindShader / bindResourceView for the cloud-
+    // noise SRV+sampler / pushConstants / ctx->dispatch) lives in
+    // RtxAtmosphere::dispatchCloudShadowMap, which has the cloud-noise view
+    // and sampler reachable as members. This method's contract is now just
+    // "update anchor"; the caller drives the GPU work with the resulting
+    // anchor + the push-arg layout exposed via rtx_fork_cloud_shadows.h.
   }
 
 }

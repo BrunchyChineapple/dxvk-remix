@@ -24,6 +24,7 @@
 #include "rtx_resources.h"
 #include "rtx_common_object.h"
 #include "rtx_fast_noise.h"
+#include "rtx_fork_cloud_shadows.h"
 #include "rtx/pass/atmosphere/atmosphere_args.h"
 
 namespace dxvk {
@@ -123,6 +124,27 @@ public:
   const Resources::Resource& getPreviousCloudHistory() const { return m_cloudHistory[m_cloudHistorySwap ? 0u : 1u]; }
 
   /**
+   * \brief Cloud shadow map (fork). Per-frame compute bake of a 2D ground-
+   *        plane projection of cloud transmittance along sun direction,
+   *        sampled by world (X, Z) by every raytracing pass via
+   *        evalCloudShadowAtWorld.
+   */
+  Rc<DxvkImageView>                getCloudShadowMapView()    const { return m_cloudShadowMap.getView(); }
+  Rc<DxvkSampler>                  getCloudShadowMapSampler() const { return m_cloudShadowMap.getSampler(); }
+  const RtxCloudShadowMap::Anchor& getCloudShadowMapAnchor()  const { return m_cloudShadowMap.getAnchor(); }
+
+  /**
+   * \brief Per-frame dispatch for the cloud shadow map. Updates the texel-
+   *        snapped anchor, stores the camera world position so subsequent
+   *        getAtmosphereArgs() calls see the same value the shader will,
+   *        and (if clouds are enabled and resources are valid) runs the
+   *        compute pass that fills the shadow map.
+   */
+  void dispatchCloudShadowMap(Rc<DxvkContext> ctx,
+                              const AtmosphereArgs& atmosphereArgs,
+                              const Vector3& cameraWorldPos);
+
+  /**
    * \brief Get current atmosphere parameters
    */
   AtmosphereArgs getAtmosphereArgs() const;
@@ -151,6 +173,13 @@ private:
   Resources::Resource m_skyViewLut;
   Resources::Resource m_cloudNoise3D;  // Stage C: prebaked 3D Perlin FBM
   RtxFastNoise m_fastNoise;            // EA Importance-Sampled FAST noise (cloud ray-march jitter)
+  RtxCloudShadowMap m_cloudShadowMap;  // Per-frame 2D R8 ground-plane cloud shadow projection (fork)
+
+  // Latest camera world position fed into the cloud shadow map dispatch. Used
+  // by getAtmosphereArgs() to populate AtmosphereArgs.cameraWorldPos so the
+  // CPU-side anchor (mapOriginXZ snapped from this position) and the shader-
+  // side world->UV transform stay perfectly in sync.
+  Vector3 m_lastCameraWorldPos = Vector3(0.f);
 
   // Cloud history ping-pong (fork). Screen-space RGBA16F (premultiplied
   // radiance, alpha) used by the temporal-smoothing path inside
