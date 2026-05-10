@@ -350,6 +350,18 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.padCloudC2 = 0.0f;
   }
 
+  // ----- Camera + cloud shadow map (fork) -----
+  // Safe defaults for the cloud shadow map foundation commit. Real values are
+  // populated per frame by RtxCloudShadowMap once the manager class lands
+  // (Task 3) and the per-frame dispatch hook is wired (Task 4). Texel size and
+  // resolution are set to 1.0 so that any premature sample in shader code
+  // produces a degenerate-but-defined UV (avoid NaN from a 0/0).
+  args.cameraWorldPos           = vec3(0.0f, 0.0f, 0.0f);
+  args.padCSM0                  = 0.0f;
+  args.cloudShadowMapOriginXZ   = vec2(0.0f, 0.0f);
+  args.cloudShadowMapTexelSize  = 1.0f;
+  args.cloudShadowMapResolution = 1.0f;
+
   return args;
 }
 

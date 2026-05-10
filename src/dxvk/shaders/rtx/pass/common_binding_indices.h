@@ -66,6 +66,15 @@
 // the raw cloud value.
 #define BINDING_ATMOSPHERE_CLOUD_HISTORY_PREV    206
 #define BINDING_ATMOSPHERE_CLOUD_HISTORY_CURR    207
+// Cloud shadow map (fork): top-down R8 unorm light-transmittance map sampled
+// by world-space lookups during ground / fog / volumetric integration. The
+// SAMPLED-side slot lives in the common raytracing binding set; consumers
+// gate access on CLOUD_SHADOW_MAP_AVAILABLE. The OUTPUT slot is local to the
+// RtxCloudShadowMap compute dispatch (separate binding-set), but the value
+// lives here for centralized collision avoidance.
+#define BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP         208
+#define BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP_SAMPLER 209
+#define BINDING_CLOUD_SHADOW_MAP_OUTPUT             210
 
 #define COMMON_MAX_BINDING                       BINDING_SAMPLER_READBACK_BUFFER
 #define COMMON_NUM_BINDINGS                      (COMMON_MAX_BINDING + 1)
@@ -117,6 +126,8 @@
   SAMPLER(BINDING_ATMOSPHERE_CLOUD_NOISE_SAMPLER)                   \
   TEXTURE2DARRAY(BINDING_ATMOSPHERE_FAST_NOISE)                     \
   TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_HISTORY_PREV)                  \
-  RW_TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_HISTORY_CURR)
+  RW_TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_HISTORY_CURR)               \
+  TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP)                    \
+  SAMPLER(BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP_SAMPLER)
 
 #endif

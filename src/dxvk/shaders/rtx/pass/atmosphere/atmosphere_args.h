@@ -175,4 +175,17 @@ struct AtmosphereArgs {
   float padCloudC0;
   float padCloudC1;
   float padCloudC2;
+
+  // ----- Camera + cloud shadow map (fork) -----
+  // Camera world position (Y-up). Plumbed for cloud-shadow-map sampling and
+  // any future spatially-varying atmosphere term.
+  vec3 cameraWorldPos;
+  float padCSM0;  // 16-byte alignment
+
+  // Cloud shadow map anchor: bottom-left world XZ, texel size, resolution.
+  // Set per frame by RtxCloudShadowMap from the snapped camera XZ.
+  // Sample-time UV: (worldPos.xz - mapOriginXZ) / (texelSize * resolution)
+  vec2  cloudShadowMapOriginXZ;
+  float cloudShadowMapTexelSize;
+  float cloudShadowMapResolution;
 };

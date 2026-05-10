@@ -953,6 +953,9 @@ initializer list and can't be lifted into a separate TU.
 - **Inline tweak** at `(file scope)` (atmosphere binding index defines, ~lines 59-66) and `COMMON_RAYTRACING_BINDINGS` macro (~lines 108-110) — cloud history temporal smoothing (2026-05-09).
   *Adds `BINDING_ATMOSPHERE_CLOUD_HISTORY_PREV = 206` (`TEXTURE2D`) and `BINDING_ATMOSPHERE_CLOUD_HISTORY_CURR = 207` (`RW_TEXTURE2D`). RGBA16F screen-space ping-pong owned by `RtxAtmosphere` and bound in `bindAtmosphereLuts`. Consumed by `evalSkyRadiance` in `atmosphere_sky.slangh` when called with `enableCloudTemporalSmoothing=true` (currently only the primary view ray in `geometry_resolver.slangh` miss path). Smooths per-frame FAST-noise jitter variance to give DLSS a stable signal.*
 
+- **Inline tweak** at `(file scope)` (atmosphere binding index defines, ~lines 69-77) and `COMMON_RAYTRACING_BINDINGS` macro (~lines 122-123) — cloud shadow map foundation (2026-05-09).
+  *Adds `BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP = 208` (`TEXTURE2D`), `BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP_SAMPLER = 209` (`SAMPLER`), and `BINDING_CLOUD_SHADOW_MAP_OUTPUT = 210` (write-side, separate dispatch binding-set, slot reserved here for collision avoidance). Foundation commit only — no consumers yet; resource and dispatch land in subsequent cloud-shadow-map workstream tasks (RtxCloudShadowMap manager + per-frame compute hook).*
+
 - **Inline tweak** at `COMMON_BINDING_DEFINITION_LIST` macro (~line 91) — 1-line addition for sampler readback buffer.
   *Adds `RW_STRUCTURED_BUFFER(BINDING_SAMPLER_READBACK_BUFFER)` to the common binding list (upstream omission fixed).*
 
