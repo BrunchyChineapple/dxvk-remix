@@ -30,7 +30,6 @@
 #include <rtx_shaders/multiscattering_lut.h>
 #include <rtx_shaders/sky_view_lut.h>
 #include <rtx_shaders/rtx_cloud_noise_baker.h>
-#include <rtx_shaders/cloud_shadow_map.h>
 #include <cmath>
 #include <fstream>
 #include <chrono>
@@ -83,24 +82,6 @@ namespace dxvk {
       END_PARAMETER()
     };
     PREWARM_SHADER_PIPELINE(CloudNoiseBakerShader);
-
-    // Per-frame bake of the 2D R8 cloud shadow map (fork). Bindings mirror
-    // cloud_shadow_map_bindings.slangh: a single RW output, the shared 3D
-    // cloud-noise SRV + sampler, and a push-constant block. No CONSTANT_BUFFER
-    // -- the shader synthesizes a partial AtmosphereArgs from the push args,
-    // keeping the descriptor surface tiny (see the bindings header for why).
-    class CloudShadowMapShader : public ManagedShader {
-      SHADER_SOURCE(CloudShadowMapShader, VK_SHADER_STAGE_COMPUTE_BIT, cloud_shadow_map)
-
-      PUSH_CONSTANTS(CloudShadowMapPushArgs)
-
-      BEGIN_PARAMETER()
-        TEXTURE3D(BINDING_ATMOSPHERE_CLOUD_NOISE_3D)
-        SAMPLER(BINDING_ATMOSPHERE_CLOUD_NOISE_SAMPLER)
-        RW_TEXTURE2D(BINDING_CLOUD_SHADOW_MAP_OUTPUT)
-      END_PARAMETER()
-    };
-    PREWARM_SHADER_PIPELINE(CloudShadowMapShader);
   }
 
 RtxAtmosphere::RtxAtmosphere(DxvkDevice* device)
@@ -124,11 +105,6 @@ void RtxAtmosphere::initialize(Rc<DxvkContext> ctx) {
 
   createLutResources(ctx);
   dispatchCloudNoise3DBake(ctx);
-  // Allocate the cloud shadow map texture + sampler. Idempotent; safe to call
-  // even though createLutResources already ran m_fastNoise.initialize. Per-
-  // frame GPU work runs from dispatchCloudShadowMap (driven by the atmosphere
-  // hook), not here.
-  m_cloudShadowMap.initialize(ctx);
   m_initialized = true;
   m_lutsNeedRecompute = true;
 }
@@ -373,23 +349,6 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.padCloudC1 = 0.0f;
     args.padCloudC2 = 0.0f;
   }
-
-  // ----- Camera + cloud shadow map (fork) -----
-  // cameraWorldPos: stored by dispatchCloudShadowMap each frame from the
-  // active main camera so the shader-side world->UV transform stays in lock-
-  // step with the CPU-side anchor (origin XZ snapped from this exact value).
-  // anchor fields: read directly from RtxCloudShadowMap. Until the first
-  // dispatch lands, the manager defaults to texelSize=1, resolution=1 so any
-  // premature sample produces a degenerate-but-defined UV (avoids 0/0 NaN).
-  args.cameraWorldPos = vec3(m_lastCameraWorldPos.x,
-                             m_lastCameraWorldPos.y,
-                             m_lastCameraWorldPos.z);
-  args.padCSM0        = 0.0f;
-  const auto& anchor              = m_cloudShadowMap.getAnchor();
-  args.cloudShadowMapOriginXZ     = vec2(anchor.mapOriginXZ.x,
-                                         anchor.mapOriginXZ.y);
-  args.cloudShadowMapTexelSize    = anchor.texelSize;
-  args.cloudShadowMapResolution   = anchor.resolution;
 
   return args;
 }
@@ -644,101 +603,6 @@ void RtxAtmosphere::dispatchCloudNoise3DBake(Rc<DxvkContext> ctx) {
   // Dispatch: kCloudNoise3DSize / 8 = 32 groups per axis (shader uses [numthreads(8,8,8)])
   const uint32_t groupCount = kCloudNoise3DSize / 8u;
   ctx->dispatch(groupCount, groupCount, groupCount);
-}
-
-void RtxAtmosphere::dispatchCloudShadowMap(Rc<DxvkContext> ctx,
-                                            const AtmosphereArgs& atmosphereArgs,
-                                            const Vector3& cameraWorldPos) {
-  // Always update the manager (anchor snap) and the stored camera position
-  // first, even when clouds are off, so getAtmosphereArgs() returns a sane
-  // anchor that matches the camera position the shader is going to see.
-  m_cloudShadowMap.dispatch(ctx, atmosphereArgs, cameraWorldPos);
-  m_lastCameraWorldPos = cameraWorldPos;
-
-  // Skip GPU work when clouds are disabled or the resources haven't been
-  // initialized yet. The previous frame's contents stay in the texture --
-  // consumers' (cloudShadowStrength=0 || cloudEnabled=0) short-circuit
-  // skips the read anyway.
-  if (atmosphereArgs.cloudEnabled < 0.5f) {
-    return;
-  }
-  if (m_cloudShadowMap.getView() == nullptr || !m_cloudNoise3D.isValid()) {
-    return;
-  }
-
-  ScopedGpuProfileZone(ctx, "Atmosphere Cloud Shadow Map");
-
-  // Build the 96-byte push-arg block. Mirrors cloud_shadow_map_bindings.slangh
-  // exactly; the static_assert in rtx_fork_cloud_shadows.h keeps the size in
-  // sync. The anchor was just refreshed by the m_cloudShadowMap.dispatch call
-  // above, so we read it directly here rather than recomputing the snap.
-  const auto& anchor = m_cloudShadowMap.getAnchor();
-  CloudShadowMapPushArgs pushArgs = {};
-  pushArgs.sunDirection            = atmosphereArgs.sunDirection;
-  pushArgs.planetRadius            = atmosphereArgs.planetRadius;
-
-  pushArgs.cloudAltitude           = atmosphereArgs.cloudAltitude;
-  pushArgs.cloudThickness          = atmosphereArgs.cloudThickness;
-  pushArgs.cloudCurvature          = atmosphereArgs.cloudCurvature;
-  pushArgs.cloudDensity            = atmosphereArgs.cloudDensity;
-
-  pushArgs.cloudCoverageMean       = atmosphereArgs.cloudCoverageMean;
-  pushArgs.cloudCoverageSpread     = atmosphereArgs.cloudCoverageSpread;
-  pushArgs.cloudCoverageNoiseScale = atmosphereArgs.cloudCoverageNoiseScale;
-  pushArgs.cloudTypeMean           = atmosphereArgs.cloudTypeMean;
-
-  pushArgs.cloudTypeSpread         = atmosphereArgs.cloudTypeSpread;
-  pushArgs.cloudTypeNoiseScale     = atmosphereArgs.cloudTypeNoiseScale;
-  pushArgs.cloudNoiseTileKm        = atmosphereArgs.cloudNoiseTileKm;
-  pushArgs.cloudAnvilBias          = atmosphereArgs.cloudAnvilBias;
-
-  pushArgs.cloudWindOffset         = atmosphereArgs.cloudWindOffset;
-  pushArgs.mapOriginXZ             = vec2(anchor.mapOriginXZ.x,
-                                          anchor.mapOriginXZ.y);
-
-  // Camera world XZ (meters). The compute shader uses this to convert per-
-  // texel groundPos from world meters to camera-relative km before doing
-  // the cloud-march planet math (which lives in km natively).
-  pushArgs.cameraWorldXZ           = vec2(cameraWorldPos.x, cameraWorldPos.z);
-  pushArgs.texelSize               = anchor.texelSize;
-  pushArgs.resolution              = static_cast<uint32_t>(anchor.resolution);
-
-  // Cloud-noise sampler: linear / repeat. Same setup as bindAtmosphereLuts'
-  // BINDING_ATMOSPHERE_CLOUD_NOISE_SAMPLER block; the device caches identical
-  // sampler creates so the per-bind cost is essentially nil.
-  DxvkSamplerCreateInfo noiseSamplerInfo = {};
-  noiseSamplerInfo.magFilter    = VK_FILTER_LINEAR;
-  noiseSamplerInfo.minFilter    = VK_FILTER_LINEAR;
-  noiseSamplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-  noiseSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  noiseSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  noiseSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  Rc<DxvkSampler> noiseSampler  = m_device->createSampler(noiseSamplerInfo);
-
-  ctx->setPushConstantBank(DxvkPushConstantBank::RTX);
-  ctx->pushConstants(0, sizeof(pushArgs), &pushArgs);
-
-  ctx->bindResourceView   (BINDING_ATMOSPHERE_CLOUD_NOISE_3D,      m_cloudNoise3D.view, nullptr);
-  ctx->bindResourceSampler(BINDING_ATMOSPHERE_CLOUD_NOISE_SAMPLER, noiseSampler);
-  ctx->bindResourceView   (BINDING_CLOUD_SHADOW_MAP_OUTPUT,        m_cloudShadowMap.getView(), nullptr);
-
-  // Track resources for the per-frame command list.
-  ctx->getCommandList()->trackResource<DxvkAccess::Read >(m_cloudNoise3D.image);
-  ctx->getCommandList()->trackResource<DxvkAccess::Write>(m_cloudShadowMap.getView()->image());
-
-  ctx->bindShader(VK_SHADER_STAGE_COMPUTE_BIT, CloudShadowMapShader::getShader());
-
-  // 16x16 threadgroup per [numthreads] in cloud_shadow_map.comp.slang;
-  // resolution / 16 = 32 groups per axis at the default 512-cubed map.
-  const uint32_t numGroups = RtxCloudShadowMap::kResolution / 16u;
-  ctx->dispatch(numGroups, numGroups, 1u);
-
-  // Make the new shadow-map content visible to subsequent ray-tracing reads
-  // in this command list. Without the barrier the consumer raygens may run
-  // concurrently with the shadow-map write and read stale or partial texels.
-  ctx->emitMemoryBarrier(0,
-    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,         VK_ACCESS_SHADER_WRITE_BIT,
-    VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_SHADER_READ_BIT);
 }
 
 void RtxAtmosphere::onFrameAdvanceForCloudHistory(uint32_t currentFrameId) {

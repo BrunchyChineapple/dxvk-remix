@@ -953,9 +953,6 @@ initializer list and can't be lifted into a separate TU.
 - **Inline tweak** at `(file scope)` (atmosphere binding index defines, ~lines 59-66) and `COMMON_RAYTRACING_BINDINGS` macro (~lines 108-110) — cloud history temporal smoothing (2026-05-09).
   *Adds `BINDING_ATMOSPHERE_CLOUD_HISTORY_PREV = 206` (`TEXTURE2D`) and `BINDING_ATMOSPHERE_CLOUD_HISTORY_CURR = 207` (`RW_TEXTURE2D`). RGBA16F screen-space ping-pong owned by `RtxAtmosphere` and bound in `bindAtmosphereLuts`. Consumed by `evalSkyRadiance` in `atmosphere_sky.slangh` when called with `enableCloudTemporalSmoothing=true` (currently only the primary view ray in `geometry_resolver.slangh` miss path). Smooths per-frame FAST-noise jitter variance to give DLSS a stable signal.*
 
-- **Inline tweak** at `(file scope)` (atmosphere binding index defines, ~lines 69-77) and `COMMON_RAYTRACING_BINDINGS` macro (~lines 122-123) — cloud shadow map foundation (2026-05-09).
-  *Adds `BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP = 208` (`TEXTURE2D`), `BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP_SAMPLER = 209` (`SAMPLER`), and `BINDING_CLOUD_SHADOW_MAP_OUTPUT = 210` (write-side, separate dispatch binding-set, slot reserved here for collision avoidance). Foundation commit only — no consumers yet; resource and dispatch land in subsequent cloud-shadow-map workstream tasks (RtxCloudShadowMap manager + per-frame compute hook).*
-
 - **Inline tweak** at `COMMON_BINDING_DEFINITION_LIST` macro (~line 91) — 1-line addition for sampler readback buffer.
   *Adds `RW_STRUCTURED_BUFFER(BINDING_SAMPLER_READBACK_BUFFER)` to the common binding list (upstream omission fixed).*
 
@@ -972,9 +969,6 @@ initializer list and can't be lifted into a separate TU.
 
 - **Inline tweak** at `(file scope)` (atmosphere FAST-noise texture declaration) (~line 138) — 2-line addition (2026-05-09).
   *Declares `AtmosphereFastNoise` as a `Texture2DArray<float2>` resource bound at `BINDING_ATMOSPHERE_FAST_NOISE` (slot 205). Used by the `fastJitter()` helper in `atmosphere_common.slangh` for cloud ray-march sample-distribution jitter.*
-
-- **Inline tweak** at `(file scope)` (cloud shadow map texture + sampler declarations) (~lines 147-160) — ~12-line addition (2026-05-09).
-  *Declares `AtmosphereCloudShadowMap` (`Texture2D<float>` at slot 208) and `AtmosphereCloudShadowMapSampler` (`SamplerState` at slot 209) for raytracing dispatches that pull in `common_bindings.slangh` rather than `atmosphere_bindings.slangh`. Mirrors the cloud-history dual-declaration pattern. Sampled by `evalCloudShadowAtWorld` in `atmosphere_common.slangh` (replaces the legacy `evalCloudGroundShadow` uniform-multiplier hack). Also `#define`s `CLOUD_SHADOW_MAP_AVAILABLE` next to the declaration so any TU including this file (i.e. with the texture/sampler in scope) automatically also has the gating macro `evalCloudShadowAtWorld` checks.*
 
 ---
 

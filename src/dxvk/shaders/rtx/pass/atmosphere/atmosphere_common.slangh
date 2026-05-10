@@ -611,51 +611,51 @@ bool intersectCloudLayer(vec3 rayDir, AtmosphereArgs args, out float t, out vec3
   return true;
 }
 
-// Evaluate cloud shadow at a world position by sampling the per-frame
-// 2D ground-plane shadow map. Returns a multiplier in [0, 1] -- 1 means
-// no cloud blocking, 0 means fully overcast and shadowed.
-//
-// Position-aware: replaces the legacy evalCloudGroundShadow() that
-// sampled a single point at world origin and applied the result as a
-// uniform scene-wide multiplier (the bug behind the blue-sky-flicker
-// observed when cloudShadowStrength > 0). Now each call site (surface
-// NEE, volume integrator, sun-disk transmittance) gets its own
-// position-varying value, eliminating the uniform-multiplier shape that
-// triggered the downstream temporal-accumulator divergence.
-//
-// Spec: docs/superpowers/specs/2026-05-09-cloud-shadow-map-design.md
-float evalCloudShadowAtWorld(vec3 worldPos, AtmosphereArgs args) {
-#ifndef CLOUD_SHADOW_MAP_AVAILABLE
-  // Atmosphere LUT compute paths (transmittance / multiscattering / sky-view)
-  // pull in atmosphere_common.slangh purely for the math helpers and don't
-  // bind the cloud shadow map SRV/sampler. CLOUD_SHADOW_MAP_AVAILABLE is
-  // defined in common_bindings.slangh and atmosphere_bindings.slangh next to
-  // the AtmosphereCloudShadowMap declaration, so any RT pass that includes
-  // either gets the live sampler path; the LUT shaders fall through here and
-  // return 1.0 (no cloud occlusion) -- correct, because the LUTs encode pure
-  // atmospheric scattering with no clouds.
-  //
-  // Note: the prior gate on ATMOSPHERE_AVAILABLE was too restrictive --
-  // integrate_direct.slang / integrate_indirect.slang include
-  // common_bindings.slangh (which DOES declare AtmosphereCloudShadowMap) but
-  // do NOT define ATMOSPHERE_AVAILABLE, so the surface-NEE path that lights
-  // terrain was hitting the 1.0 fallback even though the texture was bound.
+// Compute cloud shadowing for light arriving from the sun direction. Returns
+// a multiplier in [0, 1] — 1 means no cloud blocking, 0 means fully overcast
+// and shadowed. Used by getTransmittanceToSun to darken ground/atmosphere
+// lighting under heavy cloud cover.
+float evalCloudGroundShadow(vec3 sunDir, AtmosphereArgs args) {
+#ifndef ATMOSPHERE_AVAILABLE
+  // The cloud noise SRV/sampler globals (AtmosphereCloudNoise3D /
+  // AtmosphereCloudNoise3DSampler) are declared only in shaders that include a
+  // bindings file (common_bindings.slangh or atmosphere_bindings.slangh); the
+  // atmosphere LUT compute shaders pull in atmosphere_common.slangh without
+  // those bindings to access shared math helpers, so they need a binding-free
+  // fallback. Returning 1.0 here means no cloud occlusion in those passes,
+  // which is correct — the LUTs encode pure atmospheric scattering.
   return 1.0f;
 #else
-  if (args.cloudEnabled < 0.5f || args.cloudShadowStrength < 0.01f) {
-    return 1.0f;
+  if (args.cloudEnabled < 0.5f || args.cloudCoverageMean < 0.01f) return 1.0f;
+  if (args.cloudShadowStrength < 0.01f) return 1.0f;
+
+  float t;
+  vec3 hitPos;
+  if (!intersectCloudLayer(sunDir, args, t, hitPos)) {
+    return 1.0f;  // Sun direction doesn't pierce the cloud layer (below horizon etc.)
   }
 
-  // (worldPos.xz - originXZ) / extentMeters -> uv in [0, 1] for points
-  // inside the grid, outside [0, 1] for points beyond. The clamp-to-
-  // border-1.0 sampler turns out-of-range UVs into "no shadow".
-  vec2 uv = (worldPos.xz - args.cloudShadowMapOriginXZ)
-          / (args.cloudShadowMapTexelSize * args.cloudShadowMapResolution);
+  // Compute local type and coverage at the cloud-hit point. Independent
+  // smoothNoise2D evals with separate seeds so the two fields are
+  // spatially decorrelated (Nubis weather-texture style).
+  vec2 hitXZ = vec2(hitPos.x, hitPos.z);
+  float typeNoise     = smoothNoise2D(hitXZ * args.cloudTypeNoiseScale,     200.0f);
+  float coverageNoise = smoothNoise2D(hitXZ * args.cloudCoverageNoiseScale, 250.0f);
+  float typeLocal     = saturate(args.cloudTypeMean     + (typeNoise     - 0.5f) * args.cloudTypeSpread);
+  float coverageLocal = saturate(args.cloudCoverageMean + (coverageNoise - 0.5f) * args.cloudCoverageSpread);
 
-  float shadow = AtmosphereCloudShadowMap.SampleLevel(
-                   AtmosphereCloudShadowMapSampler, uv, 0.0f).r;
+  // Sample at the type-aware peak height of the bell, not mid-slab. The
+  // cloudTypeProfile plateau midpoint slides as plateau widens with type:
+  // riseEnd = 0.10 + 0.10*type, fallStart = 0.20 + 0.55*type
+  // → midpoint = 0.15 + 0.325*type (stratus 0.15, stratocumulus 0.31, cumulus 0.475).
+  // Sampling at any hf in the plateau gives profile=1.0; midpoint is the
+  // most conservative choice given the noise sampling jitter at the call site.
+  float hfPeak = 0.15f + 0.325f * typeLocal;
+  float density = sampleCloudDensityTextured(hitPos, hfPeak, typeLocal, coverageLocal, args,
+                                              AtmosphereCloudNoise3D, AtmosphereCloudNoise3DSampler);
+  float transmittance = exp(-density * args.cloudDensity * 2.0f);
 
-  return mix(1.0f, shadow, args.cloudShadowStrength);
+  return mix(1.0f, transmittance, args.cloudShadowStrength);
 #endif
 }
 
@@ -716,7 +716,7 @@ vec3 getAtmosphericTransmittanceForDir(vec3 dirYUp, AtmosphereArgs args) {
 // surface/volume sampling so that overcast skies darken ground shading.
 vec3 getTransmittanceToSun(vec3 worldPos, AtmosphereArgs args, bool isZUp = false) {
   vec3 transmittance = getAtmosphericTransmittanceForDir(args.sunDirection, args);
-  transmittance *= evalCloudShadowAtWorld(worldPos, args);
+  transmittance *= evalCloudGroundShadow(normalize(args.sunDirection), args);
   return transmittance;
 }
 
@@ -1052,7 +1052,7 @@ vec3 computeGroundReflectionAnalytical(float altitude, float sunZenithCosAngle, 
   // A. Sun -> Ground Transmittance
   // We can reuse the high-quality analytical transmittance function
   // Ground is at altitude 0
-  vec3 T_sun_to_ground = getTransmittanceToSun(args.cameraWorldPos, args, false);
+  vec3 T_sun_to_ground = getTransmittanceToSun(vec3(0.0f), args, false);
 
   // B. Ground -> Sample Transmittance
   // Calculate optical depth analytically for the vertical-ish path from ground to sample
@@ -1132,7 +1132,7 @@ float2 fastJitter(uint2 pixelCoord, uint frameIdx) {
   // those bindings to access shared math helpers, so they need a binding-free
   // fallback. Returning 0.5 here is a neutral mid-stratum sample — these
   // passes don't actually invoke fastJitter at runtime, but the function
-  // body must still parse cleanly. Mirrors the evalCloudShadowAtWorld pattern.
+  // body must still parse cleanly. Mirrors the evalCloudGroundShadow pattern.
   return float2(0.5f, 0.5f);
 #else
   uint3 coord = uint3(pixelCoord & 127u, frameIdx & 31u);

@@ -16,8 +16,6 @@
 #include "rtx_fork_hooks.h"
 #include "rtx_context.h"
 #include "rtx_atmosphere.h"
-#include "rtx_camera.h"                          // RtCamera::getPosition (cloud shadow map driver)
-#include "rtx_scene_manager.h"                   // SceneManager::getCamera (cloud shadow map driver)
 #include "rtx_options.h"
 #include "rtx/pass/raytrace_args.h"
 #include "rtx/pass/common_binding_indices.h"
@@ -160,33 +158,6 @@ namespace fork_hooks {
       }
       if (cloudCurr.isValid()) {
         ctx.bindResourceView(BINDING_ATMOSPHERE_CLOUD_HISTORY_CURR, cloudCurr.view, nullptr);
-      }
-    }
-
-    // Cloud shadow map (fork). Per-frame compute bake of a 2D ground-plane
-    // projection of cloud transmittance along sun direction. Consumers (every
-    // raytracing pass that pulls in atmosphere_bindings.slangh) sample by
-    // world (X, Z) via evalCloudShadowAtWorld in atmosphere_common.slangh,
-    // replacing the legacy uniform-sun-dimmer hack.
-    //
-    // The dispatch must happen BEFORE the per-pass binds so the shadow map
-    // contents are visible to any ray-tracing read in this command list (the
-    // dispatchCloudShadowMap implementation emits a compute-write -> ray-
-    // tracing-read barrier on the way out). The atmosphere args we pass in
-    // are the same args getAtmosphereArgs() returns, since updateAtmosphere-
-    // Constants already populated them earlier in the frame.
-    {
-      const Vector3 cameraWorldPos = ctx.getSceneManager().getCamera().getPosition();
-      const AtmosphereArgs atmosphereArgs = ctx.m_atmosphere->getAtmosphereArgs();
-      ctx.m_atmosphere->dispatchCloudShadowMap(&ctx, atmosphereArgs, cameraWorldPos);
-
-      auto csmView    = ctx.m_atmosphere->getCloudShadowMapView();
-      auto csmSampler = ctx.m_atmosphere->getCloudShadowMapSampler();
-      if (csmView != nullptr) {
-        ctx.bindResourceView(BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP, csmView, nullptr);
-      }
-      if (csmSampler != nullptr) {
-        ctx.bindResourceSampler(BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP_SAMPLER, csmSampler);
       }
     }
 
