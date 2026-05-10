@@ -150,8 +150,18 @@ RWTexture2D<float4> AtmosphereCloudHistoryCurr;
 // evalCloudShadowAtWorld in atmosphere_common.slangh. Declared here in
 // common_bindings.slangh so every raytracing pass that pulls in this
 // file can resolve the SRV/sampler symbols even when ATMOSPHERE_AVAILABLE
-// is defined (the gbuffer rayquery / miss / integrator paths see them
-// via this file, not via atmosphere_bindings.slangh).
+// is not defined (the surface-NEE path in integrate_direct.slang /
+// integrate_indirect.slang sees them via this file, not via
+// atmosphere_bindings.slangh).
+//
+// CLOUD_SHADOW_MAP_AVAILABLE gates evalCloudShadowAtWorld's actual sampling
+// code on the symbol's visibility. Define it next to the declaration so
+// every TU that includes this file (i.e. has the texture / sampler in
+// scope) automatically also has the macro defined -- the LUT compute
+// shaders include atmosphere_common.slangh without common_bindings.slangh,
+// so they fall through to the 1.0 fallback inside the function.
+#define CLOUD_SHADOW_MAP_AVAILABLE
+
 layout(binding = BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP)
 Texture2D<float> AtmosphereCloudShadowMap;
 

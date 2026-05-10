@@ -973,8 +973,8 @@ initializer list and can't be lifted into a separate TU.
 - **Inline tweak** at `(file scope)` (atmosphere FAST-noise texture declaration) (~line 138) — 2-line addition (2026-05-09).
   *Declares `AtmosphereFastNoise` as a `Texture2DArray<float2>` resource bound at `BINDING_ATMOSPHERE_FAST_NOISE` (slot 205). Used by the `fastJitter()` helper in `atmosphere_common.slangh` for cloud ray-march sample-distribution jitter.*
 
-- **Inline tweak** at `(file scope)` (cloud shadow map texture + sampler declarations) (~lines 147-156) — 10-line addition (2026-05-09).
-  *Declares `AtmosphereCloudShadowMap` (`Texture2D<float>` at slot 208) and `AtmosphereCloudShadowMapSampler` (`SamplerState` at slot 209) for raytracing dispatches that pull in `common_bindings.slangh` rather than `atmosphere_bindings.slangh`. Mirrors the cloud-history dual-declaration pattern. Sampled by `evalCloudShadowAtWorld` in `atmosphere_common.slangh` (replaces the legacy `evalCloudGroundShadow` uniform-multiplier hack).*
+- **Inline tweak** at `(file scope)` (cloud shadow map texture + sampler declarations) (~lines 147-160) — ~12-line addition (2026-05-09).
+  *Declares `AtmosphereCloudShadowMap` (`Texture2D<float>` at slot 208) and `AtmosphereCloudShadowMapSampler` (`SamplerState` at slot 209) for raytracing dispatches that pull in `common_bindings.slangh` rather than `atmosphere_bindings.slangh`. Mirrors the cloud-history dual-declaration pattern. Sampled by `evalCloudShadowAtWorld` in `atmosphere_common.slangh` (replaces the legacy `evalCloudGroundShadow` uniform-multiplier hack). Also `#define`s `CLOUD_SHADOW_MAP_AVAILABLE` next to the declaration so any TU including this file (i.e. with the texture/sampler in scope) automatically also has the gating macro `evalCloudShadowAtWorld` checks.*
 
 ---
 

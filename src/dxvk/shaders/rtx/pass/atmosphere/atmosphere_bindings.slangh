@@ -57,8 +57,15 @@ RWTexture2D<float4> AtmosphereCloudHistoryCurr;
 // evalCloudShadowAtWorld in atmosphere_common.slangh -- replaces the
 // legacy uniform-sun-dimmer hack that sampled at world origin only.
 // Declared unconditionally because the slot lives in
-// COMMON_RAYTRACING_BINDINGS, matching the cloud-history binding pattern;
-// ATMOSPHERE_AVAILABLE gating happens at the consumer-side helper, not here.
+// COMMON_RAYTRACING_BINDINGS, matching the cloud-history binding pattern.
+//
+// CLOUD_SHADOW_MAP_AVAILABLE gates evalCloudShadowAtWorld's actual sampling
+// code on the symbol's visibility -- mirrors the same define in
+// common_bindings.slangh. LUT compute shaders that include
+// atmosphere_common.slangh without either bindings file fall through to
+// the 1.0 fallback inside the function.
+#define CLOUD_SHADOW_MAP_AVAILABLE
+
 layout(binding = BINDING_ATMOSPHERE_CLOUD_SHADOW_MAP)
 Texture2D<float> AtmosphereCloudShadowMap;
 

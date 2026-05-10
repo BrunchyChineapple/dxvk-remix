@@ -625,11 +625,21 @@ bool intersectCloudLayer(vec3 rayDir, AtmosphereArgs args, out float t, out vec3
 //
 // Spec: docs/superpowers/specs/2026-05-09-cloud-shadow-map-design.md
 float evalCloudShadowAtWorld(vec3 worldPos, AtmosphereArgs args) {
-#ifndef ATMOSPHERE_AVAILABLE
-  // Atmosphere LUT compute paths don't include atmosphere_bindings.slangh
-  // and so don't have AtmosphereCloudShadowMap visible. Return a defined
-  // fallback that means "no cloud occlusion in this path" -- correct,
-  // because the LUTs encode pure atmospheric scattering with no clouds.
+#ifndef CLOUD_SHADOW_MAP_AVAILABLE
+  // Atmosphere LUT compute paths (transmittance / multiscattering / sky-view)
+  // pull in atmosphere_common.slangh purely for the math helpers and don't
+  // bind the cloud shadow map SRV/sampler. CLOUD_SHADOW_MAP_AVAILABLE is
+  // defined in common_bindings.slangh and atmosphere_bindings.slangh next to
+  // the AtmosphereCloudShadowMap declaration, so any RT pass that includes
+  // either gets the live sampler path; the LUT shaders fall through here and
+  // return 1.0 (no cloud occlusion) -- correct, because the LUTs encode pure
+  // atmospheric scattering with no clouds.
+  //
+  // Note: the prior gate on ATMOSPHERE_AVAILABLE was too restrictive --
+  // integrate_direct.slang / integrate_indirect.slang include
+  // common_bindings.slangh (which DOES declare AtmosphereCloudShadowMap) but
+  // do NOT define ATMOSPHERE_AVAILABLE, so the surface-NEE path that lights
+  // terrain was hitting the 1.0 fallback even though the texture was bound.
   return 1.0f;
 #else
   if (args.cloudEnabled < 0.5f || args.cloudShadowStrength < 0.01f) {
