@@ -883,9 +883,6 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args, uint2 pixelCoord, uint frameI
     }
   }
 
-  // Horizon fade applied uniformly per ray
-  float horizonFade = smoothstep(0.02f, 0.15f, viewDir.y);
-
   // Ray-march. Per-pixel FAST-noise jitter on the fractional step offset breaks
   // the visible band-rings into a blue-noise pattern that DLSS / temporal
   // averaging converges cleanly. Channel x is the view march; channel y is
@@ -922,7 +919,6 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args, uint2 pixelCoord, uint frameI
     float hf = computeCloudHeightFraction(samplePos, args);
     float density = sampleCloudDensityTextured(samplePos, hf, typeLocal, coverageLocal, args,
                                                 AtmosphereCloudNoise3D, AtmosphereCloudNoise3DSampler);
-    density *= horizonFade;
     if (density < 0.001f) {
       cacheValid = false;
       continue;
