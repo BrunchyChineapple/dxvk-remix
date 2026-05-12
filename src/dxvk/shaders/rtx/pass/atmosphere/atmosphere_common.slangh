@@ -33,9 +33,15 @@
 //     cloud lighting approach.
 //   - Schneider, A.; Vos, N. "The Real-time Volumetric Cloudscapes of
 //     Horizon Zero Dawn." SIGGRAPH 2015 Advances in Real-Time Rendering.
-//     https://www.guerrilla-games.com/media/News/Files/The-Real-time-Volumetric-Cloudscapes-of-Horizon-Zero-Dawn.pdf
+//     https://www.guerrilla-games.com/read/the-real-time-volumetric-cloudscapes-of-horizon-zero-dawn
 //     Used for: Nubis cloud density-via-noise raymarching approach and the
 //     single-scatter sun-ray lighting pattern that underlies evalClouds().
+//   - Schneider, A. "Nubis Cubed: Methods (and Madness) to Model and Render
+//     Immersive Real-Time Voxel-Based Clouds." SIGGRAPH 2023 Advances in
+//     Real-Time Rendering.
+//     https://advances.realtimerendering.com/s2023/Nubis%20Cubed%20(Advances%202023).pdf
+//     Used for: additional cloud-system techniques layered onto the 2015
+//     baseline.
 //   - Jensen, H.W.; Durand, F.; Stark, M.M.; Premozse, S.; Dorsey, J.;
 //     Shirley, P. "A Physically-Based Night Sky Model."
 //     SIGGRAPH 2001 Proceedings. https://graphics.stanford.edu/papers/nightsky/
