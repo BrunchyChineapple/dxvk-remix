@@ -225,4 +225,15 @@ struct AtmosphereArgs {
 
   vec3  cloudRenderUpYUp;          // Pre-scaled by tan(halfFovY)
   float pad_cr2;
+
+  // ----- Nubis Cubed sky-miss composite gate (fork — 2026-05-12, C5) -----
+  // When 1, the primary-ray branch in evalSkyRadiance reads the prerendered
+  // AtmosphereCloudRender RT instead of calling analytical evalClouds. PSR,
+  // indirect, and reflection rays continue to use evalClouds regardless of
+  // this gate — the cloud RT is at primary-ray pixel coords, sampling it for
+  // a different ray direction at the same pixel would return the wrong cloud.
+  uint  cloudRenderRTEnable;       // 0 or 1
+  uint  pad_c5_0;                  // 16-byte alignment
+  uint  pad_c5_1;
+  uint  pad_c5_2;
 };

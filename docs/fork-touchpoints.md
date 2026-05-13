@@ -1227,3 +1227,34 @@ composite gate lands in C5.
   *Adds a `TEXTURE2D(DEBUG_VIEW_BINDING_CLOUD_RENDER_RT_INPUT)` line in the debug-view shader's BEGIN_PARAMETER block, binds the cloud render RT each dispatch via `fork_hooks::getCloudRenderRT`, and adds a label + multi-line description block to the debug-view selector list ("Atmosphere: Cloud Render RT (Nubis Cubed)").*
 
 ---
+
+## Commit C5 — Sky-miss composite of cloud RT (gated, default-off) (fork — 2026-05-12)
+
+The C5 commit wires the Nubis Cubed cloud render RT (from C4) as the
+primary-ray sky-miss cloud source, gated by a default-off RTX_OPTION
+(`cloudRenderRTEnable`). With the gate off, rendering is bit-identical
+to pre-C5 — analytical `evalClouds` continues to run at every site.
+With the gate on, primary-ray sky-miss reads from the prerendered RT
+while indirect, PSR, and reflection rays continue to use analytical
+clouds (the RT is at primary-ray pixel coordinates, sampling it for a
+non-primary ray direction would return the wrong cloud).
+
+- **`src/dxvk/rtx_render/rtx_options.h`** — fork-owned addition.
+  *Adds `RTX_OPTION("rtx.atmosphere", bool, cloudRenderRTEnable, false, …)` in the `rtx.atmosphere` cluster directly after the C4 Nubis Cubed lighting options. Default false; flipped on in C7 after visual gate.*
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_args.h`** — fork-owned addition.
+  *Adds `uint cloudRenderRTEnable` plus three `uint` pads at the end of `AtmosphereArgs` for 16-byte alignment. Sits after the C4 cloud-render camera basis block; no existing field offsets change.*
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_sky.slangh`** — fork-owned addition.
+  *In `evalSkyRadiance`: adds a trailing default-false `bool isPrimaryRay` parameter, and a primary-ray-only branch that reads `AtmosphereCloudRender.Load(int3(pixelCoord, 0))` and inverts its transmittance alpha into opacity (`vec4(rgb, 1 - cloudRT.a)`) so the downstream temporal-smoothing / mix composite operates uniformly on either source. Gate is `args.cloudRenderRTEnable != 0u && isPrimaryRay`. Falls through to analytical `evalClouds` when the gate is off OR the caller is non-primary.*
+
+- **`src/dxvk/shaders/rtx/algorithm/geometry_resolver.slangh`** — fork-touchpoint inline tweak.
+  *Primary sky-miss call site (`cb.skyMode == 1` block, formerly ending at the `historyResolution` argument) now passes `/*isPrimaryRay=*/ true` as the trailing argument to `evalSkyRadiance`. The PSR call site (line ~2553) keeps its 5-argument call shape and gets `isPrimaryRay=false` via default. ~1 LOC.*
+
+- **`src/dxvk/rtx_render/rtx_atmosphere.cpp`** — fork-owned addition.
+  *In `getAtmosphereArgs()` (right after the C4 camera-basis populate block): sets `args.cloudRenderRTEnable` from `RtxOptions::cloudRenderRTEnable()` and zeros the three pad slots. ~5 LOC.*
+
+- **`src/dxvk/rtx_render/rtx_fork_atmosphere.cpp`** — fork-owned addition.
+  *Adds a "Master gate (C5)" separator + `RemixGui::Checkbox("Composite cloud RT at sky-miss", …)` widget at the end of the "Nubis Cubed Lighting" ImGui collapsing header (just below the MS SDF Depth slider). Wired to `RtxOptions::cloudRenderRTEnableObject()`; tooltip explains the primary-ray-only behavior. ~8 LOC.*
+
+---

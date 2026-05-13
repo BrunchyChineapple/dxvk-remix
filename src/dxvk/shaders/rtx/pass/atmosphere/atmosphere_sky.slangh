@@ -1046,6 +1046,17 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args, uint2 pixelCoord, uint frameI
 // PSR / indirect / NRC paths must pass false — they call evalSkyRadiance with
 // non-primary directions, so the screen-space history at their pixelCoord
 // would be visually wrong (would smear primary cloud into reflections).
+//
+// `isPrimaryRay` (fork — 2026-05-12, C5) — when true AND
+// args.cloudRenderRTEnable != 0, the cloud layer is read from the prerendered
+// AtmosphereCloudRender RT (written each frame by cloud_render.comp.slang
+// with Nubis Cubed 2023 lighting) instead of calling analytical evalClouds.
+// The RT is at primary-ray pixel coordinates — sampling it from a PSR /
+// indirect / reflection ray would return the wrong cloud (different view
+// direction at the same pixel), so non-primary call sites pass false and
+// fall through to evalClouds. The temporal-smoothing path applies on top of
+// either source uniformly because both produce the same (rgb-pre-step,
+// opacity) shape; see the alpha-convention note at the branch.
 vec3 evalSkyRadiance(
   vec3 viewDir,
   AtmosphereArgs args,
@@ -1054,7 +1065,8 @@ vec3 evalSkyRadiance(
   bool isZUp = false,
   bool enableCloudTemporalSmoothing = false,
   vec2 motionVectorPixels = vec2(0.0f, 0.0f),
-  uint2 historyResolution = uint2(0u, 0u)
+  uint2 historyResolution = uint2(0u, 0u),
+  bool isPrimaryRay = false
 ) {
   // Transform view direction to Y-up space if needed
   vec3 viewDirYUp = isZUp ? vec3(viewDir.x, viewDir.z, viewDir.y) : viewDir;
@@ -1149,7 +1161,22 @@ vec3 evalSkyRadiance(
 
   // Clouds render on top of everything (atmosphere + stars + moons). They
   // occlude whatever is behind them based on their alpha.
-  vec4 cloudLayer = evalClouds(viewDirYUp, args, pixelCoord, frameIdx);
+  //
+  // C5 (fork — 2026-05-12): primary-ray-only branch reads the prerendered
+  // AtmosphereCloudRender RT instead of calling analytical evalClouds. The RT
+  // stores vec4(premultiplied_rgb, view_transmittance) — alpha is
+  // TRANSMITTANCE. evalClouds returns vec4(rgb, opacity) — alpha is OPACITY.
+  // We invert the RT alpha (opacity = 1 - transmittance) so the downstream
+  // temporal-smoothing / mix composite operations apply uniformly to either
+  // source: both paths are accumulated as `radiance += stepRadiance * T_so_far`,
+  // so the rgb-channel semantics match once the alpha convention is reconciled.
+  vec4 cloudLayer;
+  if (args.cloudRenderRTEnable != 0u && isPrimaryRay) {
+    vec4 cloudRT = AtmosphereCloudRender.Load(int3(pixelCoord, 0));
+    cloudLayer = vec4(cloudRT.rgb, 1.0f - cloudRT.a);
+  } else {
+    cloudLayer = evalClouds(viewDirYUp, args, pixelCoord, frameIdx);
+  }
 
   // Temporal cloud smoothing (fork). Per-frame FAST-noise jitter on the cloud
   // ray-march (commits 148e3fa5 / d327f3d8) creates brightness variance that

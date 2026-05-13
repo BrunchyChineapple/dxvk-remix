@@ -470,6 +470,17 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.pad_cr2 = 0.0f;
   }
 
+  // Nubis Cubed sky-miss composite gate (fork — 2026-05-12, C5).
+  // Drives the primary-ray-only branch in evalSkyRadiance that swaps
+  // analytical evalClouds for the prerendered AtmosphereCloudRender RT.
+  // Default false until visual confirmation; flipped to true in C7.
+  {
+    args.cloudRenderRTEnable = RtxOptions::cloudRenderRTEnable() ? 1u : 0u;
+    args.pad_c5_0 = 0u;
+    args.pad_c5_1 = 0u;
+    args.pad_c5_2 = 0u;
+  }
+
   return args;
 }
 

@@ -768,6 +768,22 @@ namespace fork_hooks {
           RemixGui::SetTooltipToLastWidgetOnHover("sigma_ms deep inside cloud (saturated). Default 0.05.");
           RemixGui::DragFloat("MS SDF Depth (m)", &RtxOptions::cloudMsSdfDepthObject(), 1.0f, 1.0f, 1024.0f, "%.0f", sliderFlags);
           RemixGui::SetTooltipToLastWidgetOnHover("SDF depth in meters at which sigma_ms saturates to deep value. Default 128.");
+
+          // Sky-miss composite master gate (fork — 2026-05-12, C5).
+          // When checked, the primary-ray sky-miss path reads from
+          // AtmosphereCloudRender (Nubis Cubed) instead of calling analytical
+          // evalClouds. Indirect/PSR/reflection rays continue to use the
+          // analytical path regardless. Default off — flip after in-game
+          // visual confirmation.
+          ImGui::Separator();
+          ImGui::TextDisabled("Master gate (C5)");
+          RemixGui::Checkbox("Composite cloud RT at sky-miss",
+                             &RtxOptions::cloudRenderRTEnableObject());
+          RemixGui::SetTooltipToLastWidgetOnHover(
+              "When on, the primary-ray sky-miss path reads from the prerendered "
+              "AtmosphereCloudRender RT (Nubis Cubed) instead of calling analytical "
+              "evalClouds. PSR / indirect / reflection rays continue to use "
+              "analytical clouds regardless. Default off until visual confirmation.");
         }
 
         ImGui::Separator();
