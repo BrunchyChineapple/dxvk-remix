@@ -160,6 +160,15 @@ SamplerState LinearSampler;
 #include "rtx/utility/noise.slangh"
 #include "rtx/external/NRD.slangh"
 
+// Fork: atmosphere helpers for cloud-diagnostic debug views (enum 875).
+// Pulled in WITHOUT defining ATMOSPHERE_AVAILABLE — the helpers we need
+// (sampleCloudGroundShadow_OptionB_explicit) take their D_sun texture +
+// sampler as explicit parameters, so they don't rely on common-bindings
+// globals. The ATMOSPHERE_AVAILABLE-gated sampleDSun / sampleDAmbient
+// fall back to safe no-op stubs in this translation unit, which is
+// correct — the enum-875 case uses the explicit-parameter variant.
+#include "rtx/pass/atmosphere/atmosphere_common.slangh"
+
 float4 sampleTexture(Texture2D<float4> texture, ivec2 threadId)
 {
   const float2 uv = (threadId + 0.5f) / float2(cb.debugViewResolution);
@@ -404,6 +413,47 @@ vec4 loadInput(inout RNG randomState, ivec2 threadId)
       const float opticalDepth = DebugViewCloudDAmbient.SampleLevel(LinearSampler, uvw, 0).r;
       const float intensity = saturate(opticalDepth * 0.2f);
       value = vec4(intensity, intensity, intensity, 1.0f);
+    }
+    break;
+  case DEBUG_VIEW_CLOUD_GROUND_SHADOW_PRODSHAPE:
+    {
+      // Production-call-shape diagnostic for sampleCloudGroundShadow_OptionB.
+      // This case calls the helper with the EXACT per-pixel call shape that
+      // the upcoming NEE wiring (Task 6) will use: worldPos from the
+      // G-buffer hit position, sunDir from atmosphereArgs.sunDirection,
+      // and cb.isZUp != 0u for the coordinate-frame flag. The D_sun
+      // texture and its sampler are plumbing parameters (the same pointer
+      // for every pixel) — they are passed explicitly because the debug
+      // view binds D_sun at a different slot from the production global,
+      // but the call shape that varies per pixel (worldPos, sunDir, args,
+      // isZUp) is identical to what production will use.
+      //
+      // Visual gate: compare against DEBUG_VIEW_CLOUD_D_SUN (enum 873) at
+      // the same scene. If the cumulus patterns spatially agree, the
+      // isZUp handling is correct. If they disagree, isZUp is mismatched
+      // between the debug call path and the production call path — fix
+      // before wiring NEE.
+
+      // G-buffer worldPos at this pixel — same source the production NEE
+      // entry points use (minimalSurfaceInteraction.position).
+      GBufferMemoryMinimalSurfaceInteraction memory;
+      memory.encodedWorldPositionWorldTriangleTBN =
+          PreviousWorldPosition_WorldTriangleNormal[threadId];
+      memory.positionError = 0;
+      const MinimalSurfaceInteraction si = minimalSurfaceInteractionCreate(memory);
+      const vec3 worldPos = si.position;
+
+      // Sun direction sourced from the atmosphere CB — same as production.
+      const vec3 sunDir = normalize(cb.atmosphereArgs.sunDirection);
+
+      // CRITICAL: match production NEE call shape exactly.
+      //   (worldPos, sunDir, atmosphereArgs, isZUp != 0u)
+      // Any divergence here defeats the purpose of the diagnostic.
+      const float shadow = sampleCloudGroundShadow_OptionB_explicit(
+          worldPos, sunDir, cb.atmosphereArgs, cb.isZUp != 0u,
+          DebugViewCloudDSun, LinearSampler);
+
+      value = vec4(shadow, shadow, shadow, 1.0f);
     }
     break;
   case DEBUG_VIEW_NRC_UPDATE_RADIANCE:

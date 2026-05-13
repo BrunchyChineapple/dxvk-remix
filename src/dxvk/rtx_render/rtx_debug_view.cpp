@@ -156,6 +156,18 @@ namespace dxvk {
                                 "voxel grid (mid-Z slice). Expected: mostly uniform brightness\n"
                                 "(zenith path is mostly empty air above the slab); some banding\n"
                                 "where the slab is dense. Scaling: intensity = saturate(opticalDepth * 0.2)."},
+        {DEBUG_VIEW_CLOUD_GROUND_SHADOW_PRODSHAPE, "Atmosphere: Cloud Ground Shadow (Production Call Shape)",
+                                "Fork diagnostic - CRITICAL GATE for the Nubis Cubed cloud-on-terrain\n"
+                                "shadow workstream. Paints sampleCloudGroundShadow_OptionB output at\n"
+                                "each G-buffer pixel using the EXACT per-pixel call shape\n"
+                                "(worldPos, sunDir, args, isZUp) the upcoming NEE wiring will use.\n"
+                                "Grayscale: white = sun unoccluded by clouds, black = full shadow.\n"
+                                "Visual gate: stand on flat terrain at sunset and compare with the\n"
+                                "Cloud D_sun Voxel Grid view (873). Cumulus shadow patches in this\n"
+                                "view should spatially match the D_sun cumulus pattern. If they\n"
+                                "disagree on cumulus position, isZUp handling is mismatched between\n"
+                                "the debug-view call path and the production NEE call path - fix\n"
+                                "before wiring NEE in Task 6."},
         {DEBUG_VIEW_CASCADE_LEVEL, "Terrain: Cascade Level"},
 
         {DEBUG_VIEW_VIRTUAL_HIT_DISTANCE, "Virtual Hit Distance"},
@@ -1201,6 +1213,13 @@ namespace dxvk {
     debugViewArgs.debugKnob = m_debugKnob;
     debugViewArgs.camera = rtOutput.m_raytraceArgs.camera;
     debugViewArgs.volumeArgs = rtOutput.m_raytraceArgs.volumeArgs;
+    // Fork: mirror atmosphere + isZUp from RaytraceArgs so cloud
+    // diagnostic debug views (DEBUG_VIEW_CLOUD_GROUND_SHADOW_PRODSHAPE)
+    // can call production atmosphere helpers with the production
+    // call shape. These fields are populated unconditionally - debug
+    // views that don't need them simply ignore the values.
+    debugViewArgs.atmosphereArgs = rtOutput.m_raytraceArgs.atmosphereArgs;
+    debugViewArgs.isZUp = rtOutput.m_raytraceArgs.isZUp;
 
     if (displayType() == DebugViewDisplayType::Standard) {
       debugViewArgs.pseudoColorMode = pseudoColorMode();

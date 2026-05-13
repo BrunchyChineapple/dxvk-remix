@@ -1791,3 +1791,146 @@ float sampleDAmbient(vec3 worldPosKm, AtmosphereArgs args, bool isZUp) {
 #endif
 }
 
+// ===========================================================================
+// Cloud-on-terrain shadow via D_sun grid sampling
+// (Nubis Cubed 2023, fork — 2026-05-12)
+//
+// Marks the "production NEE call shape" — must match exactly what
+// sampleAtmosphereSunLight / sampleAtmosphereSunLightVolume will use when
+// the integrator wiring lands. The 'production call shape' is
+// (worldPos, sunDir, args, isZUp): the inputs that vary per pixel / per
+// frame. The D_sun texture and its sampler are fixed plumbing arguments
+// (the same global pointer for every pixel within a dispatch), so they
+// are explicit function parameters rather than read from a CB global.
+// This lets the same math live in two callable forms:
+//
+//   1) sampleCloudGroundShadow_OptionB       — production form, reads the
+//      common-bindings AtmosphereCloudDSun global. Used by future
+//      sampleAtmosphereSunLight wiring.
+//   2) sampleCloudGroundShadow_OptionB_explicit — debug-view form, takes
+//      Texture3D + SamplerState as parameters. Used by enum 875
+//      diagnostic which lives in debug_view.comp.slang (different
+//      binding layout, no ATMOSPHERE_AVAILABLE).
+//
+// Both call the same internal _impl so the math is byte-identical.
+// CRITICAL: isZUp swap must happen identically in both. Coordinate-frame
+// parity between the debug-view path and the production integrator path
+// is the entire point of the enum-875 visual gate (see Task 3 of the
+// 2026-05-12 cloud lighting plan).
+//
+// Returns multiplicative sun transmittance through the cloud layer
+// (1.0 = unoccluded, 0.0 = fully shadowed).
+// ===========================================================================
+
+// Slab-bottom intersection: given a Y-up ray going upward from a surface
+// at or below the slab, returns the distance to the cloud slab bottom plane
+// (at altitude args.cloudAltitude). For a surface already inside the slab
+// (worldPos.y >= cloudAltitude), returns 0 — the surface IS the slab-entry
+// for the upward sun ray. For rays that cannot reach the slab (sun below
+// horizon, or surface above slab), returns false.
+//
+// Note: the bake-side intersectCloudSlabRay returns the slab TOP exit,
+// which is the correct integration end for the optical-depth bake. This
+// helper returns the slab BOTTOM entry, which is where D_sun should be
+// sampled to read the full slab's optical depth above the surface.
+bool intersectCloudSlabBottomFromBelow(vec3 originYUp, vec3 dirYUp,
+                                        AtmosphereArgs args,
+                                        out float tEntry) {
+  tEntry = 0.0f;
+  const float slabBottom = args.cloudAltitude;
+  // Surface is already inside (or above the bottom of) the slab — the
+  // surface position itself is the slab-entry for D_sun sampling.
+  if (originYUp.y >= slabBottom) {
+    return true;
+  }
+  // Sun ray must point upward to reach the slab.
+  if (dirYUp.y <= 0.001f) {
+    return false;
+  }
+  tEntry = (slabBottom - originYUp.y) / dirYUp.y;
+  return tEntry > 0.0f;
+}
+
+// Internal: shared math kernel. The texture/sampler are explicit so this
+// can be invoked from both the global-binding production path and the
+// debug-view path that uses its own binding layout. Both wrappers below
+// pass the production call shape (worldPos, sunDir, args, isZUp).
+float sampleCloudGroundShadow_OptionB_impl(vec3 worldPos, vec3 sunDir,
+                                            AtmosphereArgs args, bool isZUp,
+                                            Texture3D<float> dSunTex,
+                                            SamplerState dSunSampler) {
+  // Y-up conversion (worldPos AND sunDir both swapped). MUST be identical
+  // to the swap done at the production NEE call sites; the enum-875 gate
+  // exists specifically to catch any divergence here.
+  const vec3 worldPosYUp = isZUp ? vec3(worldPos.x, worldPos.z, worldPos.y) : worldPos;
+  const vec3 sunDirYUp   = isZUp ? vec3(sunDir.x,   sunDir.z,   sunDir.y)   : sunDir;
+
+  // If the surface is above the slab, no cloud above it — full sun.
+  const float slabTopY = args.cloudAltitude + args.cloudVoxelGridVerticalKm;
+  if (worldPosYUp.y > slabTopY) {
+    return 1.0f;
+  }
+
+  // Project upward along the sun ray to the slab-bottom plane. If the sun
+  // is below horizon or otherwise unreachable, conservatively return full
+  // sun (the existing per-direction sun visibility test elsewhere already
+  // gates lighting in that case).
+  float tToEntry;
+  if (!intersectCloudSlabBottomFromBelow(worldPosYUp, sunDirYUp, args, tToEntry)) {
+    return 1.0f;
+  }
+  const vec3 cloudEntryPosYUp = worldPosYUp + tToEntry * sunDirYUp;
+
+  // Sample D_sun at the slab-entry voxel. cloudVoxelWorldToUVW expects
+  // the position in the SAME frame the bake side used (camera-centered,
+  // Y-up). Passing isZUp=false because we've already done the swap.
+  const vec3 uvw = cloudVoxelWorldToUVW(cloudEntryPosYUp, args, /*isZUp=*/false);
+  const float opticalDepth = dSunTex.SampleLevel(dSunSampler, uvw, 0).r;
+
+  // Beer-Lambert to transmittance. Task 6 will introduce a
+  // cloudShadowMarchStrength tuning knob; until then a unit multiplier
+  // keeps the integral physical-ish (transmittance = exp(-OD * density)).
+  // The diagnostic's only requirement is that the spatial structure of
+  // the result reflects the D_sun grid — the absolute magnitude is not
+  // load-bearing for the enum-875 visual gate.
+  const float transmittance = exp(-opticalDepth * args.cloudDensity);
+
+  // Mix with the existing strength knob so the helper degrades to 1.0
+  // (no shadow) when the user has shadow strength at zero.
+  return mix(1.0f, transmittance, args.cloudShadowStrength);
+}
+
+// Production wrapper: reads AtmosphereCloudDSun + AtmosphereCloudNoise3DSampler
+// from the common-bindings globals. Will be wired into NEE entry points by
+// Task 6 of the 2026-05-12 cloud-lighting plan. Gated by ATMOSPHERE_AVAILABLE
+// because the underlying globals are declared only in pass scopes that pull
+// in common_bindings.slangh; matches the sampleDSun / sampleDAmbient gate
+// idiom.
+float sampleCloudGroundShadow_OptionB(vec3 worldPos, vec3 sunDir,
+                                       AtmosphereArgs args, bool isZUp) {
+#ifndef ATMOSPHERE_AVAILABLE
+  // Binding-free fallback: no cloud shadowing in passes without the cloud
+  // voxel grid bound. Matches the existing sampleDSun / evalCloudGroundShadow
+  // ATMOSPHERE_AVAILABLE-gated stub pattern.
+  return 1.0f;
+#else
+  return sampleCloudGroundShadow_OptionB_impl(
+      worldPos, sunDir, args, isZUp,
+      AtmosphereCloudDSun, AtmosphereCloudNoise3DSampler);
+#endif
+}
+
+// Debug-view wrapper: takes the D_sun texture + sampler as explicit
+// parameters so it can be called from translation units (e.g.
+// debug_view.comp.slang) that bind the D_sun grid at a debug-view-local
+// slot rather than via the common-bindings global. Same per-pixel call
+// shape as the production wrapper — this is what the enum-875
+// production-call-shape diagnostic uses.
+float sampleCloudGroundShadow_OptionB_explicit(vec3 worldPos, vec3 sunDir,
+                                                AtmosphereArgs args, bool isZUp,
+                                                Texture3D<float> dSunTex,
+                                                SamplerState dSunSampler) {
+  return sampleCloudGroundShadow_OptionB_impl(
+      worldPos, sunDir, args, isZUp, dSunTex, dSunSampler);
+}
+
