@@ -31,6 +31,8 @@
 #include <rtx_shaders/sky_view_lut.h>
 #include <rtx_shaders/rtx_cloud_noise_baker.h>
 #include <rtx_shaders/cloud_sky_transmittance_lut.h>
+#include <rtx_shaders/cloud_sun_density_grid.h>
+#include <rtx_shaders/cloud_ambient_density_grid.h>
 #include <cmath>
 #include <fstream>
 #include <chrono>
@@ -95,6 +97,35 @@ namespace dxvk {
       END_PARAMETER()
     };
     PREWARM_SHADER_PIPELINE(CloudSkyTransmittanceLutShader);
+
+    // Fork (Nubis Cubed 2023, 2026-05-12): round-robin bake of the cloud
+    // voxel grids. 256x256x32 R16F precomputed optical depth along the sun
+    // direction (D_sun) and zenith (D_ambient). No consumer in this commit;
+    // the Nubis Cubed cloud-lighting rewrite (C4-C6) reads these via
+    // sampleDSun / sampleDAmbient.
+    class CloudSunDensityGridShader : public ManagedShader {
+      SHADER_SOURCE(CloudSunDensityGridShader, VK_SHADER_STAGE_COMPUTE_BIT, cloud_sun_density_grid)
+
+      BEGIN_PARAMETER()
+        CONSTANT_BUFFER(0)
+        RW_TEXTURE3D(1)
+        TEXTURE3D(2)
+        SAMPLER(3)
+      END_PARAMETER()
+    };
+    PREWARM_SHADER_PIPELINE(CloudSunDensityGridShader);
+
+    class CloudAmbientDensityGridShader : public ManagedShader {
+      SHADER_SOURCE(CloudAmbientDensityGridShader, VK_SHADER_STAGE_COMPUTE_BIT, cloud_ambient_density_grid)
+
+      BEGIN_PARAMETER()
+        CONSTANT_BUFFER(0)
+        RW_TEXTURE3D(1)
+        TEXTURE3D(2)
+        SAMPLER(3)
+      END_PARAMETER()
+    };
+    PREWARM_SHADER_PIPELINE(CloudAmbientDensityGridShader);
   }
 
 RtxAtmosphere::RtxAtmosphere(DxvkDevice* device)
@@ -365,6 +396,23 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.cloudSkyAmbientStrength = RtxOptions::cloudSkyAmbientStrength();
     args.cloudSkyAmbientCloudOcclusionStrength = RtxOptions::cloudSkyAmbientCloudOcclusionStrength();
     args.padCloudC2 = 0.0f;
+
+    // Cloud voxel grid extent (Nubis Cubed 2023, fork — 2026-05-12).
+    // Horizontal: 12 km camera-centered tile-wrap (cumulus-cell-friendly span
+    // matching the cloudNoiseTileKm convention). Vertical: track cloudThickness
+    // so the grid spans the slab vertically. cloudThickness is already in km
+    // per atmosphere_args.h:149.
+    // The Dirty flags are informational fields with no consumer in this
+    // commit; left zero here to avoid spurious LUT-recompute triggers via
+    // the memcmp in needsLutRecompute().
+    args.cloudVoxelGridExtentKm    = 12.0f;
+    args.cloudVoxelGridVerticalKm  = args.cloudThickness;
+    args.cloudVoxelGridFrameOffset = 0.0f;
+    args.cloudVoxelGridSunDirty    = 0u;
+    args.cloudVoxelGridAmbientDirty = 0u;
+    args.pad_cloudVoxel0 = 0.0f;
+    args.pad_cloudVoxel1 = 0.0f;
+    args.pad_cloudVoxel2 = 0.0f;
   }
 
   return args;
@@ -467,6 +515,43 @@ void RtxAtmosphere::createLutResources(Rc<DxvkContext> ctx) {
     1 // mipLevels
   );
 
+  // Fork (Nubis Cubed 2023, 2026-05-12): cloud D_sun voxel grid (3D R16F,
+  // 256x256x32). Camera-centered tile-wrapped precomputation of summed
+  // optical depth along the sun direction. Round-robin baked every 8 frames
+  // at offset 0. No consumer in this commit.
+  VkExtent3D cloudVoxelGridExtent = {
+    kCloudVoxelGridX, kCloudVoxelGridY, kCloudVoxelGridZ
+  };
+  m_cloudDSun = Resources::createImageResource(
+    ctx,
+    "Atmosphere Cloud D_sun Voxel Grid",
+    cloudVoxelGridExtent,
+    VK_FORMAT_R16_SFLOAT,
+    1, // numLayers
+    VK_IMAGE_TYPE_3D,
+    VK_IMAGE_VIEW_TYPE_3D,
+    0, // imageCreateFlags
+    VK_IMAGE_USAGE_STORAGE_BIT, // extraUsageFlags (SAMPLED implicit)
+    VkClearColorValue{}, // clearValue
+    1 // mipLevels
+  );
+
+  // Fork (Nubis Cubed 2023, 2026-05-12): cloud D_ambient voxel grid (3D R16F,
+  // 256x256x32). Round-robin baked every 8 frames at offset 4.
+  m_cloudDAmbient = Resources::createImageResource(
+    ctx,
+    "Atmosphere Cloud D_ambient Voxel Grid",
+    cloudVoxelGridExtent,
+    VK_FORMAT_R16_SFLOAT,
+    1, // numLayers
+    VK_IMAGE_TYPE_3D,
+    VK_IMAGE_VIEW_TYPE_3D,
+    0, // imageCreateFlags
+    VK_IMAGE_USAGE_STORAGE_BIT, // extraUsageFlags
+    VkClearColorValue{}, // clearValue
+    1 // mipLevels
+  );
+
   // EA Importance-Sampled FAST noise (128x128x32 RG8 Texture2DArray) used for
   // cloud ray-march jitter. One-shot upload of the embedded byte data; no-op on
   // subsequent calls.
@@ -512,6 +597,34 @@ void RtxAtmosphere::computeLuts(Rc<DxvkContext> ctx) {
     VK_ACCESS_SHADER_READ_BIT);
 
   dispatchCloudSkyTransmittanceLut(ctx);
+
+  // Round-robin cloud voxel grid bake (Nubis Cubed 2023, fork — 2026-05-12).
+  // Each grid is rebaked every 8 frames at offset 0 (D_sun) / 4 (D_ambient).
+  // Round-robin amortizes the bake cost across frames and ensures the two
+  // dispatches never race for compute units in the same frame.
+  //
+  // computeLuts() runs every frame in practice because getAtmosphereArgs()
+  // varies frame-to-frame via timeSeconds + cloudWindOffset, so the
+  // memcmp-based needsLutRecompute() returns true continuously. The
+  // (frameId % 8) gate therefore samples the actual device frame counter.
+  const uint32_t cloudFrameId =
+      static_cast<uint32_t>(m_device->getCurrentFrameId());
+  if ((cloudFrameId % 8u) == 0u) {
+    ctx->emitMemoryBarrier(0,
+      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+      VK_ACCESS_SHADER_WRITE_BIT,
+      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+      VK_ACCESS_SHADER_READ_BIT);
+    dispatchCloudSunDensityGrid(ctx);
+  }
+  if ((cloudFrameId % 8u) == 4u) {
+    ctx->emitMemoryBarrier(0,
+      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+      VK_ACCESS_SHADER_WRITE_BIT,
+      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+      VK_ACCESS_SHADER_READ_BIT);
+    dispatchCloudAmbientDensityGrid(ctx);
+  }
 
   // Final barrier: Ensure all LUTs are written before use in ray tracing
   ctx->emitMemoryBarrier(0,
@@ -651,6 +764,78 @@ void RtxAtmosphere::dispatchCloudSkyTransmittanceLut(Rc<DxvkContext> ctx) {
   ctx->dispatch(groupsX, groupsY, 1);
 }
 
+void RtxAtmosphere::dispatchCloudSunDensityGrid(Rc<DxvkContext> ctx) {
+  ScopedGpuProfileZone(ctx, "Atmosphere Cloud D_sun Bake");
+
+  // Update atmosphere args buffer (mirrors the other dispatch sites — each
+  // bake refreshes the buffer to be safe against reordering refactors).
+  AtmosphereArgs args = getAtmosphereArgs();
+  ctx->updateBuffer(m_constantsBuffer, 0, sizeof(AtmosphereArgs), &args);
+  ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_constantsBuffer);
+
+  // Bind resources: ConstantBuffer<AtmosphereArgs> at 0, RWTexture3D<float>
+  // at 1, Texture3D<float> cloud noise volume at 2, linear/REPEAT sampler at 3.
+  ctx->bindResourceBuffer(0, DxvkBufferSlice(m_constantsBuffer, 0, m_constantsBuffer->info().size));
+  ctx->bindResourceView(1, m_cloudDSun.view, nullptr);
+  ctx->bindResourceView(2, m_cloudNoise3D.view, nullptr);
+
+  // Linear/REPEAT sampler — matches the frac()-tile-wrap convention used by
+  // sampleCloudDensityForShadow's texcoord math and by the voxel grid's
+  // own UVW mapping in cloudVoxelWorldToUVW.
+  DxvkSamplerCreateInfo samplerInfo = {};
+  samplerInfo.magFilter    = VK_FILTER_LINEAR;
+  samplerInfo.minFilter    = VK_FILTER_LINEAR;
+  samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  Rc<DxvkSampler> cloudSampler = m_device->createSampler(samplerInfo);
+  ctx->bindResourceSampler(3, cloudSampler);
+
+  ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_cloudNoise3D.image);
+  ctx->getCommandList()->trackResource<DxvkAccess::Write>(m_cloudDSun.image);
+
+  ctx->bindShader(VK_SHADER_STAGE_COMPUTE_BIT, CloudSunDensityGridShader::getShader());
+
+  // Shader declares [numthreads(8, 8, 4)].
+  const uint32_t groupsX = (kCloudVoxelGridX + 7u) / 8u;
+  const uint32_t groupsY = (kCloudVoxelGridY + 7u) / 8u;
+  const uint32_t groupsZ = (kCloudVoxelGridZ + 3u) / 4u;
+  ctx->dispatch(groupsX, groupsY, groupsZ);
+}
+
+void RtxAtmosphere::dispatchCloudAmbientDensityGrid(Rc<DxvkContext> ctx) {
+  ScopedGpuProfileZone(ctx, "Atmosphere Cloud D_ambient Bake");
+
+  AtmosphereArgs args = getAtmosphereArgs();
+  ctx->updateBuffer(m_constantsBuffer, 0, sizeof(AtmosphereArgs), &args);
+  ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_constantsBuffer);
+
+  ctx->bindResourceBuffer(0, DxvkBufferSlice(m_constantsBuffer, 0, m_constantsBuffer->info().size));
+  ctx->bindResourceView(1, m_cloudDAmbient.view, nullptr);
+  ctx->bindResourceView(2, m_cloudNoise3D.view, nullptr);
+
+  DxvkSamplerCreateInfo samplerInfo = {};
+  samplerInfo.magFilter    = VK_FILTER_LINEAR;
+  samplerInfo.minFilter    = VK_FILTER_LINEAR;
+  samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  Rc<DxvkSampler> cloudSampler = m_device->createSampler(samplerInfo);
+  ctx->bindResourceSampler(3, cloudSampler);
+
+  ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_cloudNoise3D.image);
+  ctx->getCommandList()->trackResource<DxvkAccess::Write>(m_cloudDAmbient.image);
+
+  ctx->bindShader(VK_SHADER_STAGE_COMPUTE_BIT, CloudAmbientDensityGridShader::getShader());
+
+  const uint32_t groupsX = (kCloudVoxelGridX + 7u) / 8u;
+  const uint32_t groupsY = (kCloudVoxelGridY + 7u) / 8u;
+  const uint32_t groupsZ = (kCloudVoxelGridZ + 3u) / 4u;
+  ctx->dispatch(groupsX, groupsY, groupsZ);
+}
+
 void RtxAtmosphere::dispatchCloudNoise3DBake(Rc<DxvkContext> ctx) {
   ScopedGpuProfileZone(ctx, "Atmosphere Cloud Noise 3D Bake");
 
@@ -752,6 +937,12 @@ void RtxAtmosphere::bindResources(Rc<DxvkContext> ctx, VkPipelineBindPoint pipel
   }
   if (m_cloudSkyTransmittanceLut.isValid()) {
     ctx->bindResourceView(BINDING_ATMOSPHERE_CLOUD_SKY_TRANSMITTANCE_LUT, m_cloudSkyTransmittanceLut.view, nullptr);
+  }
+  if (m_cloudDSun.isValid()) {
+    ctx->bindResourceView(BINDING_ATMOSPHERE_CLOUD_D_SUN, m_cloudDSun.view, nullptr);
+  }
+  if (m_cloudDAmbient.isValid()) {
+    ctx->bindResourceView(BINDING_ATMOSPHERE_CLOUD_D_AMBIENT, m_cloudDAmbient.view, nullptr);
   }
   // Cloud history bindings are wired in fork_hooks::bindAtmosphereLuts (the
   // active call site) and depend on the downscaled-extent ensure step. Left

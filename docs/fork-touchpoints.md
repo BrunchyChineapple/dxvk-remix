@@ -953,6 +953,9 @@ initializer list and can't be lifted into a separate TU.
 - **Inline tweak** at `(file scope)` (atmosphere binding index defines, ~lines 59-66) and `COMMON_RAYTRACING_BINDINGS` macro (~lines 108-110) — cloud history temporal smoothing (2026-05-09).
   *Adds `BINDING_ATMOSPHERE_CLOUD_HISTORY_PREV = 206` (`TEXTURE2D`) and `BINDING_ATMOSPHERE_CLOUD_HISTORY_CURR = 207` (`RW_TEXTURE2D`). RGBA16F screen-space ping-pong owned by `RtxAtmosphere` and bound in `bindAtmosphereLuts`. Consumed by `evalSkyRadiance` in `atmosphere_sky.slangh` when called with `enableCloudTemporalSmoothing=true` (currently only the primary view ray in `geometry_resolver.slangh` miss path). Smooths per-frame FAST-noise jitter variance to give DLSS a stable signal.*
 
+- **Inline tweak** at `(file scope)` (atmosphere binding index defines) and `COMMON_RAYTRACING_BINDINGS` macro — cloud voxel grids (Nubis Cubed 2023, 2026-05-12).
+  *Adds `BINDING_ATMOSPHERE_CLOUD_D_SUN = 210` and `BINDING_ATMOSPHERE_CLOUD_D_AMBIENT = 211`, both `TEXTURE3D`. 256x256x32 R16F camera-centered tile-wrapped voxel grids storing summed optical depth along the sun direction (D_sun) and zenith (D_ambient). Round-robin baked every 8 frames by `cloud_sun_density_grid.comp.slang` / `cloud_ambient_density_grid.comp.slang` dispatched from `RtxAtmosphere::computeLuts`; bound via `fork_hooks::bindAtmosphereLuts`. Sampled at shade time via `sampleDSun` / `sampleDAmbient` helpers in `atmosphere_common.slangh`. No consumer in this commit — the Nubis Cubed cloud-lighting rewrite (C4-C6 of the 2026-05-12 workstream) reads them.*
+
 - **Inline tweak** at `COMMON_BINDING_DEFINITION_LIST` macro (~line 91) — 1-line addition for sampler readback buffer.
   *Adds `RW_STRUCTURED_BUFFER(BINDING_SAMPLER_READBACK_BUFFER)` to the common binding list (upstream omission fixed).*
 

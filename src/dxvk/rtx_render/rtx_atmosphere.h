@@ -94,6 +94,28 @@ public:
   Resources::Resource getCloudSkyTransmittanceLut() const { return m_cloudSkyTransmittanceLut; }
 
   /**
+   * \brief Get the cloud D_sun voxel grid (Nubis Cubed 2023, fork — 2026-05-12).
+   *
+   * 256x256x32 R16F camera-centered tile-wrapped voxel grid storing summed
+   * optical depth along the sun direction. Baked every 8 frames at offset 0
+   * by cloud_sun_density_grid.comp.slang. Consumed at shade time via
+   * sampleDSun() by the future Nubis Cubed cloud-lighting rewrite (C4-C6 of
+   * the 2026-05-12 workstream). No consumer in this commit.
+   */
+  const Resources::Resource& getCloudDSun() const { return m_cloudDSun; }
+
+  /**
+   * \brief Get the cloud D_ambient voxel grid (Nubis Cubed 2023, fork — 2026-05-12).
+   *
+   * 256x256x32 R16F camera-centered tile-wrapped voxel grid storing summed
+   * optical depth toward zenith. Baked every 8 frames at offset 4 by
+   * cloud_ambient_density_grid.comp.slang. Consumed at shade time via
+   * sampleDAmbient() for the Nubis Cubed page-142 ambient attenuation term.
+   * No consumer in this commit.
+   */
+  const Resources::Resource& getCloudDAmbient() const { return m_cloudDAmbient; }
+
+  /**
    * \brief Get the EA Importance-Sampled FAST noise view for descriptor binding
    *
    * Returns nullptr if the FAST noise has not been initialized.
@@ -143,6 +165,10 @@ private:
   void dispatchSkyViewLut(Rc<DxvkContext> ctx);
   void dispatchCloudNoise3DBake(Rc<DxvkContext> ctx);  // Stage C: one-shot at init
   void dispatchCloudSkyTransmittanceLut(Rc<DxvkContext> ctx);  // Fork: per-frame
+  // Cloud voxel grid bakes (Nubis Cubed 2023, fork — 2026-05-12). Round-robin
+  // every 8 frames. Driven from computeLuts based on the device frame ID.
+  void dispatchCloudSunDensityGrid(Rc<DxvkContext> ctx);
+  void dispatchCloudAmbientDensityGrid(Rc<DxvkContext> ctx);
 
   // LUT dimensions
   static constexpr uint32_t kTransmittanceLutWidth = 512;   // Increased from 256 for better precision
@@ -159,6 +185,17 @@ private:
   // Keep in lockstep with kLutWidth/kLutHeight in cloud_sky_transmittance_lut.comp.slang.
   static constexpr uint32_t kCloudSkyTransmittanceLutWidth = 32;
   static constexpr uint32_t kCloudSkyTransmittanceLutHeight = 16;
+  // Cloud voxel grids (Nubis Cubed 2023, fork — 2026-05-12). 256x256x32 R16F,
+  // ~4 MB each, ~8 MB combined VRAM. The XY resolution matches the cumulus
+  // detail expectation across a 12 km camera-centered tile-wrapped grid (~47 m
+  // per voxel horizontally); Z = 32 spans the cloud slab vertically (~30 m per
+  // voxel for a 1 km slab). Round-robin baked every 8 frames; each bake costs
+  // an 8x8x4 dispatch covering 256x256x32 voxels (~0.1-0.2 ms target).
+  // Keep in lockstep with kGridX/Y/Z constants in
+  // cloud_sun_density_grid.comp.slang / cloud_ambient_density_grid.comp.slang.
+  static constexpr uint32_t kCloudVoxelGridX = 256;
+  static constexpr uint32_t kCloudVoxelGridY = 256;
+  static constexpr uint32_t kCloudVoxelGridZ = 32;
 
   // Scale heights for exponential density profiles (in km)
   static constexpr float kRayleighScaleHeight = 8.0f;
@@ -169,6 +206,10 @@ private:
   Resources::Resource m_skyViewLut;
   Resources::Resource m_cloudNoise3D;  // Stage C: prebaked 3D Perlin FBM
   Resources::Resource m_cloudSkyTransmittanceLut;  // Fork: per-frame cloud occlusion of sky-ambient hemisphere
+  // Cloud voxel grids (Nubis Cubed 2023, fork — 2026-05-12). Round-robin baked
+  // every 8 frames by dispatchCloudSunDensityGrid / dispatchCloudAmbientDensityGrid.
+  Resources::Resource m_cloudDSun;
+  Resources::Resource m_cloudDAmbient;
   RtxFastNoise m_fastNoise;            // EA Importance-Sampled FAST noise (cloud ray-march jitter)
 
   // Cloud history ping-pong (fork). Screen-space RGBA16F (premultiplied

@@ -120,6 +120,8 @@ namespace fork_hooks {
     auto cloudNoise3D             = ctx.m_atmosphere->getCloudNoise3D();  // Stage C
     auto fastNoiseView            = ctx.m_atmosphere->getFastNoiseView();  // EA importance-sampled FAST noise
     auto cloudSkyTransmittanceLut = ctx.m_atmosphere->getCloudSkyTransmittanceLut();  // Fork: per-frame cloud occlusion of sky-ambient
+    auto cloudDSun                = ctx.m_atmosphere->getCloudDSun();      // Fork: Nubis Cubed sun-direction optical depth grid
+    auto cloudDAmbient            = ctx.m_atmosphere->getCloudDAmbient();  // Fork: Nubis Cubed zenith optical depth grid
 
     // Always bind the LUTs (they're declared in shaders unconditionally)
     if (transmittanceLut.isValid()) {
@@ -139,6 +141,12 @@ namespace fork_hooks {
     }
     if (cloudSkyTransmittanceLut.isValid()) {
       ctx.bindResourceView(BINDING_ATMOSPHERE_CLOUD_SKY_TRANSMITTANCE_LUT, cloudSkyTransmittanceLut.view, nullptr);
+    }
+    if (cloudDSun.isValid()) {
+      ctx.bindResourceView(BINDING_ATMOSPHERE_CLOUD_D_SUN, cloudDSun.view, nullptr);
+    }
+    if (cloudDAmbient.isValid()) {
+      ctx.bindResourceView(BINDING_ATMOSPHERE_CLOUD_D_AMBIENT, cloudDAmbient.view, nullptr);
     }
 
     // Cloud history (fork). Allocate at the current downscaled render extent

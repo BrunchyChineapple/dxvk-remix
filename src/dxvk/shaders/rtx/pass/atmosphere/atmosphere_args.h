@@ -181,4 +181,20 @@ struct AtmosphereArgs {
   float cloudSkyAmbientStrength;                 // Overall multiplier on the sky-ambient term [0..3]. 0 = feature off.
   float cloudSkyAmbientCloudOcclusionStrength;   // Strength of cloud occlusion of sky ambient [0..1]. 1 = physical.
   float padCloudC2;
+
+  // ----- Cloud voxel grid (Nubis Cubed 2023, fork — 2026-05-12) -----
+  // 256x256x32 R16F precomputed grids storing summed optical depth along the
+  // sun direction (D_sun) and zenith (D_ambient), camera-centered with
+  // horizontal tile-wrap. Baked round-robin every 8 frames by
+  // cloud_sun_density_grid.comp.slang / cloud_ambient_density_grid.comp.slang.
+  // No consumer in this commit; the Nubis Cubed cloud-lighting rewrite (C4-C6)
+  // samples them at shade time via sampleDSun / sampleDAmbient.
+  float cloudVoxelGridExtentKm;     // Horizontal extent of camera-centered grid (default 12.0 km)
+  float cloudVoxelGridVerticalKm;   // Vertical extent — populated CPU-side from cloudThickness
+  float cloudVoxelGridFrameOffset;  // For round-robin cadence; CPU-side scalar (informational)
+  uint  cloudVoxelGridSunDirty;     // 1 when D_sun was (re)baked this frame
+  uint  cloudVoxelGridAmbientDirty; // 1 when D_ambient was (re)baked this frame
+  float pad_cloudVoxel0;
+  float pad_cloudVoxel1;
+  float pad_cloudVoxel2;
 };

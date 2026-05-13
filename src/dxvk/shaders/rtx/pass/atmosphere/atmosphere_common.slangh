@@ -1555,3 +1555,239 @@ float sampleCloudDensityTextured(vec3 worldPosKm,
   return saturate(density);
 }
 
+// ===========================================================================
+// Lean cloud-density sampler for shadow / voxel-bake lookups.
+//
+// Costs ~1/8 of sampleCloudDensityTextured: a single trilinear texture tap
+// (instead of an 8-tap tricubic B-spline) and skips the per-frame 1.4m-
+// wavelength Perlin detail entirely. Cherry-picked from the stashed branch
+// `cloud-sun-shadow-march-stash-2026-05-12` (atmosphere_common.slangh:1734)
+// where it was originally drafted for the now-stashed sun-shadow march
+// helper. Reused here as the inner density tap of the D_sun / D_ambient
+// voxel-grid bake compute shaders so the bake cost stays cheap enough to
+// run round-robin every 8 frames.
+//
+// Visual difference vs the full sampler:
+// - Trilinear vs tricubic: very mild softness at voxel boundaries (~47 m at
+//   the 256³ bake resolution). The base FBM's 250 m / 125 m wavelengths
+//   dominate at the cumulus scale, so the smoothing is imperceptible.
+// - No 1.4 m Perlin: the per-frame analytical detail is sub-voxel jitter
+//   that the cumulus-scale shadow / ambient march cannot integrate out;
+//   dropping it removes per-tap aliasing.
+// ===========================================================================
+float sampleCloudDensityForShadow(vec3 worldPosKm,
+                                   float heightFraction,
+                                   float typeLocal,
+                                   float coverageLocal,
+                                   AtmosphereArgs args,
+                                   Texture3D<float> cloudNoise3D,
+                                   SamplerState cloudSampler) {
+  vec3 windOffset = vec3(args.cloudWindOffset.x, 0.0f, args.cloudWindOffset.y);
+  vec3 perturbed  = worldPosKm + windOffset;
+
+  float yRelative = (perturbed.y - args.cloudAltitude) / max(args.cloudThickness, 0.01f);
+  vec3 texcoord = vec3(
+      frac(perturbed.x / args.cloudNoiseTileKm),
+      frac(yRelative),
+      frac(perturbed.z / args.cloudNoiseTileKm));
+
+  // Single trilinear sample (assumes the bound sampler is linear-filter +
+  // repeat-address per RtxAtmosphere's cloud-noise sampler setup).
+  float density = cloudNoise3D.SampleLevel(cloudSampler, texcoord, 0).r;
+
+  // Coverage threshold + vertical profile lifted from sampleCloudDensityTextured.
+  float anvilExponent = mix(1.0f, mix(1.0f, 0.5f, args.cloudAnvilBias),
+                            smoothstep(0.7f, 0.8f, heightFraction));
+  float coverageAnvil = pow(coverageLocal, anvilExponent);
+  float coverageThreshold = mix(0.80f, 0.15f, coverageAnvil);
+  density = smoothstep(coverageThreshold, coverageThreshold + 0.25f, density);
+  density *= cloudTypeProfile(heightFraction, typeLocal);
+
+  return saturate(density);
+}
+
+// ===========================================================================
+// Cloud voxel grid helpers (Nubis Cubed 2023, fork — 2026-05-12)
+//
+// The D_sun and D_ambient voxel grids precompute summed optical depth along
+// the sun direction and toward zenith at each voxel of a camera-centered
+// 256x256x32 grid covering a horizontal tile-wrap extent of
+// `cloudVoxelGridExtentKm` km and a vertical extent of
+// `cloudVoxelGridVerticalKm` km. The grid is sampled at shade time by
+// future Nubis Cubed consumers (C4-C6 of the 2026-05-12 workstream) via
+// sampleDSun / sampleDAmbient. This commit lands the bake infrastructure
+// only — no production rendering reads from these grids yet.
+//
+// Coordinate frame: the cloud math throughout atmosphere_common.slangh
+// assumes the camera sits at the world origin in Y-up space (see
+// `intersectCloudLayer`'s "Ray origin is at the camera (0,0,0) in Y-up
+// space" comment). The voxel grid follows the same convention: horizontal
+// origin is the camera, vertical 0 is at slab base (cloudAltitude).
+// ===========================================================================
+
+// Slab-exit ray-intersect: given a ray starting at `originYUpKm` (Y-up, km)
+// inside or below the cloud slab and going along `dirYUp`, returns the
+// distance along the ray to where it exits the slab (passes through the top
+// plane at altitude `cloudAltitude + cloudVoxelGridVerticalKm`). Returns
+// false for rays that never reach the top (zero or negative dir.y).
+//
+// Trivial 5-LOC slab-plane intersection — the existing intersectCloudLayer
+// returns the more general curved-cloud-sphere exit from camera origin, but
+// the voxel-grid bake runs from arbitrary positions inside the grid and we
+// want a flat-slab exit so the optical-depth integral stays well-defined.
+bool intersectCloudSlabRay(vec3 originYUpKm, vec3 dirYUp, AtmosphereArgs args,
+                            out float tExitKm) {
+  tExitKm = 0.0f;
+  if (dirYUp.y <= 0.001f) {
+    return false;
+  }
+  const float slabTopY = args.cloudAltitude + args.cloudVoxelGridVerticalKm;
+  if (originYUpKm.y >= slabTopY) {
+    return false;
+  }
+  tExitKm = (slabTopY - originYUpKm.y) / dirYUp.y;
+  return tExitKm > 0.0f;
+}
+
+// Camera-centered grid -> UVW for trilinear sampling.
+// Horizontal axes tile-wrap (`frac()`); vertical clamps to the slab.
+// Camera-origin convention: cloud math elsewhere treats the camera as the
+// world origin in Y-up space, so the grid is anchored at the origin too.
+vec3 cloudVoxelWorldToUVW(vec3 worldPosKm, AtmosphereArgs args, bool isZUp) {
+  // Convert to Y-up if the caller is in Z-up space.
+  vec3 posYUp = isZUp ? vec3(worldPosKm.x, worldPosKm.z, worldPosKm.y) : worldPosKm;
+
+  const float halfExtent = 0.5f * args.cloudVoxelGridExtentKm;
+  const float invExtent  = 1.0f / max(args.cloudVoxelGridExtentKm, 0.0001f);
+  const float invVert    = 1.0f / max(args.cloudVoxelGridVerticalKm, 0.0001f);
+
+  float u = frac((posYUp.x + halfExtent) * invExtent);
+  float w = frac((posYUp.z + halfExtent) * invExtent);
+  // Vertical: 0 at slab bottom (cloudAltitude), 1 at slab top.
+  float v = saturate((posYUp.y - args.cloudAltitude) * invVert);
+
+  return vec3(u, v, w);
+}
+
+// UVW -> world (Y-up, km). Inverse of cloudVoxelWorldToUVW for the
+// non-wrapped representative position (uses the [-half, +half] horizontal
+// range centered on the camera). Used by the bake shaders to find the world
+// position represented by each voxel.
+vec3 cloudVoxelUVWToWorld(vec3 uvw, AtmosphereArgs args) {
+  const float halfExtent = 0.5f * args.cloudVoxelGridExtentKm;
+  float x = -halfExtent + uvw.x * args.cloudVoxelGridExtentKm;
+  float z = -halfExtent + uvw.z * args.cloudVoxelGridExtentKm;
+  float y = args.cloudAltitude + uvw.y * args.cloudVoxelGridVerticalKm;
+  return vec3(x, y, z);
+}
+
+// Sun-direction optical-depth integral for the D_sun voxel grid bake.
+// Returns raw integral in (km * density); consumers exponentiate with the
+// chosen extinction sigma later (e.g. exp(-σ * D_sun)).
+// 8 uniform-step taps; coverage / type noise sampled once at the start
+// position (consistent with the same approximation in the stashed
+// sampleCloudSunTransmittanceAtWorld helper).
+float sampleCloudSunOpticalDepthAtWorld(vec3 worldPosYUpKm, vec3 sunDirYUp,
+                                         AtmosphereArgs args,
+                                         Texture3D<float> cloudNoise3D,
+                                         SamplerState cloudSampler) {
+  const int kSamples = 8;
+  float opticalDepth = 0.0f;
+
+  // Find the slab exit; if the ray never reaches the slab top, return 0.
+  float tExit;
+  if (!intersectCloudSlabRay(worldPosYUpKm, sunDirYUp, args, tExit)) {
+    return 0.0f;
+  }
+  float stepLen = tExit / float(kSamples);
+
+  // Sample coverage / type noise once at the start position (the cumulus
+  // wavelength is much longer than the tap span along the sun ray, so the
+  // reuse is harmless and saves 2×kSamples FBM evaluations).
+  vec2 sampleXZKm = vec2(worldPosYUpKm.x, worldPosYUpKm.z);
+  float typeNoise     = smoothNoise2D(sampleXZKm * args.cloudTypeNoiseScale,     200.0f);
+  float coverageNoise = smoothNoise2D(sampleXZKm * args.cloudCoverageNoiseScale, 250.0f);
+  float typeLocal     = saturate(args.cloudTypeMean     + (typeNoise     - 0.5f) * args.cloudTypeSpread);
+  float coverageLocal = saturate(args.cloudCoverageMean + (coverageNoise - 0.5f) * args.cloudCoverageSpread);
+
+  [unroll]
+  for (int i = 0; i < kSamples; ++i) {
+    vec3 samplePos = worldPosYUpKm + (float(i) + 0.5f) * stepLen * sunDirYUp;
+    float hf = computeCloudHeightFraction(samplePos, args);
+    float density = sampleCloudDensityForShadow(samplePos, hf,
+                                                 typeLocal, coverageLocal,
+                                                 args, cloudNoise3D, cloudSampler);
+    opticalDepth += density * stepLen;
+  }
+
+  return opticalDepth;
+}
+
+// Zenith-direction optical-depth integral for the D_ambient voxel grid bake.
+// 6 uniform-step taps straight up from the voxel center to the slab top.
+// Returns raw integral; consumers exponentiate with their chosen sigma.
+float sampleCloudAmbientOpticalDepthAtWorld(vec3 worldPosYUpKm,
+                                             AtmosphereArgs args,
+                                             Texture3D<float> cloudNoise3D,
+                                             SamplerState cloudSampler) {
+  const int kSamples = 6;
+  float opticalDepth = 0.0f;
+
+  // March straight up to the slab top.
+  const float slabTop = args.cloudAltitude + args.cloudVoxelGridVerticalKm;
+  const float distanceToTop = slabTop - worldPosYUpKm.y;
+  if (distanceToTop <= 0.0f) {
+    return 0.0f;
+  }
+  const float stepLen = distanceToTop / float(kSamples);
+
+  // Same single-position coverage/type sample as the sun integral.
+  vec2 sampleXZKm = vec2(worldPosYUpKm.x, worldPosYUpKm.z);
+  float typeNoise     = smoothNoise2D(sampleXZKm * args.cloudTypeNoiseScale,     200.0f);
+  float coverageNoise = smoothNoise2D(sampleXZKm * args.cloudCoverageNoiseScale, 250.0f);
+  float typeLocal     = saturate(args.cloudTypeMean     + (typeNoise     - 0.5f) * args.cloudTypeSpread);
+  float coverageLocal = saturate(args.cloudCoverageMean + (coverageNoise - 0.5f) * args.cloudCoverageSpread);
+
+  [unroll]
+  for (int i = 0; i < kSamples; ++i) {
+    vec3 samplePos = worldPosYUpKm + vec3(0.0f, (float(i) + 0.5f) * stepLen, 0.0f);
+    float hf = computeCloudHeightFraction(samplePos, args);
+    float density = sampleCloudDensityForShadow(samplePos, hf,
+                                                 typeLocal, coverageLocal,
+                                                 args, cloudNoise3D, cloudSampler);
+    opticalDepth += density * stepLen;
+  }
+
+  return opticalDepth;
+}
+
+// ===========================================================================
+// Shade-time samplers for the voxel grids. Only callable from translation
+// units that pull in common_bindings.slangh (gated by ATMOSPHERE_AVAILABLE
+// — same idiom as evalCloudGroundShadow) so the LUT-bake compute shaders
+// that include atmosphere_common.slangh without binding the grids still
+// parse.
+//
+// Returns the precomputed optical-depth integral; callers exponentiate.
+// ===========================================================================
+float sampleDSun(vec3 worldPosKm, AtmosphereArgs args, bool isZUp) {
+#ifndef ATMOSPHERE_AVAILABLE
+  return 0.0f;
+#else
+  vec3 uvw = cloudVoxelWorldToUVW(worldPosKm, args, isZUp);
+  // Reuses the cloud-noise sampler (linear/REPEAT). REPEAT matches the
+  // frac()-tile-wrap horizontal mapping in cloudVoxelWorldToUVW; the
+  // vertical UVW is saturate()-clamped so wrap-vs-clamp doesn't matter.
+  return AtmosphereCloudDSun.SampleLevel(AtmosphereCloudNoise3DSampler, uvw, 0).r;
+#endif
+}
+
+float sampleDAmbient(vec3 worldPosKm, AtmosphereArgs args, bool isZUp) {
+#ifndef ATMOSPHERE_AVAILABLE
+  return 0.0f;
+#else
+  vec3 uvw = cloudVoxelWorldToUVW(worldPosKm, args, isZUp);
+  return AtmosphereCloudDAmbient.SampleLevel(AtmosphereCloudNoise3DSampler, uvw, 0).r;
+#endif
+}
+

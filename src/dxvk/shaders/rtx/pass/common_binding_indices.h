@@ -74,6 +74,16 @@
 // direction. See docs/superpowers/specs/2026-05-12-volumetric-sky-ambient-design.md.
 #define BINDING_ATMOSPHERE_CLOUD_SKY_TRANSMITTANCE_LUT 208
 
+// Cloud voxel grids (Nubis Cubed 2023, fork — 2026-05-12). 256x256x32 R16F
+// precomputed grids storing summed optical depth along the sun direction
+// (D_sun) and zenith (D_ambient) at each voxel of a camera-centered tile-
+// wrapped grid. Round-robin baked every 8 frames by
+// cloud_sun_density_grid.comp.slang / cloud_ambient_density_grid.comp.slang.
+// Will feed the Nubis Cubed cloud-lighting rewrite landing in C4-C6 of the
+// 2026-05-12 workstream. No consumer in this commit.
+#define BINDING_ATMOSPHERE_CLOUD_D_SUN 210
+#define BINDING_ATMOSPHERE_CLOUD_D_AMBIENT 211
+
 #define COMMON_MAX_BINDING                       BINDING_SAMPLER_READBACK_BUFFER
 #define COMMON_NUM_BINDINGS                      (COMMON_MAX_BINDING + 1)
 
@@ -125,6 +135,8 @@
   TEXTURE2DARRAY(BINDING_ATMOSPHERE_FAST_NOISE)                     \
   TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_HISTORY_PREV)                  \
   RW_TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_HISTORY_CURR)                \
-  TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_SKY_TRANSMITTANCE_LUT)
+  TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_SKY_TRANSMITTANCE_LUT)          \
+  TEXTURE3D(BINDING_ATMOSPHERE_CLOUD_D_SUN)                         \
+  TEXTURE3D(BINDING_ATMOSPHERE_CLOUD_D_AMBIENT)
 
 #endif
