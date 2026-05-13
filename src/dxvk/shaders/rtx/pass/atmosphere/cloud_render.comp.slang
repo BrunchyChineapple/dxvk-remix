@@ -109,6 +109,39 @@ SamplerState AtmosphereSkyViewSampler;
 // fastJitter / etc.) resolve to our local declarations.
 #include "rtx/pass/atmosphere/atmosphere_common.slangh"
 
+// =============================================================================
+// Moon-shadow optical-depth tap (port of atmosphere_sky.slangh:617).
+//
+// The legacy `sampleCloudSunOpticalDepth` lives in atmosphere_sky.slangh which
+// this compute pass does NOT include. Replicate the 2-tap deterministic march
+// here so the cloud_render moon path can call it without pulling in the sky
+// header. Math is byte-identical to the legacy helper (same kTaps=2, same
+// kStepKm=0.8, same `density × stepLen` accumulation form, same near-horizon
+// gate). The legacy `pixelCoord` / `frameIdx` jitter params were removed from
+// the signature because they go unused (the comment block at the legacy
+// definition explains why — Jensen's-inequality bias on the convex exp(-x)
+// shadow estimator).
+// =============================================================================
+float sampleCloudSunOpticalDepth_local(vec3 cloudHitPos, vec3 sunDir,
+                                        float typeLocal, float coverageLocal,
+                                        AtmosphereArgs args) {
+  if (sunDir.y <= 0.01f) return 0.0f;
+
+  const int   kTaps   = 2;
+  const float kStepKm = 0.8f;
+  float opticalDepth  = 0.0f;
+
+  for (int i = 0; i < kTaps; ++i) {
+    vec3 p = cloudHitPos + sunDir * (kStepKm * float(i + 1));
+    float d = sampleCloudDensityTextured(p, computeCloudHeightFraction(p, args),
+                                          typeLocal, coverageLocal, args,
+                                          AtmosphereCloudNoise3D, AtmosphereCloudNoise3DSampler);
+    opticalDepth += d;
+  }
+
+  return opticalDepth * kStepKm;
+}
+
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchId : SV_DispatchThreadID) {
@@ -205,6 +238,110 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
                                                 AtmosphereCloudSkyTransmittanceLut,
                                                 AtmosphereSkyViewSampler);
 
+  // ===== Per-pixel moon-lighting precompute =====
+  // Direct port of evalClouds (atmosphere_sky.slangh:756-884). The Nubis Cubed
+  // sun equations don't model moonlight, so without this block the cloud RT
+  // renders black at night when cloudRenderRTEnable=true. Three contributions
+  // mirror the legacy:
+  //   - nightLight (ambient, per-ray): per-moon airglow fill + nightSkyColor.
+  //     Added uncolored at composite time (it's atmospheric airglow, not cloud-
+  //     scatter; matches the legacy `+ nightLight` outside cloudColor's parens).
+  //   - moonCoeff[mi] (directional, per-ray): per-moon Lambert+HG response
+  //     gated by phaseGlow / nightFactor / cloudMoonBrightness, scaled by
+  //     computeMoonSharedFactor — which ALREADY folds in atmospheric extinction
+  //     `getAtmosphericTransmittanceForDir(m.direction, args)` for the moon ray,
+  //     mirroring the C6.4 airTrans treatment we just landed for the sun.
+  //   - combinedMoonDir / combinedMoonCoeff (Lever-4 approximation): one
+  //     brightness-weighted shadow march along the combined direction replaces
+  //     N independent per-moon marches. The combined coeff is the simple sum.
+  //
+  // Smooth twilight transition: nightFactor = smoothstep(0.02, -0.05, sun.y)
+  // ramps from 0 (sun above horizon) to 1 (sun ~3° below horizon). Same gate
+  // the legacy uses, so the day -> night cross-fade on the Nubis-Cubed RT
+  // matches the analytical-evalClouds curve byte-for-byte. No popping at the
+  // moment the cloudRenderRTEnable gate flips the consumer from analytical to
+  // RT either, because both paths use this identical smoothstep.
+  vec3 nightLight = vec3(0.0f);
+  vec3 moonCoeff[MAX_MOONS];
+  vec3 moonDirNorm[MAX_MOONS];
+  [unroll] for (uint mInit = 0u; mInit < MAX_MOONS; ++mInit) {
+    moonCoeff[mInit]   = vec3(0.0f);
+    moonDirNorm[mInit] = vec3(0.0f, 1.0f, 0.0f);
+  }
+  {
+    float sunElev = sunDirYUp.y;
+    float nightFactor = smoothstep(0.02f, -0.05f, sunElev);
+    if (nightFactor > 0.001f) {
+      for (uint mi = 0u; mi < MAX_MOONS; ++mi) {
+        MoonParams m = args.moons[mi];
+        if (m.enabled < 0.5f) continue;
+        vec3 moonDir = normalize(m.direction);
+        float moonDot = max(dot(moonDir, vec3(0.0f, 1.0f, 0.0f)), 0.0f);
+        // phaseGlow peaks at full moon (phase=0.5), zero at new (0 or 1).
+        float phaseGlow = 0.5f - 0.5f * cos(m.phase * 2.0f * kPi);
+
+        // Ambient airglow contribution (uniform across the cloud volume).
+        vec3 sharedFactorAmbient = computeMoonSharedFactor(m, args, m.color);
+        nightLight += sharedFactorAmbient * args.moonAmbientAirglow
+                    * moonDot * phaseGlow * args.cloudMoonBrightness * nightFactor;
+
+        // Directional contribution — only above-horizon moons matter.
+        if (moonDir.y > 0.01f && args.moonNeeStrength > 0.001f) {
+          // Silver-lining response shape (separate g and gains from sun).
+          const float kMoonDiffuseGain = args.moonCloudDiffuseGain;
+          const float kMoonPhaseGain   = args.moonCloudPhaseGain;
+          const float kMoonAnisotropy  = args.moonCloudAnisotropy;
+          float moonLambert  = saturate(moonDir.y * 0.8f + 0.2f);
+          float moonCosTheta = dot(viewDirYUp, moonDir);
+          float moonPhase    = hgPhase(moonCosTheta, kMoonAnisotropy);
+          float moonResponse = kMoonDiffuseGain * moonLambert + kMoonPhaseGain * moonPhase;
+
+          // Physical irradiance scaffold — sharedFactor × phaseGlow × solidAngle
+          // × moonNeeStrength × cloudMoonBrightness × nightFactor.
+          vec3 sharedFactor = computeMoonSharedFactor(m, args, m.color);
+          float moonSolidAngleSr = 2.0f * kPi * (1.0f - cos(m.angularRadius));
+          vec3 moonIrradiance = sharedFactor * phaseGlow * moonSolidAngleSr
+                              * args.moonNeeStrength * args.cloudMoonBrightness
+                              * nightFactor;
+          moonCoeff[mi]   = moonIrradiance * moonResponse;
+          moonDirNorm[mi] = moonDir;
+        }
+      }
+      // Night-sky airglow baseline (uncolored, mirrors legacy `* 0.5f`).
+      nightLight += args.nightSkyColor * args.nightSkyBrightness * nightFactor * 0.5f;
+    }
+  }
+
+  // Combined-moon shadow direction (Lever 4 — brightness-weighted average of
+  // enabled, above-horizon moons). ONE shadow march per dense sample replaces
+  // N independent marches; visual delta is near-zero because shadow direction
+  // is a perceptual cue rather than a per-moon resolvable feature.
+  vec3 combinedMoonDir   = vec3(0.0f, 1.0f, 0.0f);
+  vec3 combinedMoonCoeff = vec3(0.0f);
+  {
+    vec3  sumWeightedDir = vec3(0.0f);
+    float sumWeight      = 0.0f;
+    [unroll] for (uint mi = 0u; mi < MAX_MOONS; ++mi) {
+      float w = max(max(moonCoeff[mi].r, moonCoeff[mi].g), moonCoeff[mi].b);
+      if (w > 0.001f) {
+        sumWeightedDir    += moonDirNorm[mi] * w;
+        sumWeight         += w;
+        combinedMoonCoeff += moonCoeff[mi];
+      }
+    }
+    if (sumWeight > 0.0f && length(sumWeightedDir) > 0.001f) {
+      combinedMoonDir = normalize(sumWeightedDir);
+    }
+  }
+
+  // Direct-extinction sigma for the moon-shadow Beer-Lambert exponent. Matches
+  // the legacy `baseSigma = 2 * cloudDensity` (single-octave; no Wrenninge
+  // multi-scatter for the moon — its low magnitudes don't warrant it, and the
+  // silver-lining shape lives in kMoonPhaseGain/kMoonAnisotropy already).
+  // Note: deliberately NOT the Nubis Cubed `sigma = cloudDensity` — the moon
+  // path stays on its own extinction scale to preserve the legacy look.
+  float moonBaseSigma = 2.0f * args.cloudDensity;
+
   // ===== View-ray raymarch =====
   // evalNubisCubedSample internally uses sigma = args.cloudDensity (no doubling
   // — the Nubis Cubed equations use raw cloudDensity as the extinction
@@ -239,7 +376,42 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
         viewDirYUp, sunDirYUp, sunRadiance, skyRadiance,
         args, /*isZUp=*/false);
 
-    vec3 sampleColor = args.cloudColor * (lighting.direct + lighting.ambient);
+    // ===== Per-sample moon direct light =====
+    // Single Beer-Lambert shadow march along the combined moon direction,
+    // structurally separate from the Nubis Cubed sigma_ms remap so the moon
+    // semantics stay clean (the paper is silent on moonlight; we preserve
+    // the legacy analytical-evalClouds math exactly). Skipped at low density
+    // because (1 - stepTransmittance) crushes unshadowed contribution there
+    // anyway -- pure perf win (Lever 5 in the legacy notes).
+    //
+    // Optical depth -> single-octave Beer-Lambert at moonBaseSigma (matches
+    // the legacy 2*cloudDensity convention; deliberately NOT the Nubis Cubed
+    // sigma scale used by lighting.direct, since the moon path lives outside
+    // the Nubis Cubed equations).
+    //
+    // Approximation: (Σ moonCoeff_i) * shadow_combined replaces the original
+    // Σ(moonCoeff_i * shadow_i). Equal iff per-moon shadow values are uniform,
+    // which holds at cloud scale where shadow direction is a perceptual cue.
+    const float kMoonShadowSkipDensity = 0.05f;
+    vec3 moonDirectLight = vec3(0.0f);
+    if (any(combinedMoonCoeff > vec3(0.001f))) {
+      float moonOpticalDepth = 0.0f;
+      if (density >= kMoonShadowSkipDensity) {
+        moonOpticalDepth = sampleCloudSunOpticalDepth_local(
+            samplePos, combinedMoonDir, typeLocal, coverageLocal, args);
+      }
+      float moonShadow = exp(-moonOpticalDepth * moonBaseSigma);
+      moonDirectLight = combinedMoonCoeff * moonShadow;
+    }
+
+    // Composite: cloudColor multiplies all surface-scatter terms (Nubis Cubed
+    // sun-direct, Nubis Cubed ambient, AND moon-direct -- all light that
+    // bounces off cloud droplets picks up cloudColor's albedo). nightLight is
+    // added uncolored: it's atmospheric airglow + nightSkyColor, NOT scatter
+    // off cloud droplets. Mirrors legacy evalClouds line 1011 structure
+    // (`args.cloudColor * (directLight + moonDirectLight) + nightLight + ...`).
+    vec3 sampleColor = args.cloudColor * (lighting.direct + lighting.ambient + moonDirectLight)
+                     + nightLight;
 
     // Beer-Lambert step (analytical integration of constant emission across
     // the step). Mirrors evalClouds' integration form.
