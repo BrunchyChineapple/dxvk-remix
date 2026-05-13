@@ -89,6 +89,16 @@ Texture2D<float4> TerrainTexture;
 // Visualized by DEBUG_VIEW_CLOUD_SKY_TRANSMITTANCE_LUT.
 [[vk::binding(DEBUG_VIEW_BINDING_CLOUD_SKY_TRANSMITTANCE_LUT_INPUT)]]
 Texture2D<float> CloudSkyTransmittanceLut;
+
+// Fork: Nubis Cubed sun-direction optical-depth voxel grid (R16F 3D).
+// Visualized by DEBUG_VIEW_CLOUD_D_SUN.
+[[vk::binding(DEBUG_VIEW_BINDING_CLOUD_D_SUN_INPUT)]]
+Texture3D<float> DebugViewCloudDSun;
+
+// Fork: Nubis Cubed zenith optical-depth voxel grid (R16F 3D).
+// Visualized by DEBUG_VIEW_CLOUD_D_AMBIENT.
+[[vk::binding(DEBUG_VIEW_BINDING_CLOUD_D_AMBIENT_INPUT)]]
+Texture3D<float> DebugViewCloudDAmbient;
 [[vk::binding(DEBUG_VIEW_BINDING_VOLUME_RESERVOIRS_INPUT)]]
 Texture3D<uint4> VolumeReservoirs;
 
@@ -367,6 +377,33 @@ vec4 loadInput(inout RNG randomState, ivec2 threadId)
       const float trans = CloudSkyTransmittanceLut.SampleLevel(LinearSampler, uv, 0).r;
       const float occlusion = saturate(1.0f - trans);
       value = vec4(occlusion, 0.0f, 0.0f, 1.0f);
+    }
+    break;
+  case DEBUG_VIEW_CLOUD_D_SUN:
+    {
+      // Sample the Nubis Cubed D_sun voxel grid at the mid-Z slice (w = 0.5);
+      // map pixel UV directly to the horizontal grid UV. Grayscale: bright =
+      // high sun-direction optical depth (deep cloud cover above this voxel),
+      // dark = clear sky between voxel and sun. Cumulus cells should be
+      // visible as cellular patterns.
+      const vec2 uv = (vec2(threadId) + 0.5f) / vec2(cb.debugViewResolution);
+      const vec3 uvw = vec3(uv, 0.5f);
+      const float opticalDepth = DebugViewCloudDSun.SampleLevel(LinearSampler, uvw, 0).r;
+      // Scale for visibility: typical optical depth in cumulus is 0..5.
+      const float intensity = saturate(opticalDepth * 0.2f);
+      value = vec4(intensity, intensity, intensity, 1.0f);
+    }
+    break;
+  case DEBUG_VIEW_CLOUD_D_AMBIENT:
+    {
+      // Sample the Nubis Cubed D_ambient (zenith) voxel grid at the mid-Z
+      // slice. Mostly uniform brightness expected: the zenith path is mostly
+      // empty air above the cloud slab. Some banding where the slab is dense.
+      const vec2 uv = (vec2(threadId) + 0.5f) / vec2(cb.debugViewResolution);
+      const vec3 uvw = vec3(uv, 0.5f);
+      const float opticalDepth = DebugViewCloudDAmbient.SampleLevel(LinearSampler, uvw, 0).r;
+      const float intensity = saturate(opticalDepth * 0.2f);
+      value = vec4(intensity, intensity, intensity, 1.0f);
     }
     break;
   case DEBUG_VIEW_NRC_UPDATE_RADIANCE:

@@ -145,6 +145,17 @@ namespace dxvk {
                                 "black = clear sky in that direction.\n"
                                 "X axis = azimuth [0, 360 deg], Y axis = elevation [-90, +90 deg]\n"
                                 "(bottom half = below horizon, always clear)."},
+        {DEBUG_VIEW_CLOUD_D_SUN, "Atmosphere: Cloud D_sun Voxel Grid",
+                                "Fork diagnostic. Visualizes the Nubis Cubed sun-direction optical-\n"
+                                "depth voxel grid (mid-Z slice). Grayscale: bright = thick cloud\n"
+                                "between voxel and sun, dark = clear sky path. Cumulus cells should\n"
+                                "appear as cellular patterns. Move the sun to verify the pattern\n"
+                                "shifts. Scaling: intensity = saturate(opticalDepth * 0.2)."},
+        {DEBUG_VIEW_CLOUD_D_AMBIENT, "Atmosphere: Cloud D_ambient Voxel Grid",
+                                "Fork diagnostic. Visualizes the Nubis Cubed zenith optical-depth\n"
+                                "voxel grid (mid-Z slice). Expected: mostly uniform brightness\n"
+                                "(zenith path is mostly empty air above the slab); some banding\n"
+                                "where the slab is dense. Scaling: intensity = saturate(opticalDepth * 0.2)."},
         {DEBUG_VIEW_CASCADE_LEVEL, "Terrain: Cascade Level"},
 
         {DEBUG_VIEW_VIRTUAL_HIT_DISTANCE, "Virtual Hit Distance"},
@@ -577,6 +588,8 @@ namespace dxvk {
         TEXTURE2D(DEBUG_VIEW_BINDING_ALTERNATE_DISOCCLUSION_THRESHOLD_INPUT)
         TEXTURE2D(DEBUG_VIEW_BINDING_PREV_WORLD_POSITION_INPUT)
         TEXTURE2D(DEBUG_VIEW_BINDING_CLOUD_SKY_TRANSMITTANCE_LUT_INPUT)
+        TEXTURE3D(DEBUG_VIEW_BINDING_CLOUD_D_SUN_INPUT)
+        TEXTURE3D(DEBUG_VIEW_BINDING_CLOUD_D_AMBIENT_INPUT)
 
         RW_TEXTURE2D(DEBUG_VIEW_BINDING_ACCUMULATED_DEBUG_VIEW_INPUT_OUTPUT)
 
@@ -1344,6 +1357,29 @@ namespace dxvk {
         DEBUG_VIEW_BINDING_CLOUD_SKY_TRANSMITTANCE_LUT_INPUT,
         cloudSkyTransLut.view,
         nullptr);
+    }
+
+    // Fork: Nubis Cubed cloud voxel grid diagnostic bindings (D_sun + D_ambient).
+    // The fork hooks lazy-initialize the atmosphere; the grids are allocated
+    // unconditionally inside the atmosphere init path so the resources are
+    // valid even when no cumulus geometry is active.
+    {
+      Resources::Resource cloudDSun = fork_hooks::getCloudDSun(*ctx);
+      if (cloudDSun.isValid()) {
+        ctx->bindResourceView(
+          DEBUG_VIEW_BINDING_CLOUD_D_SUN_INPUT,
+          cloudDSun.view,
+          nullptr);
+      }
+    }
+    {
+      Resources::Resource cloudDAmbient = fork_hooks::getCloudDAmbient(*ctx);
+      if (cloudDAmbient.isValid()) {
+        ctx->bindResourceView(
+          DEBUG_VIEW_BINDING_CLOUD_D_AMBIENT_INPUT,
+          cloudDAmbient.view,
+          nullptr);
+      }
     }
 
     ctx->bindResourceView(DEBUG_VIEW_BINDING_VOLUME_RESERVOIRS_INPUT, globalVolumetrics.getPreviousVolumeReservoirs().view, nullptr);

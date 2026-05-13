@@ -215,6 +215,36 @@ namespace fork_hooks {
   }
 
   // ---------------------------------------------------------------------------
+  // getCloudDSun / getCloudDAmbient
+  //
+  // Public accessors for the Nubis Cubed cloud voxel grids. D_sun stores
+  // sun-direction optical depth (used by cloud-on-terrain shadow lookups);
+  // D_ambient stores zenith optical depth (used for sky-ambient occlusion of
+  // the cloud volume itself). Returns an invalid Resources::Resource if the
+  // atmosphere has not been initialized yet. Used by the debug view to bind
+  // the grids into its pass-local descriptor set so the user can visually
+  // verify the bake content before any production consumer reads from it.
+  //
+  // ACCESS NOTE: reads m_atmosphere (private). Friend declarations required
+  // in RtxContext.
+  // ---------------------------------------------------------------------------
+  Resources::Resource getCloudDSun(RtxContext& ctx) {
+    if (!ctx.m_atmosphere) {
+      ctx.m_atmosphere = std::make_unique<RtxAtmosphere>(ctx.m_device.ptr());
+    }
+    ctx.m_atmosphere->initialize(&ctx);
+    return ctx.m_atmosphere->getCloudDSun();
+  }
+
+  Resources::Resource getCloudDAmbient(RtxContext& ctx) {
+    if (!ctx.m_atmosphere) {
+      ctx.m_atmosphere = std::make_unique<RtxAtmosphere>(ctx.m_device.ptr());
+    }
+    ctx.m_atmosphere->initialize(&ctx);
+    return ctx.m_atmosphere->getCloudDAmbient();
+  }
+
+  // ---------------------------------------------------------------------------
   // injectRtxAtmosphereSkySkip
   //
   // Returns true when the caller (RtxContext::rasterizeSky) should skip

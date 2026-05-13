@@ -271,6 +271,8 @@
 
 // Fork: atmosphere / cloud diagnostics
 #define DEBUG_VIEW_CLOUD_SKY_TRANSMITTANCE_LUT 870
+#define DEBUG_VIEW_CLOUD_D_SUN              873
+#define DEBUG_VIEW_CLOUD_D_AMBIENT          874
 
 
 enum class CompositeDebugView : uint32_t {

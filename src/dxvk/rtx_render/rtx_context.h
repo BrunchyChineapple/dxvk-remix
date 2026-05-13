@@ -74,6 +74,12 @@ namespace dxvk {
     // invalid Resource if the atmosphere has not been initialized yet. Used by
     // the debug view to bind the LUT into its pass-local descriptor set.
     Resources::Resource getCloudSkyTransmittanceLut(RtxContext& ctx);
+    // Returns the Nubis Cubed sun-direction / zenith cloud optical-depth voxel
+    // grids. Lazy-initialized on demand; returns an invalid Resource if the
+    // atmosphere has not been initialized yet. Used by the cloud voxel-grid
+    // debug views to bind the 3D textures into their pass-local descriptor sets.
+    Resources::Resource getCloudDSun(RtxContext& ctx);
+    Resources::Resource getCloudDAmbient(RtxContext& ctx);
   } // namespace fork_hooks
 
   /**
@@ -348,5 +354,7 @@ namespace dxvk {
     friend void fork_hooks::dispatchScreenOverlay(RtxContext&, Resources::RaytracingOutput&);
     friend void fork_hooks::updateWeatherBlender(RtxContext& ctx, float deltaTimeSeconds);
     friend Resources::Resource fork_hooks::getCloudSkyTransmittanceLut(RtxContext& ctx);
+    friend Resources::Resource fork_hooks::getCloudDSun(RtxContext& ctx);
+    friend Resources::Resource fork_hooks::getCloudDAmbient(RtxContext& ctx);
   };
 } // namespace dxvk
