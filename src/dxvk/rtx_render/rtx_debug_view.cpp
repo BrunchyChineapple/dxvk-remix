@@ -168,6 +168,17 @@ namespace dxvk {
                                 "disagree on cumulus position, isZUp handling is mismatched between\n"
                                 "the debug-view call path and the production NEE call path - fix\n"
                                 "before wiring NEE in Task 6."},
+        {DEBUG_VIEW_CLOUD_RENDER_RT, "Atmosphere: Cloud Render RT (Nubis Cubed)",
+                                "Fork diagnostic. Visualizes the Nubis Cubed cloud render RT produced\n"
+                                "by cloud_render.comp.slang (C4 of the 2026-05-12 workstream). Per-\n"
+                                "pixel cloud radiance from the page-137 two-HG-lobe direct term +\n"
+                                "page-142 ambient pow(1 - dim_profile, 0.5) * exp(-D_ambient).\n"
+                                "Visual gate: toggle this debug view off and on with Sky Mode = Physical\n"
+                                "Atmosphere active to A/B against the existing analytical evalClouds\n"
+                                "rendering. Expected improvements: top-bright / bottom-dark cumulus\n"
+                                "gradient, less-flat shadow side, stronger silver lining at backlit\n"
+                                "edges. Tune via the Atmosphere -> Clouds -> Nubis Cubed Lighting\n"
+                                "ImGui block (six magic-constant sliders)."},
         {DEBUG_VIEW_CASCADE_LEVEL, "Terrain: Cascade Level"},
 
         {DEBUG_VIEW_VIRTUAL_HIT_DISTANCE, "Virtual Hit Distance"},
@@ -602,6 +613,7 @@ namespace dxvk {
         TEXTURE2D(DEBUG_VIEW_BINDING_CLOUD_SKY_TRANSMITTANCE_LUT_INPUT)
         TEXTURE3D(DEBUG_VIEW_BINDING_CLOUD_D_SUN_INPUT)
         TEXTURE3D(DEBUG_VIEW_BINDING_CLOUD_D_AMBIENT_INPUT)
+        TEXTURE2D(DEBUG_VIEW_BINDING_CLOUD_RENDER_RT_INPUT)
 
         RW_TEXTURE2D(DEBUG_VIEW_BINDING_ACCUMULATED_DEBUG_VIEW_INPUT_OUTPUT)
 
@@ -1397,6 +1409,22 @@ namespace dxvk {
         ctx->bindResourceView(
           DEBUG_VIEW_BINDING_CLOUD_D_AMBIENT_INPUT,
           cloudDAmbient.view,
+          nullptr);
+      }
+    }
+    // Fork: Nubis Cubed screen-space cloud render RT (C4, 2026-05-12).
+    // Resource becomes valid after the first updateAtmosphereConstants pass
+    // has run ensureCloudRenderRT; before that, leave the binding unbound —
+    // the debug view case (876) tolerates a missing texture by returning
+    // zeros (the default Load behavior on an unbound texture). The
+    // ATMOSPHERE_AVAILABLE-gated binding declaration in the shader is
+    // independent of skyMode, so the binding-state remains consistent.
+    {
+      Resources::Resource cloudRenderRT = fork_hooks::getCloudRenderRT(*ctx);
+      if (cloudRenderRT.isValid()) {
+        ctx->bindResourceView(
+          DEBUG_VIEW_BINDING_CLOUD_RENDER_RT_INPUT,
+          cloudRenderRT.view,
           nullptr);
       }
     }

@@ -152,6 +152,15 @@ RWTexture2D<float4> AtmosphereCloudHistoryCurr;
 layout(binding = BINDING_ATMOSPHERE_CLOUD_SKY_TRANSMITTANCE_LUT)
 Texture2D<float> AtmosphereCloudSkyTransmittanceLut;
 
+// Cloud render RT (Nubis Cubed 2023, fork — 2026-05-12). Screen-space RGBA16F
+// at downscale resolution. rgb = premultiplied cloud radiance; a = view-ray
+// cloud transmittance. Produced once per frame by cloud_render.comp.slang via
+// RtxAtmosphere::dispatchCloudRender (called from computeLuts). Visualized
+// standalone via DEBUG_VIEW_CLOUD_RENDER_RT (876). Will feed the sky-miss
+// composite path (C5 of the 2026-05-12 workstream).
+layout(binding = BINDING_ATMOSPHERE_CLOUD_RENDER_RT)
+Texture2D<float4> AtmosphereCloudRender;
+
 // Cloud voxel grids (Nubis Cubed 2023, fork — 2026-05-12). 256x256x32 R16F
 // camera-centered tile-wrapped grids storing summed optical depth along the
 // sun direction (D_sun) and zenith (D_ambient). Round-robin baked every

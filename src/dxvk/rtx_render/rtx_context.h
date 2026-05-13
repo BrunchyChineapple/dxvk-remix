@@ -80,6 +80,11 @@ namespace dxvk {
     // debug views to bind the 3D textures into their pass-local descriptor sets.
     Resources::Resource getCloudDSun(RtxContext& ctx);
     Resources::Resource getCloudDAmbient(RtxContext& ctx);
+    // Returns the per-frame Nubis Cubed cloud render RT (fork — 2026-05-12,
+    // C4). Lazy-initialized on demand; the resource becomes valid once
+    // ensureCloudRenderRT has run during updateAtmosphereConstants. Used by
+    // the cloud-render-RT debug view (enum 876).
+    Resources::Resource getCloudRenderRT(RtxContext& ctx);
   } // namespace fork_hooks
 
   /**
@@ -356,5 +361,6 @@ namespace dxvk {
     friend Resources::Resource fork_hooks::getCloudSkyTransmittanceLut(RtxContext& ctx);
     friend Resources::Resource fork_hooks::getCloudDSun(RtxContext& ctx);
     friend Resources::Resource fork_hooks::getCloudDAmbient(RtxContext& ctx);
+    friend Resources::Resource fork_hooks::getCloudRenderRT(RtxContext& ctx);
   };
 } // namespace dxvk

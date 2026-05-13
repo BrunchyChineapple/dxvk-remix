@@ -1483,6 +1483,24 @@ namespace dxvk {
                "Smaller = more visible repetition; larger = lower-frequency cloud detail. "
                "Default 12.0; viable range 6-24.");
 
+    // Nubis Cubed 2023 lighting (fork — 2026-05-12).
+    // Tuning knobs for the per-sample lighting equations in cloud_render.comp.slang.
+    // The paper's magic constants for the sigma_ms remap (page 137) are unexplained,
+    // so all six surface as ImGui knobs for in-game tuning. Defaults pulled from
+    // paper renders + the 2026-05-12 spec.
+    RTX_OPTION("rtx.atmosphere", float, cloudPhaseG1, 0.8f,
+               "Primary HG asymmetry; strong forward-scatter, drives silver lining at backlit edges.");
+    RTX_OPTION("rtx.atmosphere", float, cloudPhaseG2, 0.3f,
+               "Secondary HG asymmetry; mild forward-scatter, drives broader in-scatter envelope.");
+    RTX_OPTION("rtx.atmosphere", float, cloudMsSunDotMax, 0.9f,
+               "Nubis Cubed sigma_ms remap upper bound on sun_dot. Lower = wider 'shallow extinction' zone.");
+    RTX_OPTION("rtx.atmosphere", float, cloudMsSigmaShallow, 0.25f,
+               "Nubis Cubed sigma_ms value at cloud surface / shallow penetration.");
+    RTX_OPTION("rtx.atmosphere", float, cloudMsSigmaDeep, 0.05f,
+               "Nubis Cubed sigma_ms value deep inside cloud (sdf <= -cloudMsSdfDepth).");
+    RTX_OPTION("rtx.atmosphere", float, cloudMsSdfDepth, 128.0f,
+               "Nubis Cubed SDF depth in meters at which sigma_ms saturates to deep value.");
+
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");
 

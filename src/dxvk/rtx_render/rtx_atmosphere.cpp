@@ -33,6 +33,7 @@
 #include <rtx_shaders/cloud_sky_transmittance_lut.h>
 #include <rtx_shaders/cloud_sun_density_grid.h>
 #include <rtx_shaders/cloud_ambient_density_grid.h>
+#include <rtx_shaders/cloud_render.h>
 #include <cmath>
 #include <fstream>
 #include <chrono>
@@ -126,6 +127,32 @@ namespace dxvk {
       END_PARAMETER()
     };
     PREWARM_SHADER_PIPELINE(CloudAmbientDensityGridShader);
+
+    // Fork (Nubis Cubed 2023, 2026-05-12, C4): per-frame screen-space cloud
+    // raymarch using the Nubis Cubed lighting equations. Writes premultiplied
+    // rgb + transmittance alpha to AtmosphereCloudRender at downscale extent.
+    // Bindings (kept in lockstep with cloud_render.comp.slang):
+    //   0: ConstantBuffer<AtmosphereArgs>
+    //   1: Texture3D<float>     (AtmosphereCloudNoise3D)
+    //   2: SamplerState         (linear/REPEAT)
+    //   3: Texture3D<float>     (AtmosphereCloudDSun)
+    //   4: Texture3D<float>     (AtmosphereCloudDAmbient)
+    //   5: Texture2DArray<float2> (AtmosphereFastNoise)
+    //   6: RWTexture2D<float4>  output
+    class CloudRenderShader : public ManagedShader {
+      SHADER_SOURCE(CloudRenderShader, VK_SHADER_STAGE_COMPUTE_BIT, cloud_render)
+
+      BEGIN_PARAMETER()
+        CONSTANT_BUFFER(0)
+        TEXTURE3D(1)
+        SAMPLER(2)
+        TEXTURE3D(3)
+        TEXTURE3D(4)
+        TEXTURE2DARRAY(5)
+        RW_TEXTURE2D(6)
+      END_PARAMETER()
+    };
+    PREWARM_SHADER_PIPELINE(CloudRenderShader);
   }
 
 RtxAtmosphere::RtxAtmosphere(DxvkDevice* device)
@@ -415,6 +442,34 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.pad_cloudVoxel2 = 0.0f;
   }
 
+  // Nubis Cubed 2023 lighting params (fork — 2026-05-12, C4). Sourced from
+  // RTX_OPTIONs so the user can tune from ImGui without rebuilding shaders.
+  // The cloud_render compute pass consumes these via evalNubisCubedSample.
+  {
+    args.cloudPhaseG1         = RtxOptions::cloudPhaseG1();
+    args.cloudPhaseG2         = RtxOptions::cloudPhaseG2();
+    args.cloudMsSunDotMax     = RtxOptions::cloudMsSunDotMax();
+    args.cloudMsSigmaShallow  = RtxOptions::cloudMsSigmaShallow();
+    args.cloudMsSigmaDeep     = RtxOptions::cloudMsSigmaDeep();
+    args.cloudMsSdfDepth      = RtxOptions::cloudMsSdfDepth();
+    args.cloudRenderFrameIdx  = m_cloudRenderFrameIdx;
+    args.pad_nubisCubed0      = 0.0f;
+  }
+
+  // Cloud render camera basis (fork — 2026-05-12, C4). Pushed from
+  // updateAtmosphereConstants via setCloudRenderCameraBasis() before
+  // computeLuts runs, so the values here are this-frame-fresh. The Right /
+  // Up vectors are pre-scaled by tan(halfFovX/Y) and aspect ratio so the
+  // shader does just a weighted sum.
+  {
+    args.cloudRenderForwardYUp = m_cloudRenderForwardYUp;
+    args.pad_cr0 = 0.0f;
+    args.cloudRenderRightYUp   = m_cloudRenderRightYUp;
+    args.pad_cr1 = 0.0f;
+    args.cloudRenderUpYUp      = m_cloudRenderUpYUp;
+    args.pad_cr2 = 0.0f;
+  }
+
   return args;
 }
 
@@ -624,6 +679,24 @@ void RtxAtmosphere::computeLuts(Rc<DxvkContext> ctx) {
       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
       VK_ACCESS_SHADER_READ_BIT);
     dispatchCloudAmbientDensityGrid(ctx);
+  }
+
+  // Cloud render compute pass (Nubis Cubed 2023, fork — 2026-05-12, C4).
+  // Runs every frame after the voxel grid bakes so it reads up-to-date
+  // D_sun / D_ambient. The grids are baked round-robin every 8 frames; the
+  // render reads whatever's currently in them, which is at most 7 frames
+  // stale — acceptable for the cumulus-scale features the grids encode.
+  //
+  // NOTE: m_cloudRenderRT is allocated/resized externally via
+  // ensureCloudRenderRT() before this dispatch fires. dispatchCloudRender
+  // early-outs cleanly if the RT isn't valid yet (first frame, zero extent).
+  if (m_cloudRenderRT.isValid()) {
+    ctx->emitMemoryBarrier(0,
+      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+      VK_ACCESS_SHADER_WRITE_BIT,
+      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+      VK_ACCESS_SHADER_READ_BIT);
+    dispatchCloudRender(ctx);
   }
 
   // Final barrier: Ensure all LUTs are written before use in ray tracing
@@ -836,6 +909,93 @@ void RtxAtmosphere::dispatchCloudAmbientDensityGrid(Rc<DxvkContext> ctx) {
   ctx->dispatch(groupsX, groupsY, groupsZ);
 }
 
+void RtxAtmosphere::ensureCloudRenderRT(Rc<DxvkContext> ctx,
+                                          const VkExtent2D& downscaleExtent) {
+  // Bail on degenerate extents (can happen during early frames before resize
+  // events have settled) — allocate on a later frame.
+  if (downscaleExtent.width == 0u || downscaleExtent.height == 0u) {
+    return;
+  }
+
+  const bool extentsMatch = (m_cloudRenderExtent.width  == downscaleExtent.width)
+                         && (m_cloudRenderExtent.height == downscaleExtent.height);
+  if (extentsMatch && m_cloudRenderRT.isValid()) {
+    return;
+  }
+
+  const VkExtent3D extent3D = { downscaleExtent.width, downscaleExtent.height, 1u };
+  m_cloudRenderRT = Resources::createImageResource(
+    ctx,
+    "Atmosphere Cloud Render RT",
+    extent3D,
+    VK_FORMAT_R16G16B16A16_SFLOAT,
+    1,                          // numLayers
+    VK_IMAGE_TYPE_2D,
+    VK_IMAGE_VIEW_TYPE_2D,
+    0,                          // imageCreateFlags
+    VK_IMAGE_USAGE_STORAGE_BIT, // extraUsageFlags (SAMPLED implied)
+    VkClearColorValue{},        // clearValue (zero -- "no cloud, full transmittance")
+    1);                         // mipLevels
+
+  m_cloudRenderExtent = downscaleExtent;
+}
+
+void RtxAtmosphere::setCloudRenderCameraBasis(const Vector3& forwardYUp,
+                                                const Vector3& rightYUp,
+                                                const Vector3& upYUp,
+                                                uint32_t frameIdx) {
+  m_cloudRenderForwardYUp = forwardYUp;
+  m_cloudRenderRightYUp   = rightYUp;
+  m_cloudRenderUpYUp      = upYUp;
+  m_cloudRenderFrameIdx   = frameIdx;
+}
+
+void RtxAtmosphere::dispatchCloudRender(Rc<DxvkContext> ctx) {
+  ScopedGpuProfileZone(ctx, "Atmosphere Cloud Render (Nubis Cubed)");
+
+  if (!m_cloudRenderRT.isValid()) {
+    return;  // ensureCloudRenderRT hasn't allocated yet (first frame with zero extent)
+  }
+
+  // Refresh the AtmosphereArgs buffer so the camera basis + Nubis Cubed
+  // tuning knobs land in the GPU CB before the dispatch reads them.
+  AtmosphereArgs args = getAtmosphereArgs();
+  ctx->updateBuffer(m_constantsBuffer, 0, sizeof(AtmosphereArgs), &args);
+  ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_constantsBuffer);
+
+  // Linear/REPEAT sampler for the cloud noise + voxel grid taps. REPEAT
+  // matches the frac()-tile-wrap convention used everywhere else in the
+  // cloud math (cloudVoxelWorldToUVW and sampleCloudDensityTextured).
+  DxvkSamplerCreateInfo samplerInfo = {};
+  samplerInfo.magFilter    = VK_FILTER_LINEAR;
+  samplerInfo.minFilter    = VK_FILTER_LINEAR;
+  samplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  Rc<DxvkSampler> cloudSampler = m_device->createSampler(samplerInfo);
+
+  ctx->bindResourceBuffer(0, DxvkBufferSlice(m_constantsBuffer, 0, m_constantsBuffer->info().size));
+  ctx->bindResourceView(1, m_cloudNoise3D.view, nullptr);
+  ctx->bindResourceSampler(2, cloudSampler);
+  ctx->bindResourceView(3, m_cloudDSun.view, nullptr);
+  ctx->bindResourceView(4, m_cloudDAmbient.view, nullptr);
+  ctx->bindResourceView(5, m_fastNoise.getView(), nullptr);
+  ctx->bindResourceView(6, m_cloudRenderRT.view, nullptr);
+
+  ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_cloudNoise3D.image);
+  ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_cloudDSun.image);
+  ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_cloudDAmbient.image);
+  ctx->getCommandList()->trackResource<DxvkAccess::Write>(m_cloudRenderRT.image);
+
+  ctx->bindShader(VK_SHADER_STAGE_COMPUTE_BIT, CloudRenderShader::getShader());
+
+  // Shader declares [numthreads(8, 8, 1)].
+  const uint32_t groupsX = (m_cloudRenderExtent.width  + 7u) / 8u;
+  const uint32_t groupsY = (m_cloudRenderExtent.height + 7u) / 8u;
+  ctx->dispatch(groupsX, groupsY, 1);
+}
+
 void RtxAtmosphere::dispatchCloudNoise3DBake(Rc<DxvkContext> ctx) {
   ScopedGpuProfileZone(ctx, "Atmosphere Cloud Noise 3D Bake");
 
@@ -943,6 +1103,9 @@ void RtxAtmosphere::bindResources(Rc<DxvkContext> ctx, VkPipelineBindPoint pipel
   }
   if (m_cloudDAmbient.isValid()) {
     ctx->bindResourceView(BINDING_ATMOSPHERE_CLOUD_D_AMBIENT, m_cloudDAmbient.view, nullptr);
+  }
+  if (m_cloudRenderRT.isValid()) {
+    ctx->bindResourceView(BINDING_ATMOSPHERE_CLOUD_RENDER_RT, m_cloudRenderRT.view, nullptr);
   }
   // Cloud history bindings are wired in fork_hooks::bindAtmosphereLuts (the
   // active call site) and depend on the downscaled-extent ensure step. Left

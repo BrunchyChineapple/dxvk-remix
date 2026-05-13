@@ -116,6 +116,40 @@ public:
   const Resources::Resource& getCloudDAmbient() const { return m_cloudDAmbient; }
 
   /**
+   * \brief Get the cloud render RT (Nubis Cubed 2023, fork — 2026-05-12, C4).
+   *
+   * Screen-space RGBA16F at the downscale render extent containing per-pixel
+   * cloud color (premultiplied, rgb) and view-ray cloud transmittance (alpha).
+   * Produced once per frame by cloud_render.comp.slang via dispatchCloudRender
+   * (called from computeLuts). Visualized standalone via the enum 876 debug
+   * view; will feed the sky-miss composite (C5 of the 2026-05-12 workstream).
+   */
+  const Resources::Resource& getCloudRenderRT() const { return m_cloudRenderRT; }
+
+  /**
+   * \brief Ensure the cloud render RT exists at the requested downscale extent.
+   *
+   * Recreates the RT on resize. Cheap when the extent is unchanged. Called
+   * each frame from RtxAtmosphere::computeLuts before dispatchCloudRender.
+   */
+  void ensureCloudRenderRT(Rc<DxvkContext> ctx, const VkExtent2D& downscaleExtent);
+
+  /**
+   * \brief Push the per-frame camera basis vectors that cloud_render.comp.slang
+   *        consumes for view-ray reconstruction.
+   *
+   * Called from `fork_hooks::updateAtmosphereConstants` before `computeLuts`
+   * runs, so the values land in m_constantsBuffer in time for the cloud-
+   * render dispatch. All in Y-up world space; the Right/Up vectors are
+   * pre-scaled by tan(halfFovX/Y) and aspect ratio so the shader only needs
+   * to do a weighted sum.
+   */
+  void setCloudRenderCameraBasis(const Vector3& forwardYUp,
+                                  const Vector3& rightYUp,
+                                  const Vector3& upYUp,
+                                  uint32_t frameIdx);
+
+  /**
    * \brief Get the EA Importance-Sampled FAST noise view for descriptor binding
    *
    * Returns nullptr if the FAST noise has not been initialized.
@@ -169,6 +203,10 @@ private:
   // every 8 frames. Driven from computeLuts based on the device frame ID.
   void dispatchCloudSunDensityGrid(Rc<DxvkContext> ctx);
   void dispatchCloudAmbientDensityGrid(Rc<DxvkContext> ctx);
+  // Cloud render compute pass (Nubis Cubed 2023, fork — 2026-05-12, C4).
+  // Runs each frame from computeLuts after the voxel grid bakes; produces
+  // m_cloudRenderRT (screen-space premultiplied cloud rgb + transmittance a).
+  void dispatchCloudRender(Rc<DxvkContext> ctx);
 
   // LUT dimensions
   static constexpr uint32_t kTransmittanceLutWidth = 512;   // Increased from 256 for better precision
@@ -210,6 +248,20 @@ private:
   // every 8 frames by dispatchCloudSunDensityGrid / dispatchCloudAmbientDensityGrid.
   Resources::Resource m_cloudDSun;
   Resources::Resource m_cloudDAmbient;
+  // Cloud render RT (Nubis Cubed 2023, fork — 2026-05-12, C4). Screen-space
+  // RGBA16F at downscale extent; produced each frame by dispatchCloudRender.
+  // m_cloudRenderExtent tracks the current allocation so resize triggers a
+  // realloc inside ensureCloudRenderRT.
+  Resources::Resource m_cloudRenderRT;
+  VkExtent2D          m_cloudRenderExtent = { 0u, 0u };
+
+  // Per-frame camera basis for cloud_render.comp.slang. Pushed via
+  // setCloudRenderCameraBasis() from updateAtmosphereConstants before
+  // computeLuts runs; read by getAtmosphereArgs() into m_constantsBuffer.
+  Vector3  m_cloudRenderForwardYUp { 0.0f, 0.0f, 1.0f };
+  Vector3  m_cloudRenderRightYUp   { 1.0f, 0.0f, 0.0f };
+  Vector3  m_cloudRenderUpYUp      { 0.0f, 1.0f, 0.0f };
+  uint32_t m_cloudRenderFrameIdx   { 0u };
   RtxFastNoise m_fastNoise;            // EA Importance-Sampled FAST noise (cloud ray-march jitter)
 
   // Cloud history ping-pong (fork). Screen-space RGBA16F (premultiplied

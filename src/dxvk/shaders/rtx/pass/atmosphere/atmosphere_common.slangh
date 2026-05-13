@@ -1792,6 +1792,134 @@ float sampleDAmbient(vec3 worldPosKm, AtmosphereArgs args, bool isZUp) {
 }
 
 // ===========================================================================
+// Nubis Cubed 2023 lighting helpers
+// (fork — 2026-05-12, C4)
+//
+// Per-sample lighting equations from the Nubis Cubed 2023 paper (pages 137
+// and 142). Consumed by cloud_render.comp.slang to produce the new cloud
+// look. The procedural dim_profile / cloud_sdf proxies (sampleDimProfile,
+// sampleCloudSdf) approximate the offline-authored Decima inputs from
+// cheap-to-evaluate scene state we already have.
+//
+// Spec: docs/superpowers/specs/2026-05-12-cloud-lighting-nubis-cubed-design.md
+// ===========================================================================
+
+// Procedural dim_profile proxy. Decima authors a per-cloud dim_profile in
+// Houdini as a soft NVDF mask that's high in the cumulus interior and low
+// near edges. We approximate with the existing cumulus vertical density
+// profile from the 2026-05-05 vertical-profile workstream, which has the
+// same "high interior, low edges" shape along the slab vertical axis. The
+// codebase's evaluator is cloudTypeProfile(heightFraction, type); we feed
+// args.cloudTypeMean as a sensible scalar (per-pixel type variation is a
+// view-space refinement; the proxy doesn't need it to deliver the perceptual
+// gradient effect that gives cumulus its top-bright / bottom-dark shape).
+float sampleDimProfile(vec3 samplePos, float heightFraction, AtmosphereArgs args) {
+  return saturate(cloudTypeProfile(heightFraction, args.cloudTypeMean));
+}
+
+// Procedural cloud_sdf_distance proxy. Decima bakes a true SDF offline; the
+// Section-2 sigma_ms remap only uses the SDF in [-cloudMsSdfDepth, 0] as a
+// soft modulator, so a cheap proxy suffices. Returns negative inside cloud
+// (in meters), clamped to [-cloudMsSdfDepth*4, 0].
+//
+// Combines two cheap signals:
+//  1) Vertical distance to slab boundary (positive inside slab) — captures
+//     "how far from the nearest slab plane".
+//  2) Density-weighted depth proxy — denser samples are deeper into the
+//     cloud body even if near a vertical boundary.
+float sampleCloudSdf(vec3 samplePos, float heightFraction, float density,
+                     AtmosphereArgs args) {
+  // Vertical signed distance to slab boundary, in meters. cloudThickness is
+  // in km (per atmosphere_args.h:149), so *1000 / 2 → half-thickness in m.
+  float halfThicknessM = args.cloudThickness * 500.0f;
+  float distToSlabCenterM = abs(heightFraction - 0.5f) * args.cloudThickness * 1000.0f;
+  float slabDistM = halfThicknessM - distToSlabCenterM;  // positive inside slab
+
+  // Density-weighted depth proxy (how far inside the dense body).
+  float densityNorm = saturate(density / max(args.cloudDensity, 1e-3f));
+  float densityDepthM = densityNorm * args.cloudMsSdfDepth;
+
+  // Combined negative-inside SDF, clamped. The 0.5 mixes the two so neither
+  // dominates: a thin cloud near the slab center reports moderate depth, a
+  // dense cloud near the slab edge also reports moderate depth.
+  float combinedM = -(slabDistM + densityDepthM) * 0.5f;
+  return clamp(combinedM, -args.cloudMsSdfDepth * 4.0f, 0.0f);
+}
+
+// Henyey-Greenstein phase function — Nubis Cubed flavor (max(denom, 1e-5)
+// guard chosen to match the paper's evaluator). The existing hgPhase()
+// helper above is a slightly different formulation (it clamps g rather than
+// the denominator) — keep both so we don't perturb non-Nubis call sites.
+float hgPhaseNubis(float cosTheta, float g) {
+  float g2 = g * g;
+  float denom = 1.0f + g2 - 2.0f * g * cosTheta;
+  return (1.0f - g2) / (4.0f * kPi * pow(max(denom, 1e-5f), 1.5f));
+}
+
+// Per-sample Nubis Cubed lighting result. `direct` is the sun in-scatter
+// radiance per unit density × stepLen; caller multiplies during integration.
+// `ambient` is the page-142 ambient term, same scaling convention.
+struct NubisCubedLighting {
+  vec3 direct;
+  vec3 ambient;
+};
+
+// Nubis Cubed 2023 per-sample lighting evaluator (pages 137, 142). Takes
+// the sample state (position, height, density) plus the view + sun directions
+// and the lighting source radiances. Returns the pre-density / pre-step
+// in-scatter contribution at this sample — the calling raymarch loop
+// multiplies by density * stepLen during integration.
+//
+// Page-137 direct term:
+//   L_direct = exp(-sigma * D_sun) * HG(cosTheta, g1)
+//            + dim_profile * exp(-sigma_ms * D_sun) * HG(cosTheta, g2)
+//   where sigma_ms is the page-137 magic-constant remap on (cosTheta, sdf).
+//
+// Page-142 ambient term:
+//   L_ambient = pow(1 - dim_profile, 0.5) * exp(-D_ambient)
+//
+// `isZUp` is forwarded to sampleDSun / sampleDAmbient — pass false when
+// samplePos is already in Y-up space (the cloud math's standard convention).
+NubisCubedLighting evalNubisCubedSample(
+    vec3 samplePos, float heightFraction, float density,
+    vec3 viewDir, vec3 sunDir,
+    vec3 sunRadiance, vec3 skyRadiance,
+    AtmosphereArgs args, bool isZUp) {
+
+  // === Input samples ===
+  float dim_profile = sampleDimProfile(samplePos, heightFraction, args);
+  float cloud_sdf   = sampleCloudSdf(samplePos, heightFraction, density, args);
+  float D_sun       = sampleDSun(samplePos, args, isZUp);
+  float D_ambient   = sampleDAmbient(samplePos, args, isZUp);
+  float cosTheta    = dot(viewDir, sunDir);
+
+  // === Direct scattering (paper p. 29 + p. 137) ===
+  float sigma = args.cloudDensity;  // shared extinction coefficient
+  float T_primary = exp(-sigma * D_sun);
+
+  // sigma_ms remap (page 137 magic constants — exposed as RTX_OPTIONs).
+  // sdfFrac: 0 when deep inside cloud, 1 at cloud surface.
+  float sdfFrac = saturate((cloud_sdf + args.cloudMsSdfDepth) / max(args.cloudMsSdfDepth, 1e-4f));
+  float sigma_ms_inner = lerp(args.cloudMsSigmaDeep, args.cloudMsSigmaShallow, sdfFrac);
+  float sunFrac = saturate(cosTheta / max(args.cloudMsSunDotMax, 1e-4f));
+  float sigma_ms = lerp(args.cloudMsSigmaShallow, sigma_ms_inner, sunFrac);
+
+  float M = dim_profile * exp(-sigma_ms * D_sun);
+  float HG1 = hgPhaseNubis(cosTheta, args.cloudPhaseG1);
+  float HG2 = hgPhaseNubis(cosTheta, args.cloudPhaseG2);
+  float L_direct = T_primary * HG1 + M * HG2;
+
+  // === Ambient scattering (paper p. 142) ===
+  float ambient_shape = pow(1.0f - dim_profile, 0.5f);
+  float L_ambient = ambient_shape * exp(-D_ambient);
+
+  NubisCubedLighting result;
+  result.direct  = L_direct  * sunRadiance;
+  result.ambient = L_ambient * skyRadiance;
+  return result;
+}
+
+// ===========================================================================
 // Cloud-on-terrain shadow via D_sun grid sampling
 // (Nubis Cubed 2023, fork — 2026-05-12)
 //

@@ -1174,3 +1174,56 @@ files; this entry exists for rebase-safety / human discoverability.
   *Fixed 6-direction upper-hemisphere integration (zenith + 5 mid-elevation at 30° elevation, 72° azimuth spacing) of `sampleSkyAmbientForVolume(dir, args, AtmosphereSkyViewLut, AtmosphereCloudSkyTransmittanceLut, sampler)` weighted by HG phase against the volumetric anisotropy (0.3). Results scaled by `cloudSkyAmbientStrength`, firefly-filtered, and stored as a single SH entry with zenith as the dominant direction. Gated on `cb.skyMode == 1` and on the strength knob being > 0 so the baseline ships with zero behavior change (`cloudSkyAmbientStrength` default = 0). Consumes the sky-view LUT (slot 202), cloud-sky-transmittance LUT (slot 208), and the cloud-noise sampler (slot 204 — REPEAT, correct on azimuth, never sampled below-horizon). See `docs/superpowers/specs/2026-05-12-volumetric-sky-ambient-design.md`.*
 
 ---
+
+## Commit C4 — Cloud render compute pass + Nubis Cubed equations (fork — 2026-05-12)
+
+The C4 commit of the 2026-05-12 cloud-lighting workstream lands the per-
+pixel screen-space cloud raymarch with the Nubis Cubed 2023 lighting
+equations (paper pp. 137, 142) and a debug view (enum 876) for standalone
+A/B against the existing analytical `evalClouds` rendering. No production
+consumer yet — the sky-miss composite still calls analytical clouds; the
+composite gate lands in C5.
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/cloud_render.comp.slang`** — new file (fork-owned).
+  *Per-pixel view-direction raymarch through the cloud slab using the Nubis Cubed lighting equations. Reconstructs viewDir from CPU-pushed Y-up basis vectors (`cloudRenderForwardYUp` / `RightYUp` / `UpYUp` in `AtmosphereArgs`, pre-scaled by tan(halfFovX/Y) and aspect). Intersects the curvature-adjusted base/top cloud shells (`intersectSphere`) to get [tEntry, tExit]; marches with per-pixel FAST-noise jitter. At each density-passing sample calls `evalNubisCubedSample` for the page-137 two-HG-lobe direct term + page-142 ambient exp(-D_ambient). Writes premultiplied rgb + view-ray transmittance alpha to AtmosphereCloudRender at slot 209.*
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_args.h`** — fork-owned additions.
+  *Adds 8 floats of Nubis Cubed lighting params (`cloudPhaseG1/G2`, `cloudMsSunDotMax`, `cloudMsSigmaShallow/Deep`, `cloudMsSdfDepth`) + `cloudRenderFrameIdx` + pad; plus 3 × (vec3 + pad) for the cloud-render camera basis (`cloudRenderForwardYUp`, `cloudRenderRightYUp`, `cloudRenderUpYUp`). All consumed exclusively by `cloud_render.comp.slang`; the basis is pushed CPU-side from `updateAtmosphereConstants` before `computeLuts` runs so the values land in m_constantsBuffer in time.*
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_common.slangh`** — fork-owned additions.
+  *Adds five Nubis Cubed lighting helpers (~120 LOC) right after `sampleDAmbient`: `sampleDimProfile` (proxy on `cloudTypeProfile`), `sampleCloudSdf` (slab-distance + density-weighted-depth proxy, returns negative-inside meters clamped to [-cloudMsSdfDepth*4, 0]), `hgPhaseNubis` (paper-flavored HG with denom guard — distinct from the existing `hgPhase` to avoid perturbing non-Nubis callers), `NubisCubedLighting` struct, and `evalNubisCubedSample` (the paper-page-137 two-HG-lobe direct term + page-142 ambient exp(-D_ambient)). Calls `sampleDSun` / `sampleDAmbient` from C1.*
+
+- **`src/dxvk/shaders/rtx/pass/common_binding_indices.h`** — index-only, fork.
+  *Adds `BINDING_ATMOSPHERE_CLOUD_RENDER_RT = 209` and a `TEXTURE2D` entry in `COMMON_RAYTRACING_BINDINGS`. Slot 209 was reserved between 208 (cloud-sky-transmittance LUT) and 210 (cloud D_sun); fills the gap.*
+
+- **`src/dxvk/shaders/rtx/pass/common_bindings.slangh`** — index-only, fork.
+  *Declares `Texture2D<float4> AtmosphereCloudRender` at slot 209 with a 6-line comment block. Consumed by the cloud render RT debug view (enum 876) and — in C5 — by the sky-miss composite path.*
+
+- **`src/dxvk/rtx_render/rtx_atmosphere.h`** — fork-owned additions.
+  *Adds `m_cloudRenderRT` (Resources::Resource), `m_cloudRenderExtent` (VkExtent2D), `m_cloudRenderForwardYUp` / `RightYUp` / `UpYUp` (Vector3), `m_cloudRenderFrameIdx` (uint32_t); plus public methods `getCloudRenderRT()`, `ensureCloudRenderRT(ctx, downscaleExtent)`, `setCloudRenderCameraBasis(forward, right, up, frameIdx)`; plus private `dispatchCloudRender(ctx)`.*
+
+- **`src/dxvk/rtx_render/rtx_atmosphere.cpp`** — fork-owned additions.
+  *Adds `#include <rtx_shaders/cloud_render.h>`, the `CloudRenderShader` ManagedShader class (7-slot binding parameter list), `ensureCloudRenderRT` (resize-aware alloc of RGBA16F at downscale extent), `setCloudRenderCameraBasis` (member-state setter), `dispatchCloudRender` (rebuilds the args buffer, binds the 7 slots, dispatches 8×8 thread groups), populates the 6 Nubis Cubed lighting fields + 3-basis-vector camera fields + frameIdx into `AtmosphereArgs` in `getAtmosphereArgs()`, calls `dispatchCloudRender(ctx)` from `computeLuts` after the voxel grid bakes, and binds slot 209 (`BINDING_ATMOSPHERE_CLOUD_RENDER_RT`) in `bindResources` (which mirrors the active `bindAtmosphereLuts` site).*
+
+- **`src/dxvk/rtx_render/rtx_options.h`** — fork-owned additions.
+  *Adds 6 `RTX_OPTION` declarations in the `rtx.atmosphere` cluster: `cloudPhaseG1` (default 0.8), `cloudPhaseG2` (0.3), `cloudMsSunDotMax` (0.9), `cloudMsSigmaShallow` (0.25), `cloudMsSigmaDeep` (0.05), `cloudMsSdfDepth` (128.0 meters). All surface as ImGui sliders in the Nubis Cubed Lighting collapsing block.*
+
+- **`src/dxvk/rtx_render/rtx_fork_atmosphere.cpp`** — fork-owned additions.
+  *In `updateAtmosphereConstants`: reads RtCamera basis (forward/right/up + position) + fov + aspect, applies isZUp swap, pre-scales right/up by tan(halfFovX/Y) and aspect ratio, and pushes via `setCloudRenderCameraBasis` before `computeLuts`. Also calls `ensureCloudRenderRT` with the current downscale extent. In `bindAtmosphereLuts`: adds the cloud render RT bind at slot 209. Adds new `getCloudRenderRT(ctx)` accessor for the debug view. Adds a "Nubis Cubed Lighting (fork — 2026-05-12)" ImGui collapsing header inside the Clouds tree with 6 sliders mapping to the 6 new RTX_OPTIONs.*
+
+- **`src/dxvk/rtx_render/rtx_context.h`** — fork-touchpoint inline tweak.
+  *Adds forward declaration `Resources::Resource fork_hooks::getCloudRenderRT(RtxContext&)` and a matching `friend` line inside `class RtxContext`. Mirrors the existing getCloudDSun / getCloudDAmbient pattern.*
+
+- **`src/dxvk/shaders/rtx/utility/debug_view_indices.h`** — index-only, fork.
+  *Adds `DEBUG_VIEW_CLOUD_RENDER_RT = 876` with a 4-line comment block.*
+
+- **`src/dxvk/shaders/rtx/pass/debug_view/debug_view.comp.slang`** — fork-owned addition.
+  *Adds a `[[vk::binding]]`-decorated `Texture2D<float4> DebugViewCloudRenderRT` declaration and a `case DEBUG_VIEW_CLOUD_RENDER_RT` arm in the main switch that samples the RT via Load and returns its rgb (alpha is the view-ray transmittance, not relevant to the standalone debug view).*
+
+- **`src/dxvk/shaders/rtx/pass/debug_view/debug_view_binding_indices.h`** — index-only, fork. (Inventory substitution: not listed in the Task 4 spec, but structurally required for the debug view case to access the cloud render RT — mirrors the D_sun/D_ambient pattern at slots 35/36.)
+  *Adds `DEBUG_VIEW_BINDING_CLOUD_RENDER_RT_INPUT = 37`.*
+
+- **`src/dxvk/rtx_render/rtx_debug_view.cpp`** — fork-owned addition.
+  *Adds a `TEXTURE2D(DEBUG_VIEW_BINDING_CLOUD_RENDER_RT_INPUT)` line in the debug-view shader's BEGIN_PARAMETER block, binds the cloud render RT each dispatch via `fork_hooks::getCloudRenderRT`, and adds a label + multi-line description block to the debug-view selector list ("Atmosphere: Cloud Render RT (Nubis Cubed)").*
+
+---

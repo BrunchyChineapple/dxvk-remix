@@ -74,6 +74,13 @@
 // direction. See docs/superpowers/specs/2026-05-12-volumetric-sky-ambient-design.md.
 #define BINDING_ATMOSPHERE_CLOUD_SKY_TRANSMITTANCE_LUT 208
 
+// Cloud render RT (Nubis Cubed 2023, fork — 2026-05-12). RGBA16F screen-space
+// RT at downscale resolution containing per-pixel cloud color (premultiplied)
+// in rgb and cloud transmittance in alpha. Produced by cloud_render.comp.slang
+// once per frame from RtxAtmosphere::computeLuts; visualized standalone via
+// DEBUG_VIEW_CLOUD_RENDER_RT (876) before sky-miss composite lands in C5.
+#define BINDING_ATMOSPHERE_CLOUD_RENDER_RT 209
+
 // Cloud voxel grids (Nubis Cubed 2023, fork — 2026-05-12). 256x256x32 R16F
 // precomputed grids storing summed optical depth along the sun direction
 // (D_sun) and zenith (D_ambient) at each voxel of a camera-centered tile-
@@ -136,6 +143,7 @@
   TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_HISTORY_PREV)                  \
   RW_TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_HISTORY_CURR)                \
   TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_SKY_TRANSMITTANCE_LUT)          \
+  TEXTURE2D(BINDING_ATMOSPHERE_CLOUD_RENDER_RT)                     \
   TEXTURE3D(BINDING_ATMOSPHERE_CLOUD_D_SUN)                         \
   TEXTURE3D(BINDING_ATMOSPHERE_CLOUD_D_AMBIENT)
 

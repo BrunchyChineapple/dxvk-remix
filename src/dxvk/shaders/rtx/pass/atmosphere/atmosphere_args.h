@@ -197,4 +197,32 @@ struct AtmosphereArgs {
   float pad_cloudVoxel0;
   float pad_cloudVoxel1;
   float pad_cloudVoxel2;
+
+  // ----- Nubis Cubed 2023 lighting params (fork — 2026-05-12, C4) -----
+  // Consumed by cloud_render.comp.slang via evalNubisCubedSample.
+  float cloudPhaseG1;              // Primary HG asymmetry (silver-lining peak)
+  float cloudPhaseG2;              // Secondary HG asymmetry (broader envelope)
+  float cloudMsSunDotMax;          // sigma_ms remap upper bound on sun_dot (page-137 magic constant)
+  float cloudMsSigmaShallow;       // sigma_ms at cloud surface / shallow penetration
+
+  float cloudMsSigmaDeep;          // sigma_ms deep inside cloud (saturated)
+  float cloudMsSdfDepth;           // SDF depth in meters at which sigma_ms saturates to deep
+  uint  cloudRenderFrameIdx;       // Frame counter for fastJitter() in cloud_render.comp.slang
+  float pad_nubisCubed0;           // 16-byte alignment
+
+  // ----- Cloud render camera basis (fork — 2026-05-12, C4) -----
+  // Pre-computed Y-up basis vectors (camera at origin). Per-pixel view direction
+  // is reconstructed in cloud_render.comp.slang as:
+  //   viewDirYUp = normalize(forward + ndc.x * rightScaled + ndc.y * upScaled)
+  // The `Right` and `Up` vectors are pre-multiplied by tan(halfFovX/Y) so the
+  // shader doesn't need fov/aspect knowledge. All in Y-up world (cloud math
+  // convention — camera at origin).
+  vec3  cloudRenderForwardYUp;
+  float pad_cr0;
+
+  vec3  cloudRenderRightYUp;       // Pre-scaled by tan(halfFovX) * aspectRatio
+  float pad_cr1;
+
+  vec3  cloudRenderUpYUp;          // Pre-scaled by tan(halfFovY)
+  float pad_cr2;
 };

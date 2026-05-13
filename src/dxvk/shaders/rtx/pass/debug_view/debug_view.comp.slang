@@ -99,6 +99,12 @@ Texture3D<float> DebugViewCloudDSun;
 // Visualized by DEBUG_VIEW_CLOUD_D_AMBIENT.
 [[vk::binding(DEBUG_VIEW_BINDING_CLOUD_D_AMBIENT_INPUT)]]
 Texture3D<float> DebugViewCloudDAmbient;
+
+// Fork: Nubis Cubed screen-space cloud render RT (RGBA16F, premultiplied
+// radiance in rgb + cloud transmittance in alpha). Visualized by
+// DEBUG_VIEW_CLOUD_RENDER_RT (enum 876).
+[[vk::binding(DEBUG_VIEW_BINDING_CLOUD_RENDER_RT_INPUT)]]
+Texture2D<float4> DebugViewCloudRenderRT;
 [[vk::binding(DEBUG_VIEW_BINDING_VOLUME_RESERVOIRS_INPUT)]]
 Texture3D<uint4> VolumeReservoirs;
 
@@ -454,6 +460,25 @@ vec4 loadInput(inout RNG randomState, ivec2 threadId)
           DebugViewCloudDSun, LinearSampler);
 
       value = vec4(shadow, shadow, shadow, 1.0f);
+    }
+    break;
+  case DEBUG_VIEW_CLOUD_RENDER_RT:
+    {
+      // Fork diagnostic. Visualizes the Nubis Cubed cloud render RT
+      // produced by cloud_render.comp.slang (C4 of the 2026-05-12
+      // workstream). The RT is at downscale extent; map pixel UV directly
+      // to the texture via Load. Premultiplied radiance is shown as-is;
+      // alpha (cloud transmittance) is ignored for the debug case — what
+      // matters here is the per-pixel cloud color from the Nubis Cubed
+      // lighting equations (top-bright / bottom-dark cumulus gradient,
+      // silver lining at backlit edges, less-flat shadow side).
+      //
+      // Compare against the live sky (debug view off) to A/B this against
+      // the existing analytical evalClouds rendering. The cloud-render RT
+      // value is the same scene as the live sky's cloud layer minus the
+      // sky-miss composite (which still uses analytical clouds in C4).
+      vec4 cloudSample = DebugViewCloudRenderRT.Load(int3(threadId, 0));
+      value = vec4(cloudSample.rgb, 1.0f);
     }
     break;
   case DEBUG_VIEW_NRC_UPDATE_RADIANCE:
