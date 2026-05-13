@@ -150,6 +150,9 @@ namespace dxvk {
         TEXTURE3D(4)
         TEXTURE2DARRAY(5)
         RW_TEXTURE2D(6)
+        TEXTURE2D(7)
+        TEXTURE2D(8)
+        SAMPLER(9)
       END_PARAMETER()
     };
     PREWARM_SHADER_PIPELINE(CloudRenderShader);
@@ -1012,6 +1015,18 @@ void RtxAtmosphere::dispatchCloudRender(Rc<DxvkContext> ctx) {
   samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   Rc<DxvkSampler> cloudSampler = m_device->createSampler(samplerInfo);
 
+  // Linear/CLAMP sampler for the sky-view LUT + cloud-sky-transmittance LUT.
+  // CLAMP is mandatory — sky-view LUT is keyed by (azimuth, elevation) and
+  // REPEAT would alias the south pole onto the north.
+  DxvkSamplerCreateInfo skyViewSamplerInfo = {};
+  skyViewSamplerInfo.magFilter    = VK_FILTER_LINEAR;
+  skyViewSamplerInfo.minFilter    = VK_FILTER_LINEAR;
+  skyViewSamplerInfo.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+  skyViewSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  skyViewSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  skyViewSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  Rc<DxvkSampler> skyViewSampler = m_device->createSampler(skyViewSamplerInfo);
+
   ctx->bindResourceBuffer(0, DxvkBufferSlice(m_constantsBuffer, 0, m_constantsBuffer->info().size));
   ctx->bindResourceView(1, m_cloudNoise3D.view, nullptr);
   ctx->bindResourceSampler(2, cloudSampler);
@@ -1019,11 +1034,20 @@ void RtxAtmosphere::dispatchCloudRender(Rc<DxvkContext> ctx) {
   ctx->bindResourceView(4, m_cloudDAmbient.view, nullptr);
   ctx->bindResourceView(5, m_fastNoise.getView(), nullptr);
   ctx->bindResourceView(6, m_cloudRenderRT.view, nullptr);
+  ctx->bindResourceView(7, m_skyViewLut.isValid() ? m_skyViewLut.view : nullptr, nullptr);
+  ctx->bindResourceView(8, m_cloudSkyTransmittanceLut.isValid() ? m_cloudSkyTransmittanceLut.view : nullptr, nullptr);
+  ctx->bindResourceSampler(9, skyViewSampler);
 
   ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_cloudNoise3D.image);
   ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_cloudDSun.image);
   ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_cloudDAmbient.image);
   ctx->getCommandList()->trackResource<DxvkAccess::Write>(m_cloudRenderRT.image);
+  if (m_skyViewLut.isValid()) {
+    ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_skyViewLut.image);
+  }
+  if (m_cloudSkyTransmittanceLut.isValid()) {
+    ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_cloudSkyTransmittanceLut.image);
+  }
 
   ctx->bindShader(VK_SHADER_STAGE_COMPUTE_BIT, CloudRenderShader::getShader());
 

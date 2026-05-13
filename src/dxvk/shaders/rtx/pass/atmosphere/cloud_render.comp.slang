@@ -90,6 +90,20 @@ Texture2DArray<float2> AtmosphereFastNoise;
 layout(binding = 6, rgba16f)
 RWTexture2D<float4> cloudRenderOutput;
 
+// Sky-view LUT + cloud-sky-transmittance LUT for the page-142 ambient
+// term. sampleSkyAmbientForVolume in atmosphere_common.slangh consumes
+// these as explicit parameters (so the helper compiles in any TU).
+// Linear/CLAMP sampler — sky-view LUT is keyed by (azimuth, elevation);
+// REPEAT would alias the south pole onto the north.
+layout(binding = 7)
+Texture2D<float4> AtmosphereSkyViewLut;
+
+layout(binding = 8)
+Texture2D<float> AtmosphereCloudSkyTransmittanceLut;
+
+layout(binding = 9)
+SamplerState AtmosphereSkyViewSampler;
+
 // Include the helper library AFTER the texture globals are declared so the
 // ATMOSPHERE_AVAILABLE-gated helper bodies (sampleDSun / sampleDAmbient /
 // fastJitter / etc.) resolve to our local declarations.
@@ -165,23 +179,29 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
   float stepLen = (tExit - tEntry) / float(sampleCount);
 
   // ===== Per-ray lighting source radiances =====
-  // sunRadiance is the existing sunIlluminance (already includes user-tuned
-  // intensity, with Rayleigh extinction applied — warm/orange at low sun
-  // elevation, white at high sun).
+  // sunRadiance: the existing sunIlluminance (user-tuned intensity, with
+  // Rayleigh extinction applied — warm at low sun, white at high sun).
   //
-  // skyRadiance for the ambient term remains a sun-tinted stand-in (no
-  // sky-view-LUT plumbing into this compute pass yet — that's a follow-up).
-  // The 0.20f magnitude is ~Wrenninge's deep-scatter-floor scale (albedo/pi
-  // ~= 0.32 in the prior path); below that, the cumulus bulk reads gray at
-  // sunset because the anisotropic HG lobes only contribute to view-aligned-
-  // with-sun pixels, and the rest of the cloud has no warm light source.
-  // With this scale, sunset cumulus picks up the warm sun-tint across the
-  // bulk (matches the paper's pp. 122/132/171-173 sunset renders); at noon
-  // sunIlluminance is white so this term reads as a mild brightening that
-  // tunes via cloudPhaseG1/G2 anisotropy.
+  // skyRadiance: sampled from the sky-view LUT at the sun direction (clamped
+  // to a hair above horizon so we don't return zero at exactly-on-horizon sun).
+  // This is a deliberate deviation from page-142's "zenith ambient" — zenith
+  // at sunset is bluer than the horizon, so sampling there would tint sunset
+  // cumulus bulk blue. Sampling at the sun direction gives the actual warm-
+  // orange forward-scatter atmosphere color that makes sunset cumulus glow
+  // in the paper's pp. 122/132/171-173 renders. Cloud occlusion is folded
+  // in via the existing cloud-sky-transmittance LUT (so heavily overcast
+  // pixels darken the ambient further). At noon, sun is near zenith, so
+  // this collapses to the page-142 zenith sample anyway.
   vec3 sunDirYUp = normalize(args.sunDirection);
   vec3 sunRadiance = args.sunIlluminance;
-  vec3 skyRadiance = args.sunIlluminance * 0.20f;
+
+  vec3 sunDirForAmbient = sunDirYUp;
+  sunDirForAmbient.y = max(sunDirForAmbient.y, 0.05f);
+  sunDirForAmbient = normalize(sunDirForAmbient);
+  vec3 skyRadiance = sampleSkyAmbientForVolume(sunDirForAmbient, args,
+                                                AtmosphereSkyViewLut,
+                                                AtmosphereCloudSkyTransmittanceLut,
+                                                AtmosphereSkyViewSampler);
 
   // ===== View-ray raymarch =====
   // evalNubisCubedSample internally uses sigma = args.cloudDensity (no doubling
