@@ -133,6 +133,23 @@ namespace fork_hooks {
         const uint32_t frameIdx = static_cast<uint32_t>(ctx.m_device->getCurrentFrameId());
         ctx.m_atmosphere->setCloudRenderCameraBasis(forwardYUp, rightScaled, upScaled, frameIdx);
 
+        // Push the camera world position (Y-up km) for the C6 voxel-grid
+        // cloud-on-terrain shadow plumbing. The G-buffer worldPos that the
+        // helper consumes is in engine game units; the helper converts to
+        // km internally via worldUnitsPerKm. We do the matching conversion
+        // here CPU-side: km = gameUnits / worldUnitsPerKm. The isZUp swap
+        // mirrors the basis-vector swap above so the helper's camera-relative
+        // subtraction lands in the right frame.
+        {
+          const Vector3 cameraPosWorldUnits = camera.getPosition(/*freecam=*/false);
+          const Vector3 cameraPosWorldUnitsYUp = toYUp(cameraPosWorldUnits);
+          const float sceneScaleSafe = std::max(RtxOptions::sceneScale(), 1e-5f);
+          const float worldUnitsPerKm = 100000.0f * sceneScaleSafe;
+          const float kmPerWorldUnit = 1.0f / worldUnitsPerKm;
+          const Vector3 cameraPosYUpKm = cameraPosWorldUnitsYUp * kmPerWorldUnit;
+          ctx.m_atmosphere->setCloudShadowCameraPosition(cameraPosYUpKm);
+        }
+
         // Allocate the cloud render RT at the downscale extent (the resolution
         // the geometry resolver raygen writes to and DLSS sees as its input).
         const VkExtent3D downscaledExtent3D = ctx.getResourceManager().getDownscaleDimensions();
@@ -784,6 +801,32 @@ namespace fork_hooks {
               "AtmosphereCloudRender RT (Nubis Cubed) instead of calling analytical "
               "evalClouds. PSR / indirect / reflection rays continue to use "
               "analytical clouds regardless. Default off until visual confirmation.");
+
+          // Cloud-on-terrain shadow gate (fork — 2026-05-12, C6).
+          // When checked, sampleAtmosphereSunLight / sampleAtmosphereSunLightVolume
+          // ratio-correct the legacy evalCloudGroundShadow uniform-dimmer with
+          // the 3D D_sun voxel-grid lookup (sampleCloudGroundShadow_OptionB).
+          // Terrain shows cumulus-shaped drifting shadow patches.
+          ImGui::Separator();
+          ImGui::TextDisabled("Cloud-on-terrain shadows (C6)");
+          RemixGui::Checkbox("Voxel-grid cloud shadows (NEE)",
+                             &RtxOptions::cloudVoxelShadowsEnableObject());
+          RemixGui::SetTooltipToLastWidgetOnHover(
+              "When on, sampleAtmosphereSunLight + sampleAtmosphereSunLightVolume "
+              "apply a ratio correction that replaces the 2D coverage-proxy "
+              "evalCloudGroundShadow with the 3D D_sun voxel-grid lookup "
+              "(sampleCloudGroundShadow_OptionB). Terrain gets cumulus-shaped "
+              "drifting shadow patches. Default off until visual confirmation.");
+          RemixGui::DragFloat("Cloud Shadow March Strength",
+                              &RtxOptions::cloudShadowMarchStrengthObject(),
+                              0.05f, 0.0f, 4.0f, "%.2f", sliderFlags);
+          RemixGui::SetTooltipToLastWidgetOnHover(
+              "Multiplier on the Beer-Lambert exponent inside "
+              "sampleCloudGroundShadow_OptionB: "
+              "transmittance = exp(-D_sun * cloudDensity * strength). "
+              "1.0 = physical baseline; higher values darken cloud-on-terrain "
+              "shadows, lower values lighten them. Only consumed when "
+              "voxel-grid cloud shadows are on.");
         }
 
         ImGui::Separator();

@@ -905,7 +905,36 @@ AtmosphereSunSample sampleAtmosphereSunLight(vec3 surfacePos, vec3 surfaceNormal
   result.radiance = args.sunIlluminance * transmittance * mieModulation * sunVisibility * args.sunRayBrightness * 0.5f;
   result.solidAnglePdf = 1.0f;  // Directional light has delta PDF, but we use 1.0 for math
   result.valid = any(transmittance > vec3(0.0f));
-  
+
+#ifdef ATMOSPHERE_AVAILABLE
+  // Voxel-grid cloud-on-terrain shadow wire-in (fork — 2026-05-12, C6).
+  // Replaces the multiplicative shadow contribution baked into
+  // result.radiance by getTransmittanceToSun -> evalCloudGroundShadow with
+  // the position-aware 3D D_sun grid lookup. Ratio correction (not a path
+  // rewrite) is intentional: getTransmittanceToSun is also called with the
+  // sentinel position vec3(0,0,0) from computeGroundReflectionAnalytical,
+  // and feeding that sentinel into the voxel-grid lookup would poison the
+  // multiscattering analytical path globally. By correcting at the NEE
+  // entry point only, the surface direct-lighting path sees the voxel-grid
+  // shadow while the analytical multiscatter continues to consume the
+  // legacy uniform-dimmer shadow — preserving the cloud-shadow-map post-
+  // mortem's hard-won correctness invariant.
+  if (args.cloudVoxelShadowsEnable != 0u) {
+    // evalCloudGroundShadow takes the Y-up sun direction; result.direction
+    // has already been isZUp-swapped above, so pass it as the Y-up vector
+    // by un-swapping when needed.
+    const vec3 sunDirYUpForLegacy = isZUp
+        ? vec3(result.direction.x, result.direction.z, result.direction.y)
+        : result.direction;
+    const float oldShadow = evalCloudGroundShadow(sunDirYUpForLegacy, args);
+    const float newShadow = sampleCloudGroundShadow_OptionB(
+        surfacePos, result.direction, args, isZUp);
+    if (oldShadow > 0.001f) {
+      result.radiance *= (newShadow / oldShadow);
+    }
+  }
+#endif
+
   // Get soft shadow parameters based on Mie anisotropy
   getSunSoftShadowParams(args.mieAnisotropy, result.coneAngle, result.numSamples);
 
@@ -1113,7 +1142,26 @@ AtmosphereVolumeSunSample sampleAtmosphereSunLightVolume(vec3 volumePos, vec3 vi
   // Boost brightness by 10x for volumetrics since they need more energy to be visible
   result.radiance = args.sunIlluminance * transmittance * phase * mieModulation * sunVisibility * args.sunRayBrightness * 5.0f;
   result.valid = any(transmittance > vec3(0.0f));
-  
+
+#ifdef ATMOSPHERE_AVAILABLE
+  // Voxel-grid cloud-on-terrain shadow wire-in for volumetric NEE
+  // (fork — 2026-05-12, C6). Same ratio-correction pattern as the surface
+  // sampleAtmosphereSunLight path above. The volumePos is in engine game
+  // units (same frame as the surface worldPos); sampleCloudGroundShadow_OptionB
+  // handles the units conversion + camera-relative reframe internally.
+  if (args.cloudVoxelShadowsEnable != 0u) {
+    const vec3 sunDirYUpForLegacy = isZUp
+        ? vec3(result.direction.x, result.direction.z, result.direction.y)
+        : result.direction;
+    const float oldShadow = evalCloudGroundShadow(sunDirYUpForLegacy, args);
+    const float newShadow = sampleCloudGroundShadow_OptionB(
+        volumePos, result.direction, args, isZUp);
+    if (oldShadow > 0.001f) {
+      result.radiance *= (newShadow / oldShadow);
+    }
+  }
+#endif
+
   return result;
 }
 
@@ -1983,6 +2031,14 @@ bool intersectCloudSlabBottomFromBelow(vec3 originYUp, vec3 dirYUp,
 // can be invoked from both the global-binding production path and the
 // debug-view path that uses its own binding layout. Both wrappers below
 // pass the production call shape (worldPos, sunDir, args, isZUp).
+//
+// worldPos is in engine-native game units (the same frame the G-buffer
+// MinimalSurfaceInteraction::position exposes). sunDir is unitless. The
+// helper converts game-units → km internally via args.worldUnitsPerKm
+// (populated CPU-side from RtxOptions::sceneScale) and re-expresses the
+// surface position camera-relative for the voxel-grid UVW lookup (the
+// grid is camera-centered with horizontal tile-wrap; see
+// cloudVoxelWorldToUVW above).
 float sampleCloudGroundShadow_OptionB_impl(vec3 worldPos, vec3 sunDir,
                                             AtmosphereArgs args, bool isZUp,
                                             Texture3D<float> dSunTex,
@@ -1993,35 +2049,49 @@ float sampleCloudGroundShadow_OptionB_impl(vec3 worldPos, vec3 sunDir,
   const vec3 worldPosYUp = isZUp ? vec3(worldPos.x, worldPos.z, worldPos.y) : worldPos;
   const vec3 sunDirYUp   = isZUp ? vec3(sunDir.x,   sunDir.z,   sunDir.y)   : sunDir;
 
+  // Convert the surface position from engine game units to kilometers.
+  // worldUnitsPerKm is derived CPU-side from RtxOptions::sceneScale (cm per
+  // game unit), so 1 km = 100000 cm = 100000 * sceneScale game units. The
+  // cloud math elsewhere (cloudAltitude, cloudVoxelGridVerticalKm,
+  // cloudVoxelGridExtentKm) is in km, so the conversion is required for the
+  // slab + voxel-grid lookups to land at the right altitude.
+  const float kmPerWorldUnit = 1.0f / max(args.worldUnitsPerKm, 1e-6f);
+  const vec3  worldPosKm     = worldPosYUp * kmPerWorldUnit;
+
   // If the surface is above the slab, no cloud above it — full sun.
+  // Comparing world-absolute Y-up km against the world-absolute slab top.
   const float slabTopY = args.cloudAltitude + args.cloudVoxelGridVerticalKm;
-  if (worldPosYUp.y > slabTopY) {
+  if (worldPosKm.y > slabTopY) {
     return 1.0f;
   }
 
-  // Project upward along the sun ray to the slab-bottom plane. If the sun
-  // is below horizon or otherwise unreachable, conservatively return full
-  // sun (the existing per-direction sun visibility test elsewhere already
-  // gates lighting in that case).
+  // Project upward along the sun ray to the slab-bottom plane (Y =
+  // args.cloudAltitude, world-absolute km). If the sun is below horizon or
+  // otherwise unreachable, conservatively return full sun (the existing
+  // per-direction sun visibility test elsewhere already gates lighting in
+  // that case).
   float tToEntry;
-  if (!intersectCloudSlabBottomFromBelow(worldPosYUp, sunDirYUp, args, tToEntry)) {
+  if (!intersectCloudSlabBottomFromBelow(worldPosKm, sunDirYUp, args, tToEntry)) {
     return 1.0f;
   }
-  const vec3 cloudEntryPosYUp = worldPosYUp + tToEntry * sunDirYUp;
+  const vec3 cloudEntryPosKm = worldPosKm + tToEntry * sunDirYUp;
 
   // Sample D_sun at the slab-entry voxel. cloudVoxelWorldToUVW expects
-  // the position in the SAME frame the bake side used (camera-centered,
-  // Y-up). Passing isZUp=false because we've already done the swap.
-  const vec3 uvw = cloudVoxelWorldToUVW(cloudEntryPosYUp, args, /*isZUp=*/false);
+  // a camera-centered Y-up km position because the voxel grid was baked
+  // camera-centered (see cloudVoxelUVWToWorld). Subtract the camera world
+  // position (also Y-up km) to obtain the camera-relative coordinate; the
+  // frac() inside cloudVoxelWorldToUVW then tile-wraps the horizontal axes.
+  const vec3 cloudEntryCamRelKm = cloudEntryPosKm - args.cameraWorldPosYUpKm;
+  const vec3 uvw = cloudVoxelWorldToUVW(cloudEntryCamRelKm, args, /*isZUp=*/false);
   const float opticalDepth = dSunTex.SampleLevel(dSunSampler, uvw, 0).r;
 
-  // Beer-Lambert to transmittance. Task 6 will introduce a
-  // cloudShadowMarchStrength tuning knob; until then a unit multiplier
-  // keeps the integral physical-ish (transmittance = exp(-OD * density)).
-  // The diagnostic's only requirement is that the spatial structure of
-  // the result reflects the D_sun grid — the absolute magnitude is not
-  // load-bearing for the enum-875 visual gate.
-  const float transmittance = exp(-opticalDepth * args.cloudDensity);
+  // Beer-Lambert to transmittance.
+  //   transmittance = exp(-D_sun * cloudDensity * cloudShadowMarchStrength)
+  // cloudShadowMarchStrength is a user-facing exponent multiplier (1.0 =
+  // physical baseline; >1 darkens; <1 lightens). cloudDensity carries the
+  // engine-wide cloud opacity convention so this stays consistent with the
+  // single-tap evalCloudGroundShadow it replaces.
+  const float transmittance = exp(-opticalDepth * args.cloudDensity * args.cloudShadowMarchStrength);
 
   // Mix with the existing strength knob so the helper degrades to 1.0
   // (no shadow) when the user has shadow strength at zero.

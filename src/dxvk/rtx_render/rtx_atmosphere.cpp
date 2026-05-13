@@ -481,6 +481,28 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.pad_c5_2 = 0u;
   }
 
+  // Voxel-grid cloud-on-terrain shadow plumbing (fork — 2026-05-12, C6).
+  //   * cloudVoxelShadowsEnable / cloudShadowMarchStrength surface the C6
+  //     RTX_OPTIONs to the shader.
+  //   * worldUnitsPerKm derives from RtxOptions::sceneScale (cm per game
+  //     unit): 1 km = 100000 cm and 1 cm = sceneScale game units, so
+  //     1 km = 100000 * sceneScale game units. Matches the canonical
+  //     getMeterToWorldUnitScale = 100 * sceneScale (world units per meter)
+  //     convention used everywhere else in the runtime.
+  //   * cameraWorldPosYUpKm is pushed by setCloudShadowCameraPosition()
+  //     before computeLuts runs; default value is zero (no
+  //     setCloudShadowCameraPosition call yet → camera-relative reframe
+  //     reduces to "absolute frame", and the helper is gated off by default).
+  {
+    args.cloudVoxelShadowsEnable  = RtxOptions::cloudVoxelShadowsEnable() ? 1u : 0u;
+    args.cloudShadowMarchStrength = RtxOptions::cloudShadowMarchStrength();
+    const float sceneScale = std::max(RtxOptions::sceneScale(), 1e-5f);
+    args.worldUnitsPerKm = 100000.0f * sceneScale;
+    args.pad_c6_0 = 0.0f;
+    args.cameraWorldPosYUpKm = m_cameraWorldPosYUpKm;
+    args.pad_c6_1 = 0.0f;
+  }
+
   return args;
 }
 
@@ -959,6 +981,10 @@ void RtxAtmosphere::setCloudRenderCameraBasis(const Vector3& forwardYUp,
   m_cloudRenderRightYUp   = rightYUp;
   m_cloudRenderUpYUp      = upYUp;
   m_cloudRenderFrameIdx   = frameIdx;
+}
+
+void RtxAtmosphere::setCloudShadowCameraPosition(const Vector3& cameraWorldPosYUpKm) {
+  m_cameraWorldPosYUpKm = cameraWorldPosYUpKm;
 }
 
 void RtxAtmosphere::dispatchCloudRender(Rc<DxvkContext> ctx) {

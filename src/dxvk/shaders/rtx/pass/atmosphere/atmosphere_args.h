@@ -236,4 +236,28 @@ struct AtmosphereArgs {
   uint  pad_c5_0;                  // 16-byte alignment
   uint  pad_c5_1;
   uint  pad_c5_2;
+
+  // ----- Voxel-grid cloud-on-terrain shadows at NEE (fork — 2026-05-12, C6) -----
+  // Plumbing for sampleCloudGroundShadow_OptionB, called from the surface and
+  // volumetric NEE entry points via a ratio correction that replaces the
+  // legacy evalCloudGroundShadow uniform dimmer with the 3D D_sun grid lookup.
+  //   * cloudVoxelShadowsEnable — master gate (default 0 / off).
+  //   * cloudShadowMarchStrength — multiplier on the Beer-Lambert exponent in
+  //     transmittance = exp(-D_sun * cloudDensity * cloudShadowMarchStrength).
+  //     1.0 = physical baseline.
+  //   * worldUnitsPerKm — game-units per kilometer, derived CPU-side from
+  //     RtxOptions::sceneScale (which is cm per game unit). 1 km = 100000 cm
+  //     and 1 cm = sceneScale game units, so 1 km = 100000 * sceneScale game
+  //     units. Used by sampleCloudGroundShadow_OptionB to convert
+  //     G-buffer worldPos (game units) into km for the slab + voxel-grid math.
+  //   * cameraWorldPosYUpKm — camera world position in Y-up km, used to
+  //     express the surface worldPos as camera-relative for cloudVoxelWorldToUVW
+  //     (the voxel grid is camera-centered with horizontal tile-wrap).
+  uint  cloudVoxelShadowsEnable;   // 0 or 1
+  float cloudShadowMarchStrength;  // Beer-Lambert exponent multiplier
+  float worldUnitsPerKm;           // game units per km
+  float pad_c6_0;                  // 16-byte alignment
+
+  vec3  cameraWorldPosYUpKm;       // Camera position in Y-up km, world-absolute
+  float pad_c6_1;                  // 16-byte alignment
 };

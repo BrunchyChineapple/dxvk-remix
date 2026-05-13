@@ -1258,3 +1258,52 @@ non-primary ray direction would return the wrong cloud).
   *Adds a "Master gate (C5)" separator + `RemixGui::Checkbox("Composite cloud RT at sky-miss", …)` widget at the end of the "Nubis Cubed Lighting" ImGui collapsing header (just below the MS SDF Depth slider). Wired to `RtxOptions::cloudRenderRTEnableObject()`; tooltip explains the primary-ray-only behavior. ~8 LOC.*
 
 ---
+
+## Commit C6 — Voxel-grid cloud-on-terrain shadows at NEE (gated) (fork — 2026-05-12)
+
+The C6 commit wires the C3 helper `sampleCloudGroundShadow_OptionB` into the
+production surface and volumetric NEE entry points via a multiplicative
+ratio correction that replaces the legacy `evalCloudGroundShadow`
+uniform-dimmer with the rich 3D `D_sun` voxel-grid lookup. Terrain
+gains cumulus-shaped drifting shadow patches that match the cloud
+positions overhead. Gated on a default-off RTX_OPTION
+(`cloudVoxelShadowsEnable`).
+
+This commit also fixes two pre-existing concerns in the C3 helper that
+the diagnostic surfaced: (1) units mismatch — the helper assumed
+`worldPos` was in km, but the G-buffer feeds it in engine game units; the
+helper now converts via the new `worldUnitsPerKm` field. (2)
+camera-relative-vs-world-absolute frame — the voxel grid is
+camera-centered, so the helper now subtracts the camera position (pushed
+CPU-side via the new `setCloudShadowCameraPosition` setter) before the
+`cloudVoxelWorldToUVW` call. The wire-in is intentionally at the NEE
+entry points (NOT at `getTransmittanceToSun`) so the sentinel-position
+`getTransmittanceToSun` call from `computeGroundReflectionAnalytical`
+continues to consume the legacy uniform-dimmer shadow — preserving the
+cloud-shadow-map post-mortem's hard-won correctness invariant.
+
+- **`src/dxvk/rtx_render/rtx_options.h`** — fork-owned addition.
+  *Adds two `RTX_OPTION` declarations in the `rtx.atmosphere` cluster directly after the C5 `cloudRenderRTEnable`: `cloudVoxelShadowsEnable` (default false) and `cloudShadowMarchStrength` (default 1.0). The strength knob is the Beer-Lambert exponent multiplier inside `sampleCloudGroundShadow_OptionB`; the C3 commit had to substitute a literal because the field didn't exist on main.*
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_args.h`** — fork-owned addition.
+  *Adds two 16-byte rows at the end of `AtmosphereArgs` after the C5 block: `(cloudVoxelShadowsEnable, cloudShadowMarchStrength, worldUnitsPerKm, pad_c6_0)` and `(cameraWorldPosYUpKm.xyz, pad_c6_1)`. All consumed exclusively by `sampleCloudGroundShadow_OptionB`; the camera world position is pushed CPU-side from `updateAtmosphereConstants` mirroring the existing `setCloudRenderCameraBasis` pattern.*
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_common.slangh`** — fork-owned additions.
+  *Two changes. (1) Inside `sampleCloudGroundShadow_OptionB_impl`: replaces the C3 unit-naive math with a `worldPos * (1 / worldUnitsPerKm)` game-units → km conversion, a `cloudEntryPosKm - args.cameraWorldPosYUpKm` camera-relative reframe before `cloudVoxelWorldToUVW`, and folds `args.cloudShadowMarchStrength` into the Beer-Lambert exponent (replacing the C3 literal). The legacy `cloudShadowStrength` mix at the end is preserved. (2) Adds an `#ifdef ATMOSPHERE_AVAILABLE`-gated ratio correction block inside both `sampleAtmosphereSunLight` (surface NEE, after `result.radiance` is set) and `sampleAtmosphereSunLightVolume` (volumetric NEE, after `result.radiance` is set) that — when `args.cloudVoxelShadowsEnable != 0u` — divides out the `evalCloudGroundShadow` contribution baked into the analytical path and multiplies in the `sampleCloudGroundShadow_OptionB` result. Skips the correction when the old shadow is below 0.001 to guard against divide-by-zero.*
+
+- **`src/dxvk/shaders/rtx/pass/volumetrics/volume_integrate.comp.slang`** — fork-owned addition.
+  *Adds `#define ATMOSPHERE_AVAILABLE` before the `common_bindings.slangh` include so the atmosphere helpers consumed by the volumetric pass (`sampleAtmosphereSunLightVolume → sampleCloudGroundShadow_OptionB`, plus the existing `sampleSkyAmbientForVolume`, `sampleDSun`, `fastJitter`) resolve to bound globals. Matches the `#define` already present in `integrate_direct.slang` and `integrate_indirect.slang`.*
+
+- **`src/dxvk/shaders/rtx/pass/volumetrics/volume_restir.comp.slang`** — fork-owned addition.
+  *Same `#define ATMOSPHERE_AVAILABLE` addition as `volume_integrate.comp.slang`; the four ReSTIR-stage variants (INITIAL / VISIBILITY / TEMPORAL / SPATIAL_REUSE) all need the cloud voxel-grid bindings available for the per-froxel atmosphere-sun NEE path.*
+
+- **`src/dxvk/rtx_render/rtx_atmosphere.h`** — fork-owned additions.
+  *Adds `Vector3 m_cameraWorldPosYUpKm` (default zero) member and public `setCloudShadowCameraPosition(Vector3)` setter to support the per-frame push of the camera world position from `fork_hooks::updateAtmosphereConstants` ahead of `computeLuts`. Mirrors the existing `setCloudRenderCameraBasis` plumbing.*
+
+- **`src/dxvk/rtx_render/rtx_atmosphere.cpp`** — fork-owned additions.
+  *Implements `setCloudShadowCameraPosition` (member-state setter). In `getAtmosphereArgs()` (right after the C5 sky-miss-composite block): populates the four new C6 fields — gate + strength from RTX_OPTIONs, `worldUnitsPerKm = 100000 * sceneScale` (canonical conversion), and `cameraWorldPosYUpKm` from the cached member.*
+
+- **`src/dxvk/rtx_render/rtx_fork_atmosphere.cpp`** — fork-owned additions.
+  *In `updateAtmosphereConstants` (immediately after `setCloudRenderCameraBasis`): reads the camera world position in game units, applies the same `toYUp` swap used for the basis vectors, converts to km via `kmPerWorldUnit = 1 / (100000 * sceneScale)`, and pushes via `setCloudShadowCameraPosition`. In the "Nubis Cubed Lighting" ImGui collapsing block (after the Master gate (C5) section): adds a "Cloud-on-terrain shadows (C6)" separator + checkbox bound to `cloudVoxelShadowsEnableObject()` + a `DragFloat` slider bound to `cloudShadowMarchStrengthObject()` with tooltips for both. ~25 LOC total.*
+
+---

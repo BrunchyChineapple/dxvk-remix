@@ -150,6 +150,20 @@ public:
                                   uint32_t frameIdx);
 
   /**
+   * \brief Push the per-frame camera world position (Y-up km) used by
+   *        sampleCloudGroundShadow_OptionB to express the surface worldPos
+   *        camera-relative for the camera-centered D_sun voxel grid lookup.
+   *
+   * Called from `fork_hooks::updateAtmosphereConstants` BEFORE `computeLuts`
+   * runs so the value lands in m_constantsBuffer alongside the other C6
+   * voxel-grid plumbing. The position is world-absolute, in km, in the same
+   * Y-up frame the cloud math uses elsewhere — the caller does the
+   * game-units → km conversion and the isZUp swap, mirroring the existing
+   * setCloudRenderCameraBasis() pattern.
+   */
+  void setCloudShadowCameraPosition(const Vector3& cameraWorldPosYUpKm);
+
+  /**
    * \brief Get the EA Importance-Sampled FAST noise view for descriptor binding
    *
    * Returns nullptr if the FAST noise has not been initialized.
@@ -263,6 +277,15 @@ private:
   Vector3  m_cloudRenderUpYUp      { 0.0f, 1.0f, 0.0f };
   uint32_t m_cloudRenderFrameIdx   { 0u };
   RtxFastNoise m_fastNoise;            // EA Importance-Sampled FAST noise (cloud ray-march jitter)
+
+  // Per-frame camera world position in Y-up km, for the C6 voxel-grid
+  // cloud-on-terrain shadow plumbing. Pushed via setCloudShadowCameraPosition
+  // from updateAtmosphereConstants; read by getAtmosphereArgs() into
+  // m_constantsBuffer.cameraWorldPosYUpKm. Default (0,0,0) is safe: the
+  // helper is gated off by default so the field is unused unless the user
+  // flips cloudVoxelShadowsEnable, by which point the setter will have run
+  // at least one frame.
+  Vector3  m_cameraWorldPosYUpKm   { 0.0f, 0.0f, 0.0f };
 
   // Cloud history ping-pong (fork). Screen-space RGBA16F (premultiplied
   // radiance, alpha) used by the temporal-smoothing path inside
