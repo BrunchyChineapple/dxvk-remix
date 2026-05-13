@@ -1508,11 +1508,12 @@ namespace dxvk {
     // analytical evalClouds — the cloud RT is at primary-ray pixel coordinates,
     // so sampling it for a non-primary ray direction would return the wrong
     // cloud. Default false; flip after in-game visual confirmation.
-    RTX_OPTION("rtx.atmosphere", bool, cloudRenderRTEnable, false,
+    RTX_OPTION("rtx.atmosphere", bool, cloudRenderRTEnable, true,
                "Composite the Nubis Cubed cloud render RT at primary sky-miss "
                "instead of calling analytical evalClouds. Indirect/PSR/reflection "
-               "rays continue to use analytical clouds. Default off — flip after "
-               "in-game visual confirmation.");
+               "rays continue to use analytical clouds. Default on as of C7 "
+               "(2026-05-13) -- in-game validation confirmed Nubis Cubed lighting "
+               "produces the expected perceptual wins across day/sunset/night.");
 
     // Voxel-grid cloud-on-terrain shadows at NEE entry points (fork — 2026-05-12, C6).
     // When true, sampleAtmosphereSunLight / sampleAtmosphereSunLightVolume apply
@@ -1521,12 +1522,13 @@ namespace dxvk {
     // lookup (via sampleCloudGroundShadow_OptionB). Terrain shows cumulus-
     // shaped drifting shadow patches that match cloud positions overhead.
     // Default false; flip after in-game visual confirmation (C7 ship pass).
-    RTX_OPTION("rtx.atmosphere", bool, cloudVoxelShadowsEnable, false,
+    RTX_OPTION("rtx.atmosphere", bool, cloudVoxelShadowsEnable, true,
                "Use the D_sun voxel grid for cloud-on-terrain shadows at NEE "
                "entry points (sampleAtmosphereSunLight + volume variant). "
                "Replaces the 2D coverage proxy evalCloudGroundShadow for the "
-               "NEE path only. Default off — flip after in-game visual "
-               "confirmation.");
+               "NEE path only. Default on as of C7 (2026-05-13) -- terrain "
+               "now shows cumulus-shaped drifting shadow patches matching "
+               "cloud positions overhead.");
     RTX_OPTION("rtx.atmosphere", float, cloudShadowMarchStrength, 1.0f,
                "Beer-Lambert exponent multiplier applied to the D_sun voxel "
                "grid lookup inside sampleCloudGroundShadow_OptionB. 1.0 = "
