@@ -47,6 +47,7 @@
 #include "rtx_option_manager.h"
 #include "rtx_hashing.h"
 #include "rtx_mod_manager.h"
+#include "rtx_fork_weather.h"
 
 enum _NV_GPU_ARCHITECTURE_ID;
 typedef enum _NV_GPU_ARCHITECTURE_ID NV_GPU_ARCHITECTURE_ID;
@@ -1285,9 +1286,13 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere.moon" #N, float, angularRadius##N, DEFAULT_RADIUS,               \
                "Moon " #N " angular diameter in degrees.");                                     \
     RTX_OPTION("rtx.atmosphere.moon" #N, float, brightness##N, DEFAULT_BRIGHTNESS,              \
-               "Moon " #N " brightness multiplier.");                                           \
+               "Moon " #N " brightness multiplier. Per-moon default supplied at expansion "     \
+               "site; 1.0 = physical neutral, raise for stylized scenes (e.g. 4.0 reproduces "  \
+               "pre-Phase-2 look).");                                                           \
     RTX_OPTION("rtx.atmosphere.moon" #N, Vector3, color##N, DEFAULT_COLOR,                      \
-               "Moon " #N " base color/albedo.");                                               \
+               "Moon " #N " surface albedo. Per-moon default supplied at expansion site; "      \
+               "(0.12, 0.12, 0.12) ≈ Earth's lunar Bond albedo, tint per-channel for "          \
+               "stylized moons (blood-red, sulfur-yellow, etc.).");                             \
     RTX_OPTION("rtx.atmosphere.moon" #N, uint32_t, surfaceStyle##N, DEFAULT_STYLE,              \
                "Moon " #N " surface preset: 0 = Rocky, 1 = Volcanic.");                         \
     RTX_OPTION("rtx.atmosphere.moon" #N, float, craterDensity##N, 1.0f,                         \
@@ -1316,55 +1321,171 @@ namespace dxvk {
     DECLARE_MOON_OPTIONS(3, false, 3.5f,  4.0f, Vector3(0.85f, 0.87f, 0.92f), 0u);
 #undef DECLARE_MOON_OPTIONS
 
+    // ----- Weather preset declarations (fork, 2026-05-08) -----
+    // 348 RTX_OPTIONs: 12 presets x 29 fields under rtx.weather.preset.<name>.
+    // (Buckets: 19 cloud + 3 atmosphere + 3 sky/moon mood + 4 volumetric.)
+    // Neutral defaults here; per-archetype tuning lands in a follow-up commit.
+    // Getter form: RtxOptions::clear_cloudDensity(), etc.
+    // See src/dxvk/rtx_render/rtx_fork_weather.h for macro definitions.
+    DECLARE_ALL_WEATHER_PRESETS();
+#undef DECLARE_ALL_WEATHER_PRESETS
+#undef DECLARE_WEATHER_PRESET
+#undef WEATHER_PRESET_RTX_OPTION_FOR
+#undef WEATHER_PRESET_BIND_clear
+#undef WEATHER_PRESET_BIND_partlyCloudy
+#undef WEATHER_PRESET_BIND_overcast
+#undef WEATHER_PRESET_BIND_hazy
+#undef WEATHER_PRESET_BIND_foggy
+#undef WEATHER_PRESET_BIND_drizzle
+#undef WEATHER_PRESET_BIND_rainstorm
+#undef WEATHER_PRESET_BIND_thunderstorm
+#undef WEATHER_PRESET_BIND_snow
+#undef WEATHER_PRESET_BIND_blizzard
+#undef WEATHER_PRESET_BIND_sandstorm
+#undef WEATHER_PRESET_BIND_smoggy
+    // NOTE: WEATHER_PRESET_FIELD_LIST is intentionally NOT undef'd here -
+    // Task 2 consumes it to declare WeatherSnapshot struct members.
+
+    // ----- Moon NEE / atmospheric-coupling strengths (fork) -----
+    RTX_OPTION("rtx.atmosphere", float, moonNeeStrength, 1.0f,
+               "World-side master multiplier on direct moon lighting (surface NEE + clouds + future volumetric). "
+               "0 = moon does not light the world; 1 = default physical-baseline magnitude; "
+               ">1 = brighten across all world-side paths simultaneously. Per-path fine-tuning available "
+               "via surfaceMoonBrightness / cloudMoonBrightness / haloMoonBrightness.");
+    RTX_OPTION("rtx.atmosphere", float, moonAtmosphericCouplingStrength, 1.0f,
+               "Sky-side multiplier on the moon's contribution to atmospheric scattering. "
+               "0 = no blue-dome around the moon (sky stays pure black); 1 = default physical-baseline; "
+               ">1 = exaggerated for stylized scenes.");
+
+    // ----- Per-path moon stylistic multipliers (fork, Phase 3) -----
+    // These are tonemapper-correction stylistic axes layered on top of the unified
+    // physical irradiance scaffold from Phase 2. Defaults are empirically tuned by
+    // in-game testing on 2026-05-08 against the Fallout: New Vegas test scene at
+    // m.brightness=1.0 (the new physical-neutral default). Set all three to 1.0
+    // for architecturally-pure physical baseline; the shipped defaults represent
+    // the offset between physical-correct and what the FNV tonemapper makes
+    // visually readable.
+    RTX_OPTION("rtx.atmosphere", float, surfaceMoonBrightness, 50.0f,
+               "Per-path stylistic multiplier on surface NEE (ground moonlight). "
+               "Default 50.0 = user-tested baseline for visible ground under FNV tonemapper "
+               "at m.brightness=1.0; 1.0 = physically-pure (very dim under typical tonemappers); "
+               "raise for brighter ground.");
+    RTX_OPTION("rtx.atmosphere", float, cloudMoonBrightness, 2.0f,
+               "Per-path stylistic multiplier on cloud-moon directional lighting + ambient airglow. "
+               "Default 2.0 = user-tested baseline for cloud silver-lining under FNV tonemapper "
+               "at m.brightness=1.0; 1.0 = physically-pure; 0 = no moon-cloud illumination. "
+               "Higher values produce a stronger silver-lining peak on the cloud directly in front "
+               "of the moon.");
+    RTX_OPTION("rtx.atmosphere", float, haloMoonBrightness, 15.0f,
+               "Per-path stylistic multiplier on disk halo Gaussian glow. "
+               "Default 15.0 = user-tested baseline for visible halo glow under FNV tonemapper "
+               "at m.brightness=1.0; 1.0 = physically-pure; 0 = no halo.");
+
+    // ----- Moon cloud-look + halo shape constants (fork, Phase 3 Task 2) -----
+    // Tunable shape parameters for cloud-moon silver-lining contrast and halo glow.
+    // Defaults preserve current calibrated values; exposed for in-game tuning.
+    RTX_OPTION("rtx.atmosphere", float, moonCloudDiffuseGain, 0.10f,
+               "Cloud-moon Lambert diffuse weight controlling off-axis cloud illumination. "
+               "Lower = stronger contrast (off-axis clouds dimmer relative to peak). "
+               "Higher = more uniform cloud lighting. Default 0.10.");
+    RTX_OPTION("rtx.atmosphere", float, moonCloudPhaseGain, 0.30f,
+               "Cloud-moon HG phase weight controlling peak silver-lining intensity. "
+               "Higher = brighter cloud directly in front of moon. Default 0.30.");
+    RTX_OPTION("rtx.atmosphere", float, moonCloudAnisotropy, 0.85f,
+               "Henyey-Greenstein anisotropy for cloud-moon forward scatter. Higher = "
+               "sharper silver-lining peak (concentrated on cloud directly in front of "
+               "moon); lower = softer falloff. Default 0.85.");
+    RTX_OPTION("rtx.atmosphere", float, moonHaloMagnitude, 0.0015f,
+               "Disk halo Gaussian strength multiplier. Tuned alongside haloMoonBrightness; "
+               "use this for the underlying SHAPE strength and haloMoonBrightness for the "
+               "tonemapper-correction multiplier. Default 0.0015.");
+    RTX_OPTION("rtx.atmosphere", float, moonAmbientAirglow, 0.0015f,
+               "Ambient airglow per-moon strength contribution to nightLight. The cloud "
+               "volume gets a uniform sky-bounce from each enabled moon scaled by this "
+               "constant. Default 0.0015.");
+
     // Cloud parameters (procedural FBM cloud layer)
     // Morrowind override: cloudEnabled stays true because the wrapper drives
     // cloudCoverageMean from GetCurrentWeather every frame (see distantland.cpp).
     // Low coverage on Clear weather already hides the clouds.
     RTX_OPTION("rtx.atmosphere", bool, cloudEnabled, true, "Enable procedural cloud rendering.");
-    RTX_OPTION("rtx.atmosphere", float, cloudDensity, 1.55f, "Cloud opacity/density multiplier.");
-    RTX_OPTION("rtx.atmosphere", float, cloudAltitude, 2.4f, "Cloud layer altitude in kilometers.");
+    RTX_OPTION("rtx.atmosphere", float, cloudDensity, 1.80f, "Cloud opacity/density multiplier.");
+    RTX_OPTION("rtx.atmosphere", float, cloudAltitude, 1.3f, "Cloud layer altitude in kilometers.");
     RTX_OPTION("rtx.atmosphere", float, cloudScale, 0.010f, "Horizontal noise scale — smaller values produce larger clouds.");
-    RTX_OPTION("rtx.atmosphere", Vector3, cloudColor, Vector3(1.0f, 1.0f, 1.0f), "Base cloud color (albedo).");
+    RTX_OPTION("rtx.atmosphere", Vector3, cloudColor, Vector3(0.89f, 0.92f, 1.0f), "Base cloud color (albedo).");
     RTX_OPTION("rtx.atmosphere", float, cloudWindSpeed, 0.02f, "Cloud drift speed in km/s. Clouds scroll with this velocity.");
     RTX_OPTION("rtx.atmosphere", float, cloudWindDirection, 45.0f, "Cloud wind direction in degrees (0 = +X, 90 = +Z).");
-    RTX_OPTION("rtx.atmosphere", float, cloudShadowStrength, 0.7f, "How strongly overcast clouds dim ground and atmosphere lighting [0..1].");
+    RTX_OPTION("rtx.atmosphere", float, cloudShadowStrength, 0.0f, "How strongly overcast clouds dim ground and atmosphere lighting [0..1].");
     RTX_OPTION("rtx.atmosphere", float, cloudAnisotropy, 0.6f, "Henyey-Greenstein g for cloud forward-scatter (silver lining).");
 
     // Cloud volumetric / appearance enhancements
-    RTX_OPTION("rtx.atmosphere", uint32_t, cloudViewSamples, 5,
+    RTX_OPTION("rtx.atmosphere", uint32_t, cloudViewSamples, 32,
                "Number of ray-march steps through the cloud slab. Higher = better quality, more cost. Range 1..32.");
-    RTX_OPTION("rtx.atmosphere", float, cloudThickness, 1.0f,
+    RTX_OPTION("rtx.atmosphere", float, cloudThickness, 3.05f,
                "Vertical depth of the cloud slab in km.");
     RTX_OPTION("rtx.atmosphere", float, cloudDetailWeight, 1.0f,
                "Weight of the high-frequency detail FBM term [0..1]. Auto-fades at low cloudScale to avoid visible noise.");
     RTX_OPTION("rtx.atmosphere", Vector3, cloudShadowTint, Vector3(0.55f, 0.65f, 0.85f),
                "Sky-blue bounce color applied on the shadow side of clouds.");
-    RTX_OPTION("rtx.atmosphere", float, cloudShadowTintStrength, 0.15f,
+    RTX_OPTION("rtx.atmosphere", float, cloudShadowTintStrength, 1.0f,
                "How strongly the shadow tint contributes [0..1].");
-    RTX_OPTION("rtx.atmosphere", float, cloudSunsetWarmth, 1.0f,
+    RTX_OPTION("rtx.atmosphere", float, cloudSunsetWarmth, 0.95f,
                "Strength of low-sun warm tint on sunward side. 0 = disabled.");
-    RTX_OPTION("rtx.atmosphere", float, cloudCurvature, 0.3f,
+    RTX_OPTION("rtx.atmosphere", float, cloudCurvature, 0.38f,
                "Sky-dome curvature for the cloud layer: 0 = real-planet radius "
                "(nearly flat ceiling), 1 = tight dome (clouds visibly curve down "
                "to the horizon). Only affects cloud sphere intersections; "
                "atmospheric scattering still uses the real planet radius.");
 
+    // Volumetric sky-ambient illumination (fork — 2026-05-12)
+    // Feeds the volumetric froxel pass with sky-view-LUT radiance attenuated
+    // by cloud coverage along each hemisphere sample direction. Default-off
+    // ship strategy: skyAmbientStrength=0 means baseline rendering is
+    // unchanged until the user flips this on. See
+    // docs/superpowers/specs/2026-05-12-volumetric-sky-ambient-design.md.
+    RTX_OPTION("rtx.atmosphere", float, cloudSkyAmbientStrength, 0.0f,
+               "Overall strength of the volumetric sky-ambient illumination term "
+               "[0..3]. 0 = feature disabled (baseline rendering). 1 = physical "
+               "baseline. Higher values brighten shadowed fog with sky-tinted "
+               "ambient. Gated on rtx.skyMode = 1 (Physical Atmosphere).");
+    RTX_OPTION("rtx.atmosphere", float, cloudSkyAmbientCloudOcclusionStrength, 1.0f,
+               "Strength of cloud occlusion applied to the volumetric sky-ambient "
+               "term [0..1]. 1 = full physical cloud occlusion (overcast scenes "
+               "have visibly darker volumetric ambient than clear-sky scenes). "
+               "0 = sky ambient ignores cloud cover (debug only — visually "
+               "inverted versus reality).");
+
+    // Wrenninge / Hillaire (Frostbite 2016) multi-scatter approximation for the
+    // sun-cloud interaction. Replaces the prior flat-Lambert + single-HG approximation
+    // with a sum of N octaves (each with reduced energy, extinction and phase
+    // asymmetry) plus an isotropic deep-scatter floor — collectively the
+    // "milky-bright bottom" look real cumulus has when viewed from below.
+    RTX_OPTION("rtx.atmosphere", float, cloudMultiScatterStrength, 1.0f,
+               "Master multiplier on the Wrenninge multi-scatter sun-light response. "
+               "1.0 = physical baseline (Hillaire/Frostbite coefficients); raise to "
+               "brighten cumulus tops + bottoms together, lower for muted look. "
+               "Operates on the sun path only; moon path is unaffected.");
+    RTX_OPTION("rtx.atmosphere", uint32_t, cloudMultiScatterOctaves, 3,
+               "Number of Wrenninge multi-scatter octaves summed per cloud sample. "
+               "3 is the standard cost/quality tradeoff. 1 disables multi-scatter "
+               "(single direct anisotropic term only). Range clamped to 1..4 in-shader.");
+
     // Cloud spatial variation (Nubis-style — spec 2026-05-06)
-    RTX_OPTION("rtx.atmosphere", float, cloudTypeMean, 0.5f,
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeMean, 0.0f,
                "Mean cloud type across the sky [0,1]: 0=stratus, 0.5=stratocumulus, 1=cumulus.");
-    RTX_OPTION("rtx.atmosphere", float, cloudTypeSpread, 0.4f,
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeSpread, 1.0f,
                "Spatial variation amplitude for cloud type [0,1]. 0=uniform, 1=full range across the sky.");
-    RTX_OPTION("rtx.atmosphere", float, cloudTypeNoiseScale, 0.0005f,
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeNoiseScale, 0.0034f,
                "Region size frequency for type noise. Numerically smaller = larger spatial features.");
     // Morrowind override: cloudCoverageMean is NoSave because the wrapper drives
     // it from GetCurrentWeather every frame. Upstream declares this as a plain
-    // RTX_OPTION (0.6 default); we route it through the Derived layer so
-    // per-frame writes don't pollute the user config file.
-    RTX_OPTION_FLAG("rtx.atmosphere", float, cloudCoverageMean, 0.6f, RtxOptionFlags::NoSave,
+    // RTX_OPTION; we route it through the Derived layer so per-frame writes
+    // don't pollute the user config file. Static default tracks upstream tuning.
+    RTX_OPTION_FLAG("rtx.atmosphere", float, cloudCoverageMean, 0.64f, RtxOptionFlags::NoSave,
                     "Mean cloud coverage across the sky [0,1]: 0=clear, 1=overcast. Game-driven every frame.");
-    RTX_OPTION("rtx.atmosphere", float, cloudCoverageSpread, 0.4f,
+    RTX_OPTION("rtx.atmosphere", float, cloudCoverageSpread, 0.16f,
                "Spatial variation amplitude for coverage [0,1]. 0=uniform, 1=full range.");
-    RTX_OPTION("rtx.atmosphere", float, cloudCoverageNoiseScale, 0.0005f,
+    RTX_OPTION("rtx.atmosphere", float, cloudCoverageNoiseScale, 0.0033f,
                "Region size frequency for coverage noise. Independent from type noise scale.");
     RTX_OPTION("rtx.atmosphere", float, cloudAnvilBias, 0.3f,
                "Cumulus top inflation strength [0,1]. 0=flat tops, 1=fully spread mushroom-cap anvils.");
@@ -1372,12 +1493,63 @@ namespace dxvk {
                "Lateral cloud-top displacement along wind direction, scaled by cloud type [0,1+]. "
                "0=cloud tops vertical above base, 1=tops offset by ~thickness*type along wind. "
                "Reduces the visible per-cumulus 45-degree lean at default settings.");
-    RTX_OPTION("rtx.atmosphere", float, cloudMoonBrightness, 0.3f,
-               "Strength of directional moon lighting on clouds [0,1+]. "
-               "0=moonlit-cloud feature off (only nightSkyColor airglow + per-moon ambient remain), "
-               "1=full strength. Each enabled, above-horizon moon contributes Lambert+HG response "
-               "scaled by its phaseGlow (full at full moon, zero at new moon). No per-sample shadow "
-               "march — single-bounce only.");
+    RTX_OPTION("rtx.atmosphere", float, cloudNoiseTileKm, 12.0f,
+               "World-space tile period (km) for the prebaked 3D cloud noise texture. "
+               "Smaller = more visible repetition; larger = lower-frequency cloud detail. "
+               "Default 12.0; viable range 6-24.");
+
+    // Nubis Cubed 2023 lighting (fork — 2026-05-12).
+    // Tuning knobs for the per-sample lighting equations in cloud_render.comp.slang.
+    // The paper's magic constants for the sigma_ms remap (page 137) are unexplained,
+    // so all six surface as ImGui knobs for in-game tuning. Defaults pulled from
+    // paper renders + the 2026-05-12 spec.
+    RTX_OPTION("rtx.atmosphere", float, cloudPhaseG1, 0.8f,
+               "Primary HG asymmetry; strong forward-scatter, drives silver lining at backlit edges.");
+    RTX_OPTION("rtx.atmosphere", float, cloudPhaseG2, 0.3f,
+               "Secondary HG asymmetry; mild forward-scatter, drives broader in-scatter envelope.");
+    RTX_OPTION("rtx.atmosphere", float, cloudMsSunDotMax, 0.9f,
+               "Nubis Cubed sigma_ms remap upper bound on sun_dot. Lower = wider 'shallow extinction' zone.");
+    RTX_OPTION("rtx.atmosphere", float, cloudMsSigmaShallow, 0.25f,
+               "Nubis Cubed sigma_ms value at cloud surface / shallow penetration.");
+    RTX_OPTION("rtx.atmosphere", float, cloudMsSigmaDeep, 0.05f,
+               "Nubis Cubed sigma_ms value deep inside cloud (sdf <= -cloudMsSdfDepth).");
+    RTX_OPTION("rtx.atmosphere", float, cloudMsSdfDepth, 128.0f,
+               "Nubis Cubed SDF depth in meters at which sigma_ms saturates to deep value.");
+
+    // Nubis Cubed sky-miss composite gate (fork — 2026-05-12, C5).
+    // When true, the primary-ray sky-miss path samples the AtmosphereCloudRender
+    // RT (written by cloud_render.comp.slang each frame) instead of calling
+    // analytical evalClouds. Indirect, PSR, and reflection rays continue to use
+    // analytical evalClouds — the cloud RT is at primary-ray pixel coordinates,
+    // so sampling it for a non-primary ray direction would return the wrong
+    // cloud. Default false; flip after in-game visual confirmation.
+    RTX_OPTION("rtx.atmosphere", bool, cloudRenderRTEnable, true,
+               "Composite the Nubis Cubed cloud render RT at primary sky-miss "
+               "instead of calling analytical evalClouds. Indirect/PSR/reflection "
+               "rays continue to use analytical clouds. Default on as of C7 "
+               "(2026-05-13) -- in-game validation confirmed Nubis Cubed lighting "
+               "produces the expected perceptual wins across day/sunset/night.");
+
+    // Voxel-grid cloud-on-terrain shadows at NEE entry points (fork — 2026-05-12, C6).
+    // When true, sampleAtmosphereSunLight / sampleAtmosphereSunLightVolume apply
+    // a multiplicative ratio correction that replaces the legacy
+    // evalCloudGroundShadow uniform-dimmer with the rich 3D D_sun voxel-grid
+    // lookup (via sampleCloudGroundShadow_OptionB). Terrain shows cumulus-
+    // shaped drifting shadow patches that match cloud positions overhead.
+    // Default false; flip after in-game visual confirmation (C7 ship pass).
+    RTX_OPTION("rtx.atmosphere", bool, cloudVoxelShadowsEnable, true,
+               "Use the D_sun voxel grid for cloud-on-terrain shadows at NEE "
+               "entry points (sampleAtmosphereSunLight + volume variant). "
+               "Replaces the 2D coverage proxy evalCloudGroundShadow for the "
+               "NEE path only. Default on as of C7 (2026-05-13) -- terrain "
+               "now shows cumulus-shaped drifting shadow patches matching "
+               "cloud positions overhead.");
+    RTX_OPTION("rtx.atmosphere", float, cloudShadowMarchStrength, 1.0f,
+               "Beer-Lambert exponent multiplier applied to the D_sun voxel "
+               "grid lookup inside sampleCloudGroundShadow_OptionB. 1.0 = "
+               "physical baseline (transmittance = exp(-OD * density)); higher "
+               "values darken cloud-on-terrain shadows, lower values lighten "
+               "them. Only consumed when cloudVoxelShadowsEnable is on.");
 
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");

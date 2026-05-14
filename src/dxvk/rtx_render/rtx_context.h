@@ -61,11 +61,30 @@ namespace dxvk {
   // above; RtxContext is forward-declared here so the fork_hooks signatures compile
   // before the class definition is encountered.
   class RtxContext;
+  namespace fork_weather {
+    class WeatherBlender;
+  } // namespace fork_weather
   namespace fork_hooks {
     void initAtmosphere(RtxContext&);
     void updateAtmosphereConstants(RtxContext&, RaytraceArgs&);
     void bindAtmosphereLuts(RtxContext&);
     void dispatchScreenOverlay(RtxContext&, Resources::RaytracingOutput&);
+    void updateWeatherBlender(RtxContext& ctx, float deltaTimeSeconds);
+    // Returns the per-frame cloud-occluded sky-ambient transmittance LUT, or an
+    // invalid Resource if the atmosphere has not been initialized yet. Used by
+    // the debug view to bind the LUT into its pass-local descriptor set.
+    Resources::Resource getCloudSkyTransmittanceLut(RtxContext& ctx);
+    // Returns the Nubis Cubed sun-direction / zenith cloud optical-depth voxel
+    // grids. Lazy-initialized on demand; returns an invalid Resource if the
+    // atmosphere has not been initialized yet. Used by the cloud voxel-grid
+    // debug views to bind the 3D textures into their pass-local descriptor sets.
+    Resources::Resource getCloudDSun(RtxContext& ctx);
+    Resources::Resource getCloudDAmbient(RtxContext& ctx);
+    // Returns the per-frame Nubis Cubed cloud render RT (fork — 2026-05-12,
+    // C4). Lazy-initialized on demand; the resource becomes valid once
+    // ensureCloudRenderRT has run during updateAtmosphereConstants. Used by
+    // the cloud-render-RT debug view (enum 876).
+    Resources::Resource getCloudRenderRT(RtxContext& ctx);
   } // namespace fork_hooks
 
   /**
@@ -254,6 +273,7 @@ namespace dxvk {
     SkyMode m_lastSkyMode = SkyMode::SkyboxRasterization;
 
     std::unique_ptr<RtxAtmosphere> m_atmosphere;
+    std::unique_ptr<fork_weather::WeatherBlender> m_weatherBlender;
 
     bool shouldUseDLSS() const;
     bool shouldUseRayReconstruction() const;
@@ -337,5 +357,10 @@ namespace dxvk {
     friend void fork_hooks::updateAtmosphereConstants(RtxContext&, RaytraceArgs&);
     friend void fork_hooks::bindAtmosphereLuts(RtxContext&);
     friend void fork_hooks::dispatchScreenOverlay(RtxContext&, Resources::RaytracingOutput&);
+    friend void fork_hooks::updateWeatherBlender(RtxContext& ctx, float deltaTimeSeconds);
+    friend Resources::Resource fork_hooks::getCloudSkyTransmittanceLut(RtxContext& ctx);
+    friend Resources::Resource fork_hooks::getCloudDSun(RtxContext& ctx);
+    friend Resources::Resource fork_hooks::getCloudDAmbient(RtxContext& ctx);
+    friend Resources::Resource fork_hooks::getCloudRenderRT(RtxContext& ctx);
   };
 } // namespace dxvk
