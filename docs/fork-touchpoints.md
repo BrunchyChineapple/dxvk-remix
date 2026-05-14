@@ -187,6 +187,15 @@ check will enforce it if discipline slips.
 
 ---
 
+## src/dxvk/dxvk_limits.h
+
+**Category:** index-only
+
+- **Inline tweak** at the `MaxPushConstantSize` enum value (~line 21) — 1-LOC value change + multi-line rationale comment.
+  *Bumps `MaxPushConstantSize` from 128 to 256. The fork-side tonemap apply args struct (`ToneMappingApplyToneMappingArgs` in `src/dxvk/shaders/rtx/pass/tonemap/tonemapping.h`) grew to 144 bytes across Workstream 2 commits 3–4 (Hable + AgX operator params). With the old cap, `DxvkContext::pushConstants()` silently overflowed the per-bank storage by 16 bytes on every Global / Direct tonemap dispatch, corrupting adjacent bank state and crashing the NVIDIA driver later. Every RTX-class GPU reports `maxPushConstantsSize >= 256`; pipeline layouts derive per-shader push-constant ranges from shader reflection, so the larger cap is harmless to existing shaders.*
+
+---
+
 ## src/dxvk/imgui/dxvk_imgui.cpp
 
 **Pre-refactor fork footprint:** +236 / -71 LOC (audit 2026-04-18)
