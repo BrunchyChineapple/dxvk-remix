@@ -737,8 +737,11 @@ namespace dxvk { namespace fork_weather { namespace {
     RtxOptions::cloudAnvilBiasObject().setImmediately(interp.cloudAnvilBias);
     RtxOptions::cloudWindShearStrengthObject().setImmediately(interp.cloudWindShearStrength);
     RtxOptions::cloudColorObject().setImmediately(interp.cloudColor);
-    RtxOptions::cloudWindSpeedObject().setImmediately(interp.cloudWindSpeed);
-    RtxOptions::cloudWindDirectionObject().setImmediately(interp.cloudWindDirection);
+    // cloudWindSpeed and cloudWindDirection are game-driven per-frame from the
+    // wrapper (Morrowind wind state). Skip them here so the blender doesn't
+    // overwrite the wrapper's SetConfigVariable writes.
+    // RtxOptions::cloudWindSpeedObject().setImmediately(interp.cloudWindSpeed);
+    // RtxOptions::cloudWindDirectionObject().setImmediately(interp.cloudWindDirection);
     RtxOptions::cloudShadowStrengthObject().setImmediately(interp.cloudShadowStrength);
     RtxOptions::cloudAnisotropyObject().setImmediately(interp.cloudAnisotropy);
     RtxOptions::cloudThicknessObject().setImmediately(interp.cloudThickness);

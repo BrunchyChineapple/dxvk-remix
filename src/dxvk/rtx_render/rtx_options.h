@@ -1413,8 +1413,10 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", float, cloudAltitude, 1.3f, "Cloud layer altitude in kilometers.");
     RTX_OPTION("rtx.atmosphere", float, cloudScale, 0.010f, "Horizontal noise scale — smaller values produce larger clouds.");
     RTX_OPTION("rtx.atmosphere", Vector3, cloudColor, Vector3(0.89f, 0.92f, 1.0f), "Base cloud color (albedo).");
-    RTX_OPTION("rtx.atmosphere", float, cloudWindSpeed, 0.02f, "Cloud drift speed in km/s. Clouds scroll with this velocity.");
-    RTX_OPTION("rtx.atmosphere", float, cloudWindDirection, 45.0f, "Cloud wind direction in degrees (0 = +X, 90 = +Z).");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, cloudWindSpeed, 0.02f, RtxOptionFlags::NoSave,
+                    "Cloud drift speed in km/s. Game-driven every frame from wrapper wind state.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, cloudWindDirection, 45.0f, RtxOptionFlags::NoSave,
+                    "Cloud wind direction in degrees (0 = +X, 90 = +Z). Game-driven every frame.");
     RTX_OPTION("rtx.atmosphere", float, cloudShadowStrength, 0.0f, "How strongly overcast clouds dim ground and atmosphere lighting [0..1].");
     RTX_OPTION("rtx.atmosphere", float, cloudAnisotropy, 0.6f, "Henyey-Greenstein g for cloud forward-scatter (silver lining).");
 
