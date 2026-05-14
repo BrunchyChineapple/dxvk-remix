@@ -246,14 +246,16 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
   //   - nightLight (ambient, per-ray): per-moon airglow fill + nightSkyColor.
   //     Added uncolored at composite time (it's atmospheric airglow, not cloud-
   //     scatter; matches the legacy `+ nightLight` outside cloudColor's parens).
-  //   - moonCoeff[mi] (directional, per-ray): per-moon Lambert+HG response
-  //     gated by phaseGlow / nightFactor / cloudMoonBrightness, scaled by
-  //     computeMoonSharedFactor — which ALREADY folds in atmospheric extinction
-  //     `getAtmosphericTransmittanceForDir(m.direction, args)` for the moon ray,
-  //     mirroring the C6.4 airTrans treatment we just landed for the sun.
-  //   - combinedMoonDir / combinedMoonCoeff (Lever-4 approximation): one
-  //     brightness-weighted shadow march along the combined direction replaces
-  //     N independent per-moon marches. The combined coeff is the simple sum.
+  //   - moonDiffuseCoeff[mi] / moonPhaseAmt[mi] (directional, per-ray): per-moon
+  //     Lambert and HG-phase-gain response gated by phaseGlow / nightFactor /
+  //     cloudMoonBrightness, scaled by computeMoonSharedFactor — which ALREADY
+  //     folds in atmospheric extinction `getAtmosphericTransmittanceForDir(
+  //     m.direction, args)` for the moon ray, mirroring the C6.4 airTrans
+  //     treatment we just landed for the sun. Split so the phase term can be
+  //     Wrenninge-smoothed across HG-anisotropy octaves in the per-sample loop.
+  //   - combinedMoonDir / combinedMoonDiffuseCoeff / combinedMoonPhaseAmt
+  //     (Lever-4 approximation): one brightness-weighted shadow march along the
+  //     combined direction replaces N independent per-moon marches.
   //
   // Smooth twilight transition: nightFactor = smoothstep(0.02, -0.05, sun.y)
   // ramps from 0 (sun above horizon) to 1 (sun ~3° below horizon). Same gate
@@ -262,11 +264,13 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
   // moment the cloudRenderRTEnable gate flips the consumer from analytical to
   // RT either, because both paths use this identical smoothstep.
   vec3 nightLight = vec3(0.0f);
-  vec3 moonCoeff[MAX_MOONS];
+  vec3 moonDiffuseCoeff[MAX_MOONS];
+  vec3 moonPhaseAmt[MAX_MOONS];
   vec3 moonDirNorm[MAX_MOONS];
   [unroll] for (uint mInit = 0u; mInit < MAX_MOONS; ++mInit) {
-    moonCoeff[mInit]   = vec3(0.0f);
-    moonDirNorm[mInit] = vec3(0.0f, 1.0f, 0.0f);
+    moonDiffuseCoeff[mInit] = vec3(0.0f);
+    moonPhaseAmt[mInit]     = vec3(0.0f);
+    moonDirNorm[mInit]      = vec3(0.0f, 1.0f, 0.0f);
   }
   {
     float sunElev = sunDirYUp.y;
@@ -287,14 +291,14 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
 
         // Directional contribution — only above-horizon moons matter.
         if (moonDir.y > 0.01f && args.moonNeeStrength > 0.001f) {
-          // Silver-lining response shape (separate g and gains from sun).
+          // Silver-lining response decomposed: diffuse (Lambert) amount and
+          // phase (HG-gain) amount are precomputed here; the HG phase function
+          // itself is evaluated per-sample in the march loop below so it can
+          // be Wrenninge-smoothed across multiple anisotropy octaves. See the
+          // matching design note in atmosphere_sky.slangh's evalClouds.
           const float kMoonDiffuseGain = args.moonCloudDiffuseGain;
           const float kMoonPhaseGain   = args.moonCloudPhaseGain;
-          const float kMoonAnisotropy  = args.moonCloudAnisotropy;
-          float moonLambert  = saturate(moonDir.y * 0.8f + 0.2f);
-          float moonCosTheta = dot(viewDirYUp, moonDir);
-          float moonPhase    = hgPhase(moonCosTheta, kMoonAnisotropy);
-          float moonResponse = kMoonDiffuseGain * moonLambert + kMoonPhaseGain * moonPhase;
+          float moonLambert = saturate(moonDir.y * 0.8f + 0.2f);
 
           // Physical irradiance scaffold — sharedFactor × phaseGlow × solidAngle
           // × moonNeeStrength × cloudMoonBrightness × nightFactor.
@@ -303,8 +307,9 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
           vec3 moonIrradiance = sharedFactor * phaseGlow * moonSolidAngleSr
                               * args.moonNeeStrength * args.cloudMoonBrightness
                               * nightFactor;
-          moonCoeff[mi]   = moonIrradiance * moonResponse;
-          moonDirNorm[mi] = moonDir;
+          moonDiffuseCoeff[mi] = moonIrradiance * kMoonDiffuseGain * moonLambert;
+          moonPhaseAmt[mi]     = moonIrradiance * kMoonPhaseGain;
+          moonDirNorm[mi]      = moonDir;
         }
       }
       // Night-sky airglow baseline (uncolored, mirrors legacy `* 0.5f`).
@@ -316,17 +321,22 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
   // enabled, above-horizon moons). ONE shadow march per dense sample replaces
   // N independent marches; visual delta is near-zero because shadow direction
   // is a perceptual cue rather than a per-moon resolvable feature.
-  vec3 combinedMoonDir   = vec3(0.0f, 1.0f, 0.0f);
-  vec3 combinedMoonCoeff = vec3(0.0f);
+  vec3 combinedMoonDir          = vec3(0.0f, 1.0f, 0.0f);
+  vec3 combinedMoonDiffuseCoeff = vec3(0.0f);
+  vec3 combinedMoonPhaseAmt     = vec3(0.0f);
   {
     vec3  sumWeightedDir = vec3(0.0f);
     float sumWeight      = 0.0f;
     [unroll] for (uint mi = 0u; mi < MAX_MOONS; ++mi) {
-      float w = max(max(moonCoeff[mi].r, moonCoeff[mi].g), moonCoeff[mi].b);
+      // Weight by max-channel of total (diffuse + phase amplitude) — both
+      // share moonIrradiance so this is proportional to per-moon brightness.
+      vec3 moonTotal = moonDiffuseCoeff[mi] + moonPhaseAmt[mi];
+      float w = max(max(moonTotal.r, moonTotal.g), moonTotal.b);
       if (w > 0.001f) {
-        sumWeightedDir    += moonDirNorm[mi] * w;
-        sumWeight         += w;
-        combinedMoonCoeff += moonCoeff[mi];
+        sumWeightedDir           += moonDirNorm[mi] * w;
+        sumWeight                += w;
+        combinedMoonDiffuseCoeff += moonDiffuseCoeff[mi];
+        combinedMoonPhaseAmt     += moonPhaseAmt[mi];
       }
     }
     if (sumWeight > 0.0f && length(sumWeightedDir) > 0.001f) {
@@ -335,12 +345,22 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
   }
 
   // Direct-extinction sigma for the moon-shadow Beer-Lambert exponent. Matches
-  // the legacy `baseSigma = 2 * cloudDensity` (single-octave; no Wrenninge
-  // multi-scatter for the moon — its low magnitudes don't warrant it, and the
-  // silver-lining shape lives in kMoonPhaseGain/kMoonAnisotropy already).
+  // the legacy `baseSigma = 2 * cloudDensity`. The moon stays at single-octave
+  // Beer-Lambert (no per-octave extinction reduction); the per-sample loop
+  // below applies Wrenninge phase smoothing only, to fix the visible ring
+  // artifact from the sharp HG peak without lifting cumulus-interior brightness.
   // Note: deliberately NOT the Nubis Cubed `sigma = cloudDensity` — the moon
   // path stays on its own extinction scale to preserve the legacy look.
   float moonBaseSigma = 2.0f * args.cloudDensity;
+
+  // Wrenninge phase-octave constants (mirror evalClouds in atmosphere_sky.slangh
+  // lines 720-725; replicated here because that scope-local declaration isn't
+  // visible to this compute shader). Only kMsA (energy attenuation) and kMsC
+  // (anisotropy attenuation) are needed — moon path does NOT use kMsB extinction
+  // reduction. Octave count tracks the same RtxOption the sun loop uses.
+  const float kMsA = 0.5f;
+  const float kMsC = 0.5f;
+  uint msOctaveCount = clamp(args.cloudMultiScatterOctaves, 1u, 4u);
 
   // ===== View-ray raymarch =====
   // evalNubisCubedSample internally uses sigma = args.cloudDensity (no doubling
@@ -389,19 +409,33 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
     // sigma scale used by lighting.direct, since the moon path lives outside
     // the Nubis Cubed equations).
     //
-    // Approximation: (Σ moonCoeff_i) * shadow_combined replaces the original
-    // Σ(moonCoeff_i * shadow_i). Equal iff per-moon shadow values are uniform,
+    // Approximation: (Σ moonContrib_i) * shadow_combined replaces the original
+    // Σ(moonContrib_i * shadow_i). Equal iff per-moon shadow values are uniform,
     // which holds at cloud scale where shadow direction is a perceptual cue.
     const float kMoonShadowSkipDensity = 0.05f;
     vec3 moonDirectLight = vec3(0.0f);
-    if (any(combinedMoonCoeff > vec3(0.001f))) {
+    if (any((combinedMoonDiffuseCoeff + combinedMoonPhaseAmt) > vec3(0.001f))) {
       float moonOpticalDepth = 0.0f;
       if (density >= kMoonShadowSkipDensity) {
         moonOpticalDepth = sampleCloudSunOpticalDepth_local(
             samplePos, combinedMoonDir, typeLocal, coverageLocal, args);
       }
       float moonShadow = exp(-moonOpticalDepth * moonBaseSigma);
-      moonDirectLight = combinedMoonCoeff * moonShadow;
+      // Wrenninge phase sum: each octave attenuates energy (kMsA) and
+      // anisotropy (kMsC) but not extinction. Smears the sharp HG peak
+      // (g=0.85) into a gradient so the silver-lining doesn't read as a
+      // discrete ring around the moon against thin uniform cloud cover.
+      float moonCosTheta = dot(viewDirYUp, combinedMoonDir);
+      float msMoonAniso  = 0.0f;
+      float octEnergyM   = 1.0f;
+      float octPhaseGM   = args.moonCloudAnisotropy;
+      for (uint oct = 0u; oct < msOctaveCount; ++oct) {
+        msMoonAniso += octEnergyM * hgPhase(moonCosTheta, octPhaseGM);
+        octEnergyM  *= kMsA;
+        octPhaseGM  *= kMsC;
+      }
+      moonDirectLight = (combinedMoonDiffuseCoeff
+                       + combinedMoonPhaseAmt * msMoonAniso) * moonShadow;
     }
 
     // Composite: cloudColor multiplies all surface-scatter terms (Nubis Cubed
