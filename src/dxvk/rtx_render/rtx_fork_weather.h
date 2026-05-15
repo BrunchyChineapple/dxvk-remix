@@ -108,11 +108,11 @@
 //   singleScatteringAlbedo, volumetricAnisotropy.
 // ---------------------------------------------------------------------------
 
-// clear — sunny, crisp, low haze
+// clear — Morrowind: wispy high-altitude clouds, blue sky, minimal haze
 #define WEATHER_PRESET_VALUES_clear(X)                                                                 \
-  X(float,   cloudDensity,                              0.4f)                                          \
-  X(float,   cloudCoverageMean,                         0.10f)                                         \
-  X(float,   cloudCoverageSpread,                       0.10f)                                         \
+  X(float,   cloudDensity,                              0.8f)                                          \
+  X(float,   cloudCoverageMean,                         0.35f)                                         \
+  X(float,   cloudCoverageSpread,                       0.15f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
   X(float,   cloudTypeMean,                             0.6f)                                          \
   X(float,   cloudTypeSpread,                           0.3f)                                          \
@@ -130,20 +130,20 @@
   X(float,   cloudShadowTintStrength,                   1.0f)                                          \
   X(float,   cloudSunsetWarmth,                         0.95f)                                         \
   X(float,   airDensity,                                0.95f)                                         \
-  X(float,   aerosolDensity,                            0.7f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(20.0f, 20.0f, 20.0f))                  \
+  X(float,   aerosolDensity,                            0.5f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(22.0f, 22.0f, 22.0f))                  \
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.999f, 0.999f, 0.999f))               \
-  X(float,   transmittanceMeasurementDistanceMeters,    1000.0f)                                       \
+  X(float,   transmittanceMeasurementDistanceMeters,    1500.0f)                                       \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   volumetricAnisotropy,                      0.0f)
 
-// partlyCloudy — light scattered clouds
+// partlyCloudy — Morrowind "Cloudy": ~80% of overcast coverage
 #define WEATHER_PRESET_VALUES_partlyCloudy(X)                                                          \
-  X(float,   cloudDensity,                              0.9f)                                          \
-  X(float,   cloudCoverageMean,                         0.30f)                                         \
+  X(float,   cloudDensity,                              1.5f)                                          \
+  X(float,   cloudCoverageMean,                         0.55f)                                         \
   X(float,   cloudCoverageSpread,                       0.20f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
   X(float,   cloudTypeMean,                             0.5f)                                          \
@@ -156,19 +156,19 @@
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.05f)                                         \
   X(float,   cloudAnisotropy,                           0.6f)                                          \
-  X(float,   cloudThickness,                            2.5f)                                          \
+  X(float,   cloudThickness,                            2.8f)                                          \
   X(float,   cloudDetailWeight,                         1.0f)                                          \
   X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
   X(float,   cloudShadowTintStrength,                   1.0f)                                          \
   X(float,   cloudSunsetWarmth,                         0.95f)                                         \
   X(float,   airDensity,                                1.0f)                                          \
-  X(float,   aerosolDensity,                            1.0f)                                          \
+  X(float,   aerosolDensity,                            0.9f)                                          \
   X(Vector3, sunIlluminance,                            Vector3(19.0f, 19.0f, 19.0f))                  \
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.998f, 0.998f, 0.998f))               \
-  X(float,   transmittanceMeasurementDistanceMeters,    800.0f)                                        \
+  X(float,   transmittanceMeasurementDistanceMeters,    600.0f)                                        \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   volumetricAnisotropy,                      0.05f)
 
@@ -236,11 +236,11 @@
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.98f, 0.96f))                  \
   X(float,   volumetricAnisotropy,                      0.30f)
 
-// foggy — the headline fog preset
+// foggy — Morrowind: thick ground fog + overcast cloud layer above
 #define WEATHER_PRESET_VALUES_foggy(X)                                                                 \
-  X(float,   cloudDensity,                              0.6f)                                          \
-  X(float,   cloudCoverageMean,                         0.30f)                                         \
-  X(float,   cloudCoverageSpread,                       0.20f)                                         \
+  X(float,   cloudDensity,                              1.4f)                                          \
+  X(float,   cloudCoverageMean,                         0.75f)                                         \
+  X(float,   cloudCoverageSpread,                       0.10f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
   X(float,   cloudTypeMean,                             0.2f)                                          \
   X(float,   cloudTypeSpread,                           0.2f)                                          \
@@ -252,21 +252,21 @@
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.05f)                                         \
   X(float,   cloudAnisotropy,                           0.6f)                                          \
-  X(float,   cloudThickness,                            2.0f)                                          \
+  X(float,   cloudThickness,                            3.0f)                                          \
   X(float,   cloudDetailWeight,                         1.0f)                                          \
   X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
   X(float,   cloudShadowTintStrength,                   1.0f)                                          \
   X(float,   cloudSunsetWarmth,                         0.50f)                                         \
-  X(float,   airDensity,                                1.2f)                                          \
-  X(float,   aerosolDensity,                            2.0f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(10.0f, 10.0f, 10.0f))                  \
+  X(float,   airDensity,                                1.5f)                                          \
+  X(float,   aerosolDensity,                            4.0f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(8.0f, 8.0f, 8.0f))                     \
   X(float,   nightSkyBrightness,                        0.012f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.92f, 0.94f, 0.96f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    80.0f)                                         \
+  X(Vector3, transmittanceColor,                        Vector3(0.90f, 0.92f, 0.95f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    40.0f)                                         \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 0.99f))                  \
-  X(float,   volumetricAnisotropy,                      0.0f)
+  X(float,   volumetricAnisotropy,                      0.15f)
 
 // drizzle — light rain, medium fog
 #define WEATHER_PRESET_VALUES_drizzle(X)                                                               \
