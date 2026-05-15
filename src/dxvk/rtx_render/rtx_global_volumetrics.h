@@ -184,11 +184,11 @@ namespace dxvk {
     // Note: Options for remapping legacy D3D9 fixed function fog parameters to volumetric lighting parameters and overwriting the global volumetric parameters when fixed function fog is enabled.
     // Useful for cases where dynamic fog parameters are used throughout a game (or very per-level) that cannot be captrued merely in a global set of volumetric parameters. To see remapped results
     // volumetric lighting in general must be enabled otherwise these settings will have no effect.
-    RTX_OPTION("rtx.volumetrics", bool, enableFogRemap, false,
+    RTX_OPTION_FLAG("rtx.volumetrics", bool, enableFogRemap, false, RtxOptionFlags::NoSave,
                "A flag to enable or disable fixed function fog remapping. Only takes effect when volumetrics are enabled.\n"
                "Typically many old games used fixed function fog for various effects and while sometimes this fog can be replaced with proper volumetrics globally, other times require some amount of dynamic behavior controlled by the game.\n"
                "When enabled this option allows for remapping of fixed function fog parameters from the game to volumetric parameters to accomodate this dynamic need.");
-    RTX_OPTION("rtx.volumetrics", bool, enableFogColorRemap, false,
+    RTX_OPTION_FLAG("rtx.volumetrics", bool, enableFogColorRemap, false, RtxOptionFlags::NoSave,
                "A flag to enable or disable remapping fixed function fox's color. Only takes effect when fog remapping in general is enabled.\n"
                "Enables or disables remapping functionality relating to the color parameter of fixed function fog with the exception of the multiscattering scale (as this scale can be set to 0 to disable it).\n"
                "This allows dynamic changes to the game's fog color to be reflected somewhat in the volumetrics system. Overrides the specified volumetric transmittance color.");
