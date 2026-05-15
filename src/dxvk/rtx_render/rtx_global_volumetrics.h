@@ -203,11 +203,11 @@ namespace dxvk {
     RTX_OPTION_ARGS("rtx.volumetrics", float, fogRemapMaxDistanceMinMeters, 1.0f,
                "A value controlling the \"max distance\" fixed function fog parameter's minimum remapping bound.\n"
                "Note that fog remapping and fog max distance remapping must be enabled for this setting to have any effect.  In meters.",
-               args.minValue = 0.0f);
+               args.minValue = 0.0f; args.flags = RtxOptionFlags::NoSave);
     RTX_OPTION_ARGS("rtx.volumetrics", float, fogRemapMaxDistanceMaxMeters, 40.0f,
                "A value controlling the \"max distance\" fixed function fog parameter's maximum remapping bound.\n"
                "Note that fog remapping and fog max distance remapping must be enabled for this setting to have any effect.  In meters.",
-               args.minValue = 0.0f);
+               args.minValue = 0.0f; args.flags = RtxOptionFlags::NoSave);
     RTX_OPTION_ARGS("rtx.volumetrics", float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f,
                "A value representing the transmittance measurement distance's minimum remapping bound.\n"
                "When the fixed function fog's \"max distance\" parameter is at or below its specified minimum the volumetric system's transmittance measurement distance will be set to this value and interpolated upwards.\n"
