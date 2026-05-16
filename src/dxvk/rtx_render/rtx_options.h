@@ -1503,7 +1503,7 @@ namespace dxvk {
     // Worley carve (Schneider15 — slide 17 of RDR2 SIGGRAPH 2019).
     // These knobs control how chunky / cell-shaped the prebaked cloud noise is.
     // The bake is one-shot at atmosphere init, so changes APPLY ON GAME RELAUNCH.
-    RTX_OPTION("rtx.atmosphere", float, cloudWorleyCarveStrength, 0.6f,
+    RTX_OPTION("rtx.atmosphere", float, cloudWorleyCarveStrength, 0.0f,
                "Schneider15 cauliflower carve strength. The Worley FBM is "
                "subtracted from the Perlin base in the cloud noise bake to "
                "produce chunky 3D cell silhouettes. 0 = pure Perlin (smooth "

@@ -60,14 +60,12 @@ RWTexture2D<float2> cloudHeightLutOutput;
 //                at hf~0.85 hinting at the anvil cap
 float densityEnvelope(float hf, float type) {
   // Rise / hold / fall keypoints sweep with type — wider band as type rises.
-  // fallStart pulled in to 0.70 for cumulus (was 0.80) so the trapezoid
-  // tapers earlier and creates a visible "mushroom neck" silhouette before
-  // the anvil bump re-widens at hf~0.85. Without the earlier taper the body
-  // sits as a flat-top plateau and the anvil reads as a hat sitting on a
-  // box; with the earlier taper it reads as a tower with a cap.
-  float riseEnd   = mix(0.05f, 0.12f, type);
-  float fallStart = mix(0.15f, 0.70f, type);
-  float fallEnd   = mix(0.30f, 0.98f, type);
+  // Tuned for Morrowind's thick slab (3+ km): stratus extends through the
+  // lower 60% of the slab (not just 30%), stratocumulus fills 80%, cumulus
+  // fills nearly the full slab with an anvil bump near the top.
+  float riseEnd   = mix(0.08f, 0.15f, type);
+  float fallStart = mix(0.40f, 0.72f, type);
+  float fallEnd   = mix(0.60f, 0.98f, type);
   float rise = saturate(hf / max(riseEnd, 1e-4f));
   float fall = saturate((fallEnd - hf) / max(fallEnd - fallStart, 1e-4f));
   float base = saturate(rise * fall);
