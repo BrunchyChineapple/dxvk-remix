@@ -1244,7 +1244,7 @@ namespace dxvk {
     constants.reSTIRGIMISRoughness = restirGI.misRoughness();
     constants.reSTIRGIMISParallaxAmount = restirGI.parallaxAmount();
     constants.enableReSTIRGIDemodulatedTargetFunction = restirGI.useDemodulatedTargetFunction();
-    constants.enableReSTIRGILightingValidation = RtxOptions::useRTXDI() && rtxdi.enableDenoiserGradient() && restirGI.validateLightingChange();
+    constants.enableReSTIRGILightingValidation = RtxOptions::useRTXDI() && rtxdi.getEnableDenoiserGradient(*this) && restirGI.validateLightingChange();
     constants.reSTIRGISampleValidationThreshold = restirGI.lightingValidationThreshold();
     constants.enableReSTIRGIVisibilityValidation = restirGI.validateVisibilityChange();
     constants.reSTIRGIVisibilityValidationRange = 1.0f + restirGI.visibilityValidationRange();
@@ -1609,7 +1609,7 @@ namespace dxvk {
         denoiser.dispatch(this, m_execBarriers, rtOutput, denoiseInput, denoiseOutput);
     };
 
-    bool isSecondaryOnly = useRayReconstruction() && !rayReconstruction.enableNRDForTraining() && rayReconstruction.preprocessSecondarySignal();
+    const bool isSecondaryOnly = rayReconstruction.denoiseSecondarySignalWithExternalDenoiser();
 
     // Primary Direct light denoiser
     if (!isSecondaryOnly)
