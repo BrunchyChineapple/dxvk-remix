@@ -619,8 +619,20 @@ namespace dxvk {
     RTX_OPTION("rtx", bool, replaceDirectSpecularHitTWithIndirectSpecularHitT, true, "");
     RTX_OPTION("rtx", bool, adaptiveResolutionDenoising, true, "");
     RTX_OPTION_ENV("rtx", bool, adaptiveAccumulation, true, "DXVK_USE_ADAPTIVE_ACCUMULATION", "");
-    RTX_OPTION("rtx", uint32_t, numFramesToKeepInstances, 1, "");
-    RTX_OPTION("rtx", uint32_t, numFramesToKeepBLAS, 1, "");
+    // Number of frames to keep RT instances / BLAS-es around after they last
+    // drew. Upstream defaults are 1, but for any draw stack that re-submits
+    // chunked geometry per-frame (MGE-XE distant-land terrain + statics, plus
+    // a wide class of wrapper-driven LOD / streaming systems), a 1-frame
+    // retention causes a one-frame "flicker out" of distant-land geometry
+    // every time a chunk's hash transients between consecutive frames or its
+    // BLAS rebuild lags by a frame. Bumping to 4 gives the renderer a small
+    // safety window without measurable cost (these are tiny BLAS-es; the
+    // distant-land tile count stays in the hundreds-low-thousands).
+    // Original symptom: "everything distant land handles flickers out for one
+    // frame during forward motion, every few steps, all distant geometry
+    // simultaneously" -- a known pre-existing MGE-XE+Remix interaction.
+    RTX_OPTION("rtx", uint32_t, numFramesToKeepInstances, 4, "");
+    RTX_OPTION("rtx", uint32_t, numFramesToKeepBLAS, 4, "");
     RTX_OPTION("rtx", uint32_t, numFramesToKeepLights, 100, ""); // NOTE: This was the default we've had for a while, can probably be reduced...
     RTX_OPTION("rtx", uint32_t, sceneKeepAliveFrames, 0, 
                "Number of consecutive frames without valid camera or raytracing before clearing the scene."
