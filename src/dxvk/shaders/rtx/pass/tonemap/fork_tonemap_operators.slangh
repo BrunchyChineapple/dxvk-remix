@@ -86,9 +86,13 @@ float3 applyTonemapOperator(uint op, float3 color, bool suppressBlackLevelClamp,
   }
   if (op == tonemapOperatorPsycho17)
   {
-    // Peak hardcoded to 4.0 (overrides the cb-supplied psycho17PeakValue)
-    // to give the operator a wider working range; the Neutwo max-channel
-    // pass below brings the result back into a well-behaved [0, 1] envelope.
+    // SDR mode: peak luminance pinned at 1.0. The cb-supplied
+    // psycho17PeakValue is also hardcoded to 1.0 in writeOperatorParams
+    // (no UI / RtxOption); the literal here matches and keeps the call
+    // site self-evident. The final `saturate(color)` fallback at the
+    // bottom of this function enforces the [0, 1] envelope on the
+    // identity/unrecognised path; psycho17's own gamut compression
+    // handles its own clamp.
     float3 psychoResult = renodx::tonemap::psycho::psychotm_test17(
         color,
         /*peak_value=*/ 1.0f,

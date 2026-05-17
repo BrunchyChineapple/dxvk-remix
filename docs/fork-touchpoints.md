@@ -224,8 +224,8 @@ check will enforce it if discipline slips.
 - **Hook** at tonemapper ImGui settings → `fork_hooks::showTonemapOperatorUI` / `fork_hooks::showLocalTonemapOperatorUI` in `rtx_fork_tonemap.cpp`. Also remove the standalone `RemixGui::Checkbox("Use Legacy ACES", ...)` at ~line 3888 — its RtxOption `rtx.useLegacyACES` is being deleted.
   *Operator combo + per-operator sliders replace the old ACES checkbox. "Use Legacy ACES" reachable via TonemapOperator::ACESLegacy enum value.*
 
-- **Inline tweak** at `ImGUI::showRenderingSettings` "Tonemapping" header — replaced the `Tonemapping Mode` combo (Global / Local / Direct) with a `Use Local Tonemapping` checkbox and always-visible `metaToneMapping().showImguiSettings()` call. Local tonemapper settings are shown below when the checkbox is enabled. Tuning Mode (tone curve sliders) removed from the panel.
-  *2026-05-13 tonemap refactor: mode selector removed; operator dropdown is now the primary control.*
+- **Inline tweak** at `ImGUI::showRenderingSettings` "Tonemapping" header — removed the `Tonemapping Mode` combo (Global / Local / Direct) and the standalone "User Brightness" / "User Brightness EV Range" sliders. The header body is now a single always-visible `metaToneMapping().showImguiSettings()` call between two separators. Tuning Mode (tone curve sliders) is also removed from the panel.
+  *2026-05-13 tonemap refactor: mode selector removed; operator dropdown is now the primary control. 2026-05-15: local tonemap path removed entirely, so no per-path UI gate remains.*
 
 ---
 
