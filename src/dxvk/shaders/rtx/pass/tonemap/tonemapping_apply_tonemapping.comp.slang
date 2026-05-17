@@ -61,6 +61,11 @@ float3 applyToneMapping(float3 color, uint2 pixelPosition)
 
   if (cb.toneMappingEnabled != 0)
   {
+    // Observer adaptive state passed to psycho17; all other operators
+    // ignore this parameter. Fixed at the renodx reference mid-gray
+    // (0.18, 0.18, 0.18) unconditionally — AE state is not wired in.
+    const float3 adaptiveStateBT709 = float3(0.18f, 0.18f, 0.18f);
+
     color = applyTonemapOperator(cb.tonemapOperator, color, /*suppressBlackLevelClamp=*/false,
                                  cb.hableExposureBias,
                                  cb.hableShoulderStrength,
@@ -70,13 +75,8 @@ float3 applyToneMapping(float3 color, uint2 pixelPosition)
                                  cb.hableToeNumerator,
                                  cb.hableToeDenominator,
                                  cb.hableWhitePoint,
-                                 cb.agxGamma,
                                  cb.agxSaturation,
-                                 cb.agxExposureOffset,
                                  cb.agxLook,
-                                 cb.agxContrast,
-                                 cb.agxSlope,
-                                 cb.agxPower,
                                  cb.psycho17PeakValue,
                                  cb.psycho17Exposure,
                                  cb.psycho17Highlights,
@@ -90,7 +90,8 @@ float3 applyToneMapping(float3 color, uint2 pixelPosition)
                                  cb.psycho17WhiteCurveMode,
                                  cb.psycho17ConeResponseExponent,
                                  cb.psycho17GamutCompression,
-                                 cb.psycho17GamutCompressionMode);
+                                 cb.psycho17GamutCompressionMode,
+                                 adaptiveStateBT709);
   }
 
   if (cb.colorGradingEnabled > 0)
