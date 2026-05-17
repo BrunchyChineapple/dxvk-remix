@@ -108,14 +108,14 @@
 //   singleScatteringAlbedo, volumetricAnisotropy.
 // ---------------------------------------------------------------------------
 
-// clear — Morrowind: wispy high-altitude clouds, blue sky, minimal haze
+// clear — Morrowind: defined cumulus cells over blue sky, ~30-40% coverage
 #define WEATHER_PRESET_VALUES_clear(X)                                                                 \
-  X(float,   cloudDensity,                              0.8f)                                          \
-  X(float,   cloudCoverageMean,                         0.35f)                                         \
-  X(float,   cloudCoverageSpread,                       0.15f)                                         \
+  X(float,   cloudDensity,                              1.4f)                                          \
+  X(float,   cloudCoverageMean,                         0.50f)                                         \
+  X(float,   cloudCoverageSpread,                       0.20f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
-  X(float,   cloudTypeMean,                             0.6f)                                          \
-  X(float,   cloudTypeSpread,                           0.3f)                                          \
+  X(float,   cloudTypeMean,                             0.45f)                                         \
+  X(float,   cloudTypeSpread,                           0.30f)                                         \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
   X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(float,   cloudWindShearStrength,                    0.5f)                                          \
@@ -140,11 +140,11 @@
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   volumetricAnisotropy,                      0.0f)
 
-// partlyCloudy — Morrowind "Cloudy": ~80% of overcast coverage
+// partlyCloudy — Morrowind "Cloudy": dense coverage approaching overcast levels
 #define WEATHER_PRESET_VALUES_partlyCloudy(X)                                                          \
-  X(float,   cloudDensity,                              1.5f)                                          \
-  X(float,   cloudCoverageMean,                         0.55f)                                         \
-  X(float,   cloudCoverageSpread,                       0.20f)                                         \
+  X(float,   cloudDensity,                              1.7f)                                          \
+  X(float,   cloudCoverageMean,                         0.62f)                                         \
+  X(float,   cloudCoverageSpread,                       0.18f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
   X(float,   cloudTypeMean,                             0.5f)                                          \
   X(float,   cloudTypeSpread,                           0.3f)                                          \
@@ -172,11 +172,11 @@
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   volumetricAnisotropy,                      0.05f)
 
-// overcast — current default look
+// overcast — solid sky cover, the canonical thick-deck reference
 #define WEATHER_PRESET_VALUES_overcast(X)                                                              \
-  X(float,   cloudDensity,                              1.8f)                                          \
-  X(float,   cloudCoverageMean,                         0.64f)                                         \
-  X(float,   cloudCoverageSpread,                       0.16f)                                         \
+  X(float,   cloudDensity,                              2.0f)                                          \
+  X(float,   cloudCoverageMean,                         0.75f)                                         \
+  X(float,   cloudCoverageSpread,                       0.14f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
   X(float,   cloudTypeMean,                             0.5f)                                          \
   X(float,   cloudTypeSpread,                           0.2f)                                          \
@@ -204,14 +204,14 @@
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   volumetricAnisotropy,                      0.05f)
 
-// hazy — warm summer haze
+// hazy — warm summer haze with broken cumulus
 #define WEATHER_PRESET_VALUES_hazy(X)                                                                  \
-  X(float,   cloudDensity,                              1.0f)                                          \
-  X(float,   cloudCoverageMean,                         0.40f)                                         \
+  X(float,   cloudDensity,                              1.3f)                                          \
+  X(float,   cloudCoverageMean,                         0.50f)                                         \
   X(float,   cloudCoverageSpread,                       0.20f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
-  X(float,   cloudTypeMean,                             0.4f)                                          \
-  X(float,   cloudTypeSpread,                           0.3f)                                          \
+  X(float,   cloudTypeMean,                             0.45f)                                         \
+  X(float,   cloudTypeSpread,                           0.30f)                                         \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
   X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(float,   cloudWindShearStrength,                    0.5f)                                          \
