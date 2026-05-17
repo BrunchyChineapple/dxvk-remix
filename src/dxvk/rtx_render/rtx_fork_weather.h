@@ -430,36 +430,36 @@
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 1.00f))                  \
   X(float,   volumetricAnisotropy,                      0.0f)
 
-// sandstorm — yellow-orange forward-scattering fog
+// sandstorm — Morrowind Ash/Blight: full cloud deck, heavy red-brown dust haze
 #define WEATHER_PRESET_VALUES_sandstorm(X)                                                             \
-  X(float,   cloudDensity,                              1.5f)                                          \
-  X(float,   cloudCoverageMean,                         0.40f)                                         \
-  X(float,   cloudCoverageSpread,                       0.30f)                                         \
+  X(float,   cloudDensity,                              2.4f)                                          \
+  X(float,   cloudCoverageMean,                         0.85f)                                         \
+  X(float,   cloudCoverageSpread,                       0.15f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
-  X(float,   cloudTypeMean,                             0.2f)                                          \
-  X(float,   cloudTypeSpread,                           0.4f)                                          \
+  X(float,   cloudTypeMean,                             0.3f)                                          \
+  X(float,   cloudTypeSpread,                           0.35f)                                         \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
   X(float,   cloudAnvilBias,                            0.3f)                                          \
-  X(float,   cloudWindShearStrength,                    0.5f)                                          \
-  X(Vector3, cloudColor,                                Vector3(0.85f, 0.65f, 0.40f))                  \
+  X(float,   cloudWindShearStrength,                    0.7f)                                          \
+  X(Vector3, cloudColor,                                Vector3(0.85f, 0.55f, 0.32f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.20f)                                         \
+  X(float,   cloudShadowStrength,                       0.30f)                                         \
   X(float,   cloudAnisotropy,                           0.6f)                                          \
-  X(float,   cloudThickness,                            2.5f)                                          \
+  X(float,   cloudThickness,                            3.5f)                                          \
   X(float,   cloudDetailWeight,                         1.0f)                                          \
   X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
   X(float,   cloudShadowTintStrength,                   1.0f)                                          \
   X(float,   cloudSunsetWarmth,                         1.30f)                                         \
   X(float,   airDensity,                                1.0f)                                          \
-  X(float,   aerosolDensity,                            2.5f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(10.0f, 8.0f, 5.0f))                    \
+  X(float,   aerosolDensity,                            3.5f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(8.0f, 6.0f, 4.0f))                     \
   X(float,   nightSkyBrightness,                        0.010f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.95f, 0.65f, 0.35f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    50.0f)                                         \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.90f, 0.75f, 0.50f))                  \
+  X(Vector3, transmittanceColor,                        Vector3(0.95f, 0.55f, 0.28f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    35.0f)                                         \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.90f, 0.70f, 0.45f))                  \
   X(float,   volumetricAnisotropy,                      0.60f)
 
 // smoggy — industrial dark grey-brown haze
