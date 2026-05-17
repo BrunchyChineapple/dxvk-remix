@@ -3,8 +3,9 @@
 [![Build Status](https://github.com/RemixProjGroup/dxvk-remix/actions/workflows/build.yml/badge.svg)](https://github.com/RemixProjGroup/dxvk-remix/actions/workflows/build.yml)
 
 **Remix Plus** is a community-maintained fork of NVIDIA's
-[`dxvk-remix`](https://github.com/NVIDIAGameWorks/dxvk-remix) that
-extends the Remix SDK API for modern-game plugin integrations. It
+[`dxvk-remix`](https://github.com/NVIDIAGameWorks/dxvk-remix) — created
+and led by [Kim2091](https://github.com/Kim2091) — that extends the
+Remix SDK API for modern-game plugin integrations. It
 brings the SDK extensions developed in the gmod-rtx community fork —
 batched mesh and light creation, plugin-injected game state, UI state
 plumbing, VRAM control, additional tonemap operators, the Hillaire
@@ -189,6 +190,13 @@ documentation.
 - [Rtx Options](RtxOptions.md)
 - [Terrain System](docs/TerrainSystem.md)
 - [Unit Test](docs/UnitTest.md)
+
+## Team
+
+- [Kim2091](https://github.com/Kim2091) — project lead and lead maintainer
+- [CR](https://github.com/sambow23) — maintainer
+- [TheGreatHMMMM](https://github.com/TheGreatHMMMM) — contributor
+- [Gokuwashere](https://github.com/BrunchyChineapple) — contributor
 
 ## Credits
 
