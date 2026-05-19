@@ -160,7 +160,7 @@ struct AtmosphereArgs {
   float cloudCoverageSpread;       // [0,1] amplitude of coverage variation around mean.
   float cloudCoverageNoiseScale;   // Region size frequency for coverage noise (independent of type).
   float cloudAnvilBias;            // [0,1] cumulus top inflation strength (Nubis anvil pow trick).
-  float padDeadCloudWindShearStrength; // (was cloudWindShearStrength — removed 2026-05-19)
+  float cloudMsScale;              // Multi-scatter sigma_ms master multiplier (1.0 = paper baseline)
 
   float cloudMultiScatterStrength; // Wrenninge multi-scatter master multiplier (1.0 = physical baseline).
   uint  cloudMultiScatterOctaves;  // Number of Wrenninge octaves to sum (clamped 1..4 in shader).

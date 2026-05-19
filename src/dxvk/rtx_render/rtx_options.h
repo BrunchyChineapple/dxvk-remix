@@ -1443,6 +1443,17 @@ namespace dxvk {
                "3 is the standard cost/quality tradeoff. 1 disables multi-scatter "
                "(single direct anisotropic term only). Range clamped to 1..4 in-shader.");
 
+    // Master multiplier on the Nubis Cubed sigma_ms remap (page 137 of the
+    // Nubis Cubed 2023 paper). Scales the per-sample multi-scatter sigma
+    // before it enters M = dim_profile * exp(-sigma_ms * D_sun). At 1.0 the
+    // paper baseline is unchanged; raise to brighten cumulus bottoms (more
+    // multi-scatter), lower to flatten lighting. The 4 individual sigma_ms
+    // sub-knobs (cloudMsSigmaShallow/Deep, cloudMsSunDotMax, cloudMsSdfDepth)
+    // remain accessible via user.conf for power tuning.
+    RTX_OPTION("rtx.atmosphere", float, cloudMsScale, 1.0f,
+               "Multi-scatter strength multiplier on the Nubis Cubed sigma_ms term [0..2]. "
+               "1.0 = paper baseline; higher brightens cumulus bottoms, lower flattens.");
+
     // Cloud spatial variation (Nubis-style — spec 2026-05-06)
     RTX_OPTION("rtx.atmosphere", float, cloudTypeMean, 0.0f,
                "Mean cloud type across the sky [0,1]: 0=stratus, 0.5=stratocumulus, 1=cumulus.");

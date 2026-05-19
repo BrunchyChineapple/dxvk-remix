@@ -2226,7 +2226,7 @@ NubisCubedLighting evalNubisCubedSample(
   float sdfFrac = saturate((cloud_sdf + args.cloudMsSdfDepth) / max(args.cloudMsSdfDepth, 1e-4f));
   float sigma_ms_inner = lerp(args.cloudMsSigmaDeep, args.cloudMsSigmaShallow, sdfFrac);
   float sunFrac = saturate(cosTheta / max(args.cloudMsSunDotMax, 1e-4f));
-  float sigma_ms = lerp(args.cloudMsSigmaShallow, sigma_ms_inner, sunFrac);
+  float sigma_ms = lerp(args.cloudMsSigmaShallow, sigma_ms_inner, sunFrac) * args.cloudMsScale;
 
   float M = dim_profile * exp(-sigma_ms * D_sun);
   float HG1 = hgPhaseNubis(cosTheta, args.cloudPhaseG1);
