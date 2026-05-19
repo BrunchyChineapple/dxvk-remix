@@ -1384,11 +1384,13 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", bool, cloudEnabled, true, "Enable procedural cloud rendering.");
     RTX_OPTION("rtx.atmosphere", float, cloudDensity, 1.80f, "Cloud opacity/density multiplier.");
     RTX_OPTION("rtx.atmosphere", float, cloudAltitude, 1.3f, "Cloud layer altitude in kilometers.");
-    RTX_OPTION("rtx.atmosphere", float, cloudScale, 0.010f, "Horizontal noise scale — smaller values produce larger clouds.");
     RTX_OPTION("rtx.atmosphere", Vector3, cloudColor, Vector3(0.89f, 0.92f, 1.0f), "Base cloud color (albedo).");
     RTX_OPTION("rtx.atmosphere", float, cloudWindSpeed, 0.02f, "Cloud drift speed in km/s. Clouds scroll with this velocity.");
     RTX_OPTION("rtx.atmosphere", float, cloudWindDirection, 45.0f, "Cloud wind direction in degrees (0 = +X, 90 = +Z).");
-    RTX_OPTION("rtx.atmosphere", float, cloudShadowStrength, 0.0f, "How strongly overcast clouds dim ground and atmosphere lighting [0..1].");
+    RTX_OPTION("rtx.atmosphere", float, cloudShadowStrength, 1.0f,
+               "How strongly overcast clouds dim ground and atmosphere lighting [0..1]. "
+               "1.0 = full physical voxel-grid shadow contribution from cloudVoxelShadowsEnable; "
+               "0 = shadows fully muted (voxel grid still runs but its output is mixed away).");
     RTX_OPTION("rtx.atmosphere", float, cloudAnisotropy, 0.6f, "Henyey-Greenstein g for cloud forward-scatter (silver lining).");
 
     // Cloud volumetric / appearance enhancements
@@ -1396,8 +1398,6 @@ namespace dxvk {
                "Number of ray-march steps through the cloud slab. Higher = better quality, more cost. Range 1..32.");
     RTX_OPTION("rtx.atmosphere", float, cloudThickness, 3.05f,
                "Vertical depth of the cloud slab in km.");
-    RTX_OPTION("rtx.atmosphere", float, cloudDetailWeight, 1.0f,
-               "Weight of the high-frequency detail FBM term [0..1]. Auto-fades at low cloudScale to avoid visible noise.");
     RTX_OPTION("rtx.atmosphere", Vector3, cloudShadowTint, Vector3(0.55f, 0.65f, 0.85f),
                "Sky-blue bounce color applied on the shadow side of clouds.");
     RTX_OPTION("rtx.atmosphere", float, cloudShadowTintStrength, 1.0f,
@@ -1458,10 +1458,6 @@ namespace dxvk {
                "Region size frequency for coverage noise. Independent from type noise scale.");
     RTX_OPTION("rtx.atmosphere", float, cloudAnvilBias, 0.3f,
                "Cumulus top inflation strength [0,1]. 0=flat tops, 1=fully spread mushroom-cap anvils.");
-    RTX_OPTION("rtx.atmosphere", float, cloudWindShearStrength, 0.5f,
-               "Lateral cloud-top displacement along wind direction, scaled by cloud type [0,1+]. "
-               "0=cloud tops vertical above base, 1=tops offset by ~thickness*type along wind. "
-               "Reduces the visible per-cumulus 45-degree lean at default settings.");
     RTX_OPTION("rtx.atmosphere", float, cloudNoiseTileKm, 12.0f,
                "World-space tile period (km) for the prebaked 3D cloud noise texture. "
                "Smaller = more visible repetition; larger = lower-frequency cloud detail. "

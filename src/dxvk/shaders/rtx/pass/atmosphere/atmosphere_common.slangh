@@ -1753,12 +1753,12 @@ float sampleCloudDensityTextured(vec3 worldPosKm,
                                  Texture3D<float> cloudNoise3D,
                                  SamplerState cloudSampler) {
   // 1. Wind perturbation (translation only — texture is tilable).
-  //    The old analytic sampleCloudDensity also applied a height-dependent
-  //    shear (heightFraction * cloudThickness * typeLocal * cloudWindShearStrength).
-  //    That term is intentionally dropped here: the 3D volume already encodes
-  //    vertical structure, so a UV shear would fight the volume's own variation.
-  //    If a deliberate shear-skewed look is wanted later, layer it on the
-  //    texcoord here rather than in this helper's contract.
+  //    The legacy analytic sampler applied a height-dependent shear on top of
+  //    the wind offset; that term was intentionally dropped when this textured
+  //    sampler landed because the 3D volume already encodes vertical structure
+  //    (a UV shear would fight the volume's own variation). If a deliberate
+  //    shear-skewed look is wanted later, layer it on the texcoord here rather
+  //    than in this helper's contract.
   vec3 windOffset = vec3(args.cloudWindOffset.x, 0.0f, args.cloudWindOffset.y);
   vec3 perturbed  = worldPosKm + windOffset;
 

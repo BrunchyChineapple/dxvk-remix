@@ -758,8 +758,6 @@ namespace fork_hooks {
         RemixGui::Checkbox("Enabled", &RtxOptions::cloudEnabledObject());
         RemixGui::DragFloat("Density", &RtxOptions::cloudDensityObject(), 0.05f, 0.0f, 4.0f, "%.2f", sliderFlags);
         RemixGui::DragFloat("Altitude", &RtxOptions::cloudAltitudeObject(), 0.1f, 0.5f, 12.0f, "%.1f km", sliderFlags);
-        RemixGui::DragFloat("Scale", &RtxOptions::cloudScaleObject(), 0.005f, 0.005f, 1.0f, "%.3f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover("Horizontal noise scale. Smaller values = larger cloud clumps.");
         RemixGui::DragFloat3("Color", &RtxOptions::cloudColorObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
         RemixGui::DragFloat("Wind Speed", &RtxOptions::cloudWindSpeedObject(), 0.005f, 0.0f, 1.0f, "%.3f km/s", sliderFlags);
         RemixGui::DragFloat("Wind Direction", &RtxOptions::cloudWindDirectionObject(), 1.0f, 0.0f, 360.0f, "%.1f°", sliderFlags);
@@ -774,8 +772,6 @@ namespace fork_hooks {
         RemixGui::SetTooltipToLastWidgetOnHover("Ray-march steps through the cloud slab. Higher = better quality, more cost. Default 5.");
         RemixGui::DragFloat("Thickness", &RtxOptions::cloudThicknessObject(), 0.05f, 0.1f, 4.0f, "%.2f km", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover("Vertical depth of the cloud layer in km.");
-        RemixGui::DragFloat("Detail Weight", &RtxOptions::cloudDetailWeightObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover("Strength of high-frequency detail. Auto-fades at low Scale to avoid visible noise.");
         RemixGui::DragFloat("Curvature", &RtxOptions::cloudCurvatureObject(), 0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover("Sky-dome curvature: 0 = real-planet radius (nearly flat ceiling), 1 = tight dome. Only affects cloud sphere geometry — atmosphere math is untouched.");
 

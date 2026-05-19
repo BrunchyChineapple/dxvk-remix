@@ -423,7 +423,7 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.cloudColor = RtxOptions::cloudColor();
     args.cloudDensity = RtxOptions::cloudDensity();
     args.cloudAltitude = RtxOptions::cloudAltitude();
-    args.cloudScale = RtxOptions::cloudScale();
+    args.padDeadCloudScale = 0.0f;
     args.cloudEnabled = RtxOptions::cloudEnabled() ? 1.0f : 0.0f;
 
     // Accumulated wind offset. Wind scrolling is driven by timeSeconds so the
@@ -444,7 +444,7 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.cloudShadowTint = RtxOptions::cloudShadowTint();
     args.cloudShadowTintStrength = RtxOptions::cloudShadowTintStrength();
     args.cloudThickness = RtxOptions::cloudThickness();
-    args.cloudDetailWeight = RtxOptions::cloudDetailWeight();
+    args.padDeadCloudDetailWeight = 0.0f;
     args.cloudSunsetWarmth = RtxOptions::cloudSunsetWarmth();
     args.cloudViewSamples = RtxOptions::cloudViewSamples();
     args.cloudCurvature = RtxOptions::cloudCurvature();
@@ -455,7 +455,7 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.cloudCoverageSpread = RtxOptions::cloudCoverageSpread();
     args.cloudCoverageNoiseScale = RtxOptions::cloudCoverageNoiseScale();
     args.cloudAnvilBias = RtxOptions::cloudAnvilBias();
-    args.cloudWindShearStrength = RtxOptions::cloudWindShearStrength();
+    args.padDeadCloudWindShearStrength = 0.0f;
     args.cloudMultiScatterStrength = RtxOptions::cloudMultiScatterStrength();
     args.cloudMultiScatterOctaves = RtxOptions::cloudMultiScatterOctaves();
     args.pad6 = 0.0f;

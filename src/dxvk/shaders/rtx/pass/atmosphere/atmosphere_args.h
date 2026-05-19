@@ -134,7 +134,7 @@ struct AtmosphereArgs {
   float cloudDensity;       // Overall opacity/density multiplier
 
   float cloudAltitude;      // Altitude of cloud layer (km)
-  float cloudScale;         // Horizontal noise scale (smaller = larger clouds)
+  float padDeadCloudScale;  // (was cloudScale — removed 2026-05-19; layout preserved)
   float cloudEnabled;       // 1.0 if clouds should be rendered, 0.0 otherwise
   float cloudShadowStrength;// How strongly clouds dim ground/atmosphere lighting [0..1]
 
@@ -147,7 +147,7 @@ struct AtmosphereArgs {
   float cloudShadowTintStrength;
 
   float cloudThickness;        // Cloud-slab vertical depth, km
-  float cloudDetailWeight;     // Pre-fade detail FBM weight [0..1]
+  float padDeadCloudDetailWeight; // (was cloudDetailWeight — removed 2026-05-19)
   float cloudSunsetWarmth;     // Strength of low-sun warm tint
   uint cloudViewSamples;       // Ray-march steps through cloud slab
 
@@ -160,7 +160,7 @@ struct AtmosphereArgs {
   float cloudCoverageSpread;       // [0,1] amplitude of coverage variation around mean.
   float cloudCoverageNoiseScale;   // Region size frequency for coverage noise (independent of type).
   float cloudAnvilBias;            // [0,1] cumulus top inflation strength (Nubis anvil pow trick).
-  float cloudWindShearStrength;    // [0,1+] lateral cloud-top displacement along wind, scaled by type.
+  float padDeadCloudWindShearStrength; // (was cloudWindShearStrength — removed 2026-05-19)
 
   float cloudMultiScatterStrength; // Wrenninge multi-scatter master multiplier (1.0 = physical baseline).
   uint  cloudMultiScatterOctaves;  // Number of Wrenninge octaves to sum (clamped 1..4 in shader).
