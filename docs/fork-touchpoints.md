@@ -227,6 +227,9 @@ check will enforce it if discipline slips.
 - **Inline tweak** at `ImGUI::showRenderingSettings` "Tonemapping" header — removed the `Tonemapping Mode` combo (Global / Local / Direct) and the standalone "User Brightness" / "User Brightness EV Range" sliders. The header body is now a single always-visible `metaToneMapping().showImguiSettings()` call between two separators. Tuning Mode (tone curve sliders) is also removed from the panel.
   *2026-05-13 tonemap refactor: mode selector removed; operator dropdown is now the primary control. 2026-05-15: local tonemap path removed entirely, so no per-path UI gate remains.*
 
+- **Hook** at `ImGUI::showRenderingSettings` (after the "Geometry" collapsing header) → `fork_hooks::showStaticPromotionPanel` in `rtx_fork_static_promotion.cpp` (added 2026-05-20). One-line dispatch.
+  *Renders the "Static Geometry Promotion" collapsing header inside the Rendering tab. Surfaces the six static-promotion RTX_OPTIONs as `RemixGui::*` widgets plus the per-frame `PromotionFrameCounters` (instance / promotion / TLAS-tier / persistent-BLAS / stability-histogram readouts). Placed adjacent to "Geometry" so all BLAS-related controls cluster.*
+
 ---
 
 ## src/dxvk/imgui/dxvk_imgui_about.cpp
@@ -387,6 +390,15 @@ initializer list and can't be lifted into a separate TU.
 
 - **Inline tweak** at `RtxContext` class body (friend declarations block) — ~1 LOC addition to the existing friend block.
   *Adds `friend void fork_hooks::updateWeatherBlender(RtxContext&, float);` so the hook can access the private `m_weatherBlender` member.*
+
+---
+
+## src/dxvk/rtx_render/rtx_debug_view.cpp
+
+**Category:** index-only (existing fork additions are tracked in commit-clustered blocks elsewhere in this file; this section catalogues the per-frame fork hook call sites).
+
+- **Inline tweak** at `dispatch` resource-binding section (added 2026-05-20) — debug-view selector entry + dispatch hook for the static-promotion BLAS-source view (`DEBUG_VIEW_BLAS_SOURCE`, enum 880). ~3 LOC dispatch + ~5 LOC selector entry.
+  *Adds a label + description block to the debug-view selector list ("BLAS Source (Static Geometry Promotion)") and dispatches `fork_hooks::writeStaticPromotionDebugView(*ctx)` when the active debug view enum matches. Hook implementation is a no-op placeholder until Task 5 wires the persistent routing. Includes `rtx_fork_hooks.h` so the hook signature is visible at the call site.*
 
 ---
 
@@ -1182,6 +1194,14 @@ initializer list and can't be lifted into a separate TU.
 
 - **Fork-owned** — new file. Self-contained Slang port of the renodx "Psycho Test 17" operator and its required color-pipeline dependencies (Stockman-Sharpe LMS, CIE 170-2 MacLeod-Boynton + gamut, Naka-Rushton, color grading). Dispatched as `tonemapOperatorPsycho17` (UI label: `PsychoV17_Beta`). Renodx-attributed (Carlos Lopez Jr., MIT 2025).
   *Fork-owned Psycho Test 17 operator implementation.*
+
+---
+
+## src/dxvk/shaders/rtx/utility/debug_view_indices.h
+
+**Category:** index-only, fork. (Other fork debug-view indices are also tracked in commit-clustered blocks earlier in this file; this is the consolidated entry going forward.)
+
+- **Inline tweak** (~7 LOC, added 2026-05-20) — adds `DEBUG_VIEW_BLAS_SOURCE = 880` plus a 5-line comment block describing the static-promotion BLAS-source colorization (Task 3 placeholder; real per-pixel routing lands after Task 5).
 
 ---
 

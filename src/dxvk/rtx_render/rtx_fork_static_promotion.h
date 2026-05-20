@@ -58,4 +58,30 @@ namespace dxvk {
     void writeStaticPromotionDebugView(DxvkContext& ctx);
 
   } // namespace fork_hooks
+
+  namespace static_promotion {
+    // Per-frame diagnostic counters populated during mergeInstancesIntoBlas and
+    // displayed in the ImGui panel. All fields reset to 0 at the top of each
+    // frame's tick.
+    struct PromotionFrameCounters {
+      uint32_t totalInstances = 0;
+      uint32_t promotedThisFrame = 0;
+      uint32_t demotedThisFrame = 0;
+      uint32_t totalBlasBuilds = 0;
+      uint32_t persistentBucketCount = 0;
+      uint32_t persistentBucketMembers = 0;
+      uint32_t tlasPersistent = 0;
+      uint32_t tlasMergedEphemeral = 0;
+      uint32_t tlasDynamic = 0;
+      uint32_t tlasPointInstancer = 0;
+      // Stability histogram: count of RtInstances whose min(stability) lands in
+      // each band (0, 1-3, 4-7, 8-15, 16-31, 32+).
+      uint32_t stabilityHistogram[6] = {};
+      uint64_t persistentBlasBytes = 0;
+      uint32_t lruEvictionsThisFrame = 0;
+    };
+
+    // Accessor for the latest-completed frame's counters.
+    const PromotionFrameCounters& getFrameCounters();
+  } // namespace static_promotion
 } // namespace dxvk

@@ -315,6 +315,13 @@
 //                                                texture not being written
 #define DEBUG_VIEW_CLOUD_SHADOW_FACTOR_RAW 878
 
+// Fork: persistent static-geometry promotion (2026-05-20). Colorizes each
+// G-buffer pixel by which BLAS tier its instance landed in (persistent /
+// merged-ephemeral / dynamic / point-instancer). The Task 3 placeholder is a
+// no-op writer; real per-pixel routing lands after Task 5 when persistent
+// buckets exist to be read from.
+#define DEBUG_VIEW_BLAS_SOURCE 880
+
 
 enum class CompositeDebugView : uint32_t {
   Disabled = 0,

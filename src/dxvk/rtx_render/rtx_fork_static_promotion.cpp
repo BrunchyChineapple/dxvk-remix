@@ -1,5 +1,6 @@
 #include "rtx_fork_static_promotion.h"
 #include "rtx_options.h"
+#include "rtx_imgui.h"
 #include "rtx_instance_manager.h"
 #include "rtx_accel_manager.h"
 #include "rtx_context.h"
@@ -7,8 +8,10 @@
 #include "rtx/pass/instance_definitions.h"
 #include "../imgui/imgui.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 namespace dxvk {
 
@@ -52,6 +55,21 @@ namespace dxvk {
       "resets transformStableFrames. Default 1e-4 yields sub-pixel positional error if a "
       "within-epsilon drift is absorbed by the persistent BLAS.");
   };
+
+  namespace static_promotion {
+    PromotionFrameCounters s_frameCounters;
+    const PromotionFrameCounters& getFrameCounters() { return s_frameCounters; }
+
+    // Bumps the stability histogram bucket for a given min-stability value.
+    void bumpStabilityHistogram(uint32_t minStability) {
+      if (minStability >= 32) { ++s_frameCounters.stabilityHistogram[5]; return; }
+      if (minStability >= 16) { ++s_frameCounters.stabilityHistogram[4]; return; }
+      if (minStability >= 8)  { ++s_frameCounters.stabilityHistogram[3]; return; }
+      if (minStability >= 4)  { ++s_frameCounters.stabilityHistogram[2]; return; }
+      if (minStability >= 1)  { ++s_frameCounters.stabilityHistogram[1]; return; }
+      ++s_frameCounters.stabilityHistogram[0];
+    }
+  } // namespace static_promotion
 
   namespace {
     // Element-wise abs-diff comparison of two VkTransformMatrixKHR matrices under
@@ -99,6 +117,12 @@ namespace dxvk {
       }
       const float eps = RtxForkStaticPromotion::staticPromotionTransformEpsilon();
 
+      // Reset the per-frame histogram and instance total; everything else in
+      // s_frameCounters is owned by Tasks 4-5 and stays untouched here.
+      std::memset(&static_promotion::s_frameCounters.stabilityHistogram, 0,
+                  sizeof(static_promotion::s_frameCounters.stabilityHistogram));
+      static_promotion::s_frameCounters.totalInstances = static_cast<uint32_t>(instances.size());
+
       for (RtInstance* inst : instances) {
         if (!inst) continue;
 
@@ -131,6 +155,14 @@ namespace dxvk {
           inst->m_materialStableFrames = 0;
         }
         inst->m_prevFrameBucketKeyHash = curHash;
+
+        // Bucket the minimum of the three counters into the histogram.
+        const uint32_t minStability = std::min({
+          inst->m_geometryStableFrames,
+          inst->m_transformStableFrames,
+          inst->m_materialStableFrames
+        });
+        static_promotion::bumpStabilityHistogram(minStability);
       }
     }
 
@@ -142,9 +174,58 @@ namespace dxvk {
 
     void onInstanceRemoved(RtInstance* /*instance*/) {}
 
-    void showStaticPromotionPanel() {}
+    void showStaticPromotionPanel() {
+      if (!ImGui::CollapsingHeader("Static Geometry Promotion", ImGuiTreeNodeFlags_None)) {
+        return;
+      }
 
-    void writeStaticPromotionDebugView(DxvkContext& /*ctx*/) {}
+      // RTX_OPTION knobs (RemixGui::* per the tonemap fork pattern).
+      RemixGui::Checkbox("Enable static geometry promotion",
+        &RtxForkStaticPromotion::enableStaticGeometryPromotionObject());
+      RemixGui::DragInt("Stability threshold (K frames)",
+        &RtxForkStaticPromotion::staticGeometryPromotionFramesObject(), 1.0f, 1, 64);
+      RemixGui::DragInt("Max prims per persistent BLAS",
+        &RtxForkStaticPromotion::maxPrimsInPersistentBLASObject(), 1024.0f, 4096, 1048576);
+      RemixGui::DragInt("Memory budget (MB)",
+        &RtxForkStaticPromotion::persistentBlasMemoryBudgetMBObject(), 4.0f, 16, 2048);
+      RemixGui::DragFloat("Transform epsilon",
+        &RtxForkStaticPromotion::staticPromotionTransformEpsilonObject(), 1e-5f, 1e-6f, 1e-2f, "%.6f");
+      RemixGui::Checkbox("Enable same-frame content dedup",
+        &RtxForkStaticPromotion::enableSameFrameContentDedupObject());
+
+      ImGui::Separator();
+
+      const auto& fc = static_promotion::getFrameCounters();
+      ImGui::Text("Instances this frame:        %u", fc.totalInstances);
+      ImGui::Text("Promoted this frame:         %u", fc.promotedThisFrame);
+      ImGui::Text("Demoted this frame:          %u", fc.demotedThisFrame);
+      ImGui::Text("BLAS builds this frame:      %u", fc.totalBlasBuilds);
+      ImGui::Text("LRU evictions this frame:    %u", fc.lruEvictionsThisFrame);
+      ImGui::Spacing();
+      ImGui::Text("Persistent buckets:          %u (%u members)",
+                  fc.persistentBucketCount, fc.persistentBucketMembers);
+      ImGui::Text("Persistent BLAS memory:      %llu MB",
+                  (unsigned long long)(fc.persistentBlasBytes / (1024 * 1024)));
+      ImGui::Spacing();
+      ImGui::Text("TLAS instances:");
+      ImGui::Text("  Persistent:                %u", fc.tlasPersistent);
+      ImGui::Text("  Ephemeral merged:          %u", fc.tlasMergedEphemeral);
+      ImGui::Text("  Dynamic (own BLAS):        %u", fc.tlasDynamic);
+      ImGui::Text("  Point instancer:           %u", fc.tlasPointInstancer);
+
+      ImGui::Spacing();
+      ImGui::Text("Stability histogram (frames stable):");
+      const char* bandLabels[] = { "0", "1-3", "4-7", "8-15", "16-31", "32+" };
+      for (int b = 0; b < 6; ++b) {
+        ImGui::Text("  %-6s : %u", bandLabels[b], fc.stabilityHistogram[b]);
+      }
+    }
+
+    void writeStaticPromotionDebugView(DxvkContext& /*ctx*/) {
+      // Placeholder — actual per-pixel BLAS-source colorization will land in a
+      // follow-up commit after Task 5's persistent routing exists to read from.
+      // The enum value is reachable from the menu so users can see it listed.
+    }
 
   } // namespace fork_hooks
 } // namespace dxvk
