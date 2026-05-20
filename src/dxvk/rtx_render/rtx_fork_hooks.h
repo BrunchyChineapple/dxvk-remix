@@ -487,6 +487,35 @@ namespace dxvk {
     // Implementation in rtx_fork_weather.cpp.
     void showWeatherUI();
 
+    // --- Static geometry promotion (rtx_fork_static_promotion.cpp) ---
+
+    // Per-frame stability counter tick. Called from AccelManager::mergeInstancesIntoBlas
+    // before the main routing loop. Updates three counters on each RtInstance.
+    void tickStabilityCounters(const std::vector<RtInstance*>& instances, uint32_t currentFrame);
+
+    // Routes an instance into the persistent-merged-BLAS tier if eligible.
+    // Returns true if the instance was handled by the persistent tier (caller
+    // should skip its normal routing). Returns false otherwise.
+    // NOTE: requires AccelManager to declare this as a friend for access to
+    // private bucket / pool members. See rtx_accel_manager.h.
+    bool tryRouteToPersistentBucket(AccelManager& mgr, RtInstance* instance, uint32_t currentFrame);
+
+    // Touches all persistent BLASes during the AccelManager full-skip fast path,
+    // preventing GC from collecting them while the scene is unchanged.
+    void touchPersistentBlasesForFastSkip(AccelManager& mgr, uint32_t currentFrame);
+
+    // Notifies the persistent tier that an RtInstance is being removed (GC,
+    // hidden, mask zero) so its membership in any persistent bucket can be
+    // cleaned up. Called from AccelManager::removeInstanceFromBucketCache.
+    void onInstanceRemoved(RtInstance* instance);
+
+    // Renders the "Static Geometry Promotion" panel in the Rendering section.
+    void showStaticPromotionPanel();
+
+    // Writes the per-pixel BLAS-source debug view (called when the active
+    // debug view is DebugViewIdx::BlasSource).
+    void writeStaticPromotionDebugView(class DxvkContext& ctx);
+
   } // namespace fork_hooks
 
 } // namespace dxvk

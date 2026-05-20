@@ -1207,12 +1207,15 @@ the fork-owned ImGui surface.
 
 **Category:** fork-owned (forward declaration additions)
 
-**Note:** This is a fork-owned file. It is listed here because the weather
-preset workstream added two new forward declarations to the `fork_hooks`
-namespace block.
+**Note:** This is a fork-owned file. It is listed here because subsequent
+fork workstreams add new forward declarations to the `fork_hooks` namespace
+block.
 
 - **Inline tweak** at `fork_hooks` namespace block (forward declarations) — ~2 LOC.
   *Adds `void updateWeatherBlender(class RtxContext& ctx, float deltaTimeSeconds)` and `void showWeatherUI()` forward declarations. These allow `rtx_context.cpp` and `rtx_fork_atmosphere.cpp` to call the weather hook without including the full `rtx_fork_weather.h` header at those call sites.*
+
+- **Inline tweak** at `fork_hooks` namespace block (static-promotion forward declarations, added 2026-05-20) — ~6 LOC.
+  *Adds forward declarations for `tickStabilityCounters`, `tryRouteToPersistentBucket`, `touchPersistentBlasesForFastSkip`, `onInstanceRemoved`, `showStaticPromotionPanel`, `writeStaticPromotionDebugView`. Implementations in `rtx_fork_static_promotion.cpp` — the persistent merged-BLAS tier above `AccelManager::mergeInstancesIntoBlas`'s per-frame merged pool. See `docs/superpowers/specs/2026-05-20-static-geometry-promotion-design.md`.*
 
 ---
 
