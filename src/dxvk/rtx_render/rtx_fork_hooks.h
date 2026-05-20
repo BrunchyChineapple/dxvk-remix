@@ -493,6 +493,34 @@ namespace dxvk {
     // before the main routing loop. Updates three counters on each RtInstance.
     void tickStabilityCounters(const std::vector<RtInstance*>& instances, uint32_t currentFrame);
 
+    // Per-frame persistent-bucket maintenance hook. Called from
+    // AccelManager::mergeInstancesIntoBlas after the per-instance routing loop
+    // and before buildBlases. Responsibilities:
+    //   * Drain the persistent pool if the master option just transitioned
+    //     true->false this frame.
+    //   * Drop empty buckets that lost all members.
+    //   * Enforce the persistent-BLAS memory budget via LRU eviction.
+    //   * Refresh diagnostic counters.
+    //   * (Task 6b) Build BLASes for dirty buckets and append a
+    //     VkAccelerationStructureInstanceKHR to m_mergedInstances per bucket.
+    //
+    // The wide parameter list mirrors AccelManager::createBlasBuffersAndInstances
+    // so the BLAS-build piece in Task 6b can reuse it as-is without touching the
+    // upstream call site. Today (Task 6a) the build queue / scratch parameters
+    // are unused; the persistent-BLAS build + TLAS-instance emission lands in
+    // Task 6b.
+    // NOTE: requires AccelManager to declare this as a friend for access to
+    // private members (createBlasBuffersAndInstances, m_blasPool,
+    // m_mergedInstances, etc.). See rtx_accel_manager.h.
+    void emitPersistentTlasInstances(
+      AccelManager& mgr,
+      Rc<DxvkContext> ctx,
+      class DxvkBarrierSet& execBarriers,
+      std::vector<VkAccelerationStructureBuildGeometryInfoKHR>& blasToBuild,
+      std::vector<VkAccelerationStructureBuildRangeInfoKHR*>& blasRangesToBuild,
+      size_t& totalScratchMemory,
+      uint32_t currentFrame);
+
     // Routes an instance into the persistent-merged-BLAS tier if eligible.
     // Returns true if the instance was handled by the persistent tier (caller
     // should skip its normal routing). Returns false otherwise.

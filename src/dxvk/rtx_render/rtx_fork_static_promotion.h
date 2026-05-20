@@ -139,6 +139,13 @@ namespace dxvk {
       // account against. In production this is called when a BLAS is built.
       void setBucketBytes(uint64_t bucketKeyHash, uint64_t bytes);
 
+      // Drops every persistent bucket and clears the instance->bucket map.
+      // Used when the master option transitions true->false mid-session so no
+      // stranded persistent BLASes are left behind. Does not touch underlying
+      // RtInstance state; demoted instances simply return to the per-frame
+      // routing paths starting next frame.
+      void clear();
+
     private:
       std::unordered_map<uint64_t, PersistentBlasBucket> m_buckets;
       std::unordered_map<RtInstance*, uint64_t> m_instanceToBucket;

@@ -37,6 +37,7 @@ namespace dxvk
 {
 class DxvkContext;
 class DxvkDevice;
+class DxvkBarrierSet;
 class ResourceCache;
 class CameraManager;
 class OpacityMicromapManager;
@@ -49,6 +50,14 @@ class AccelManager;
 namespace fork_hooks {
   bool tryRouteToPersistentBucket(AccelManager& mgr, RtInstance* instance, uint32_t currentFrame);
   void touchPersistentBlasesForFastSkip(AccelManager& mgr, uint32_t currentFrame);
+  void emitPersistentTlasInstances(
+    AccelManager& mgr,
+    Rc<DxvkContext> ctx,
+    class DxvkBarrierSet& execBarriers,
+    std::vector<VkAccelerationStructureBuildGeometryInfoKHR>& blasToBuild,
+    std::vector<VkAccelerationStructureBuildRangeInfoKHR*>& blasRangesToBuild,
+    size_t& totalScratchMemory,
+    uint32_t currentFrame);
 }
 
 // AccelManager is responsible for maintaining the acceleration structures (BLAS and TLAS)
@@ -59,6 +68,11 @@ class AccelManager : public CommonDeviceObject {
   // BLAS-build-and-emit hook) lands in Task 6.
   friend bool fork_hooks::tryRouteToPersistentBucket(AccelManager&, RtInstance*, uint32_t);
   friend void fork_hooks::touchPersistentBlasesForFastSkip(AccelManager&, uint32_t);
+  friend void fork_hooks::emitPersistentTlasInstances(
+    AccelManager&, Rc<DxvkContext>, DxvkBarrierSet&,
+    std::vector<VkAccelerationStructureBuildGeometryInfoKHR>&,
+    std::vector<VkAccelerationStructureBuildRangeInfoKHR*>&,
+    size_t&, uint32_t);
 
   class BlasBucket {
   public:

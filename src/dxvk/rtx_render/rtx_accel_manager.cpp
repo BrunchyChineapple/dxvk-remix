@@ -71,6 +71,14 @@ namespace dxvk {
   }
 
   void AccelManager::removeInstanceFromBucketCache(RtInstance* instance) {
+    // Persistent static promotion: notify the persistent pool so any membership
+    // in a persistent bucket is cleaned up when the upstream layer evicts the
+    // instance (GC, hidden, mask=0). Defense-in-depth — the hook is not gated
+    // on enableStaticGeometryPromotion because the pool may still hold the
+    // instance from a session where the option was previously enabled. No-op
+    // when the instance is not a persistent bucket member. Implementation in
+    // rtx_fork_static_promotion.cpp.
+    fork_hooks::onInstanceRemoved(instance);
     m_instanceBucketIndex.erase(instance);
   }
 
@@ -950,6 +958,18 @@ namespace dxvk {
       m_reorderedSurfaces.insert(m_reorderedSurfaces.end(), blasBucket->originalInstances.begin(), blasBucket->originalInstances.end());
       m_reorderedSurfacesFirstIndexOffset.insert(m_reorderedSurfacesFirstIndexOffset.end(), blasBucket->indexOffsets.begin(), blasBucket->indexOffsets.end());
     }
+
+    // Persistent static promotion: maintain the persistent-bucket pool (drop
+    // empty buckets, enforce the LRU memory budget, refresh diagnostic
+    // counters). Must run before buildBlases so persistent TLAS instance
+    // emission (Task 6b) can append into m_mergedInstances and contribute
+    // surfaces to m_reorderedSurfaces before the prefix-sum loop below. No-op
+    // when the feature is disabled. Implementation in
+    // rtx_fork_static_promotion.cpp.
+    fork_hooks::emitPersistentTlasInstances(
+      *this, ctx, execBarriers,
+      blasToBuild, blasRangesToBuild, totalScratchMemory,
+      currentFrame);
 
     // Build prefix sum array
     // Collect primitive count for each surface object

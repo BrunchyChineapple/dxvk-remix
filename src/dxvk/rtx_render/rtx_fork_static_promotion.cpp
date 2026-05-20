@@ -157,6 +157,12 @@ namespace dxvk {
       }
       return evictions;
     }
+
+    void StaticPromotionPool::clear() {
+      m_buckets.clear();
+      m_instanceToBucket.clear();
+      m_totalBytes = 0;
+    }
   } // namespace static_promotion
 
   namespace {
@@ -229,10 +235,34 @@ namespace dxvk {
     }
   } // namespace
 
+  // Tracks the previous frame's value of enableStaticGeometryPromotion so the
+  // option's true->false transition can drain the persistent pool exactly once
+  // (no stranded persistent BLASes after the user disables the feature
+  // mid-session). Inspected at the top of tickStabilityCounters which is the
+  // first fork hook to fire each frame inside AccelManager::mergeInstancesIntoBlas.
+  static bool s_prevFrameEnable = false;
+
   namespace fork_hooks {
 
     void tickStabilityCounters(const std::vector<RtInstance*>& instances, uint32_t currentFrame) {
-      if (!RtxForkStaticPromotion::enableStaticGeometryPromotion()) {
+      const bool enabled = RtxForkStaticPromotion::enableStaticGeometryPromotion();
+
+      // Drain-on-toggle-off: if the option transitioned true->false since the
+      // last tick, evict every persistent bucket so no stranded BLASes are left
+      // behind. The pool is otherwise inert when the option is false, so this
+      // is a one-shot cleanup at the transition edge.
+      if (s_prevFrameEnable && !enabled) {
+        static_promotion::getPool().clear();
+        // Surface the drain in the counter snapshot so the ImGui panel reflects
+        // the empty pool after the user toggles the feature off. Without this
+        // the stale "X buckets, Y MB" reading lingers until next frame.
+        static_promotion::s_frameCounters.persistentBucketCount = 0;
+        static_promotion::s_frameCounters.persistentBucketMembers = 0;
+        static_promotion::s_frameCounters.persistentBlasBytes = 0;
+      }
+      s_prevFrameEnable = enabled;
+
+      if (!enabled) {
         return;
       }
       const float eps = RtxForkStaticPromotion::staticPromotionTransformEpsilon();
@@ -365,7 +395,70 @@ namespace dxvk {
       static_promotion::getPool().touchAll(currentFrame);
     }
 
-    void onInstanceRemoved(RtInstance* /*instance*/) {}
+    void onInstanceRemoved(RtInstance* instance) {
+      // Not gated on enableStaticGeometryPromotion: if the pool still holds the
+      // instance for any reason (e.g. the user toggled the feature off but the
+      // master drain races a removeInstance from the upstream layer), make sure
+      // its membership and accounting are cleaned up. removeInstance is a no-op
+      // when the instance is not a member.
+      if (!instance) return;
+      static_promotion::getPool().removeInstance(instance);
+    }
+
+    void emitPersistentTlasInstances(
+      AccelManager& /*mgr*/,
+      Rc<DxvkContext> /*ctx*/,
+      DxvkBarrierSet& /*execBarriers*/,
+      std::vector<VkAccelerationStructureBuildGeometryInfoKHR>& /*blasToBuild*/,
+      std::vector<VkAccelerationStructureBuildRangeInfoKHR*>& /*blasRangesToBuild*/,
+      size_t& /*totalScratchMemory*/,
+      uint32_t /*currentFrame*/) {
+      // No-op when the feature is disabled.
+      if (!RtxForkStaticPromotion::enableStaticGeometryPromotion()) {
+        return;
+      }
+
+      using namespace static_promotion;
+      StaticPromotionPool& pool = getPool();
+
+      // Task 6a scope: pool maintenance and diagnostics. The persistent BLAS
+      // build and per-bucket TLAS instance emission land in Task 6b. Without
+      // the build piece, promoted instances continue to drop out of the
+      // rendered scene; this is why enableStaticGeometryPromotion stays
+      // default-false. The wires landed here are:
+      //   * Pool drain on option toggle-off (handled at the top of
+      //     tickStabilityCounters via s_prevFrameEnable).
+      //   * Instance removal cleanup (onInstanceRemoved, dispatched from
+      //     AccelManager::removeInstanceFromBucketCache).
+      //   * LRU memory-budget enforcement (below).
+      //   * Diagnostic counter refresh so the ImGui panel reflects pool state.
+      //
+      // The wide parameter list mirrors AccelManager::createBlasBuffersAndInstances
+      // so Task 6b can call into it without rewriting the call site.
+
+      // Enforce the LRU memory budget. This is independent of the BLAS-build
+      // piece: empty buckets and any future production-built persistent BLASes
+      // both contribute to m_totalBytes via StaticPromotionPool::setBucketBytes.
+      // Today nothing populates blasBytes (BLAS build lands in Task 6b), so the
+      // budget check is a no-op until then but the wire is in place.
+      const uint64_t budgetBytes =
+        static_cast<uint64_t>(RtxForkStaticPromotion::persistentBlasMemoryBudgetMB())
+          * 1024ull * 1024ull;
+      s_frameCounters.lruEvictionsThisFrame = pool.enforceMemoryBudget(budgetBytes);
+
+      // Refresh per-frame counters from the live pool so the ImGui panel
+      // displays accurate numbers regardless of whether the BLAS build piece is
+      // wired yet. promotedThisFrame / demotedThisFrame / tlasPersistent are
+      // maintained inside tryRouteToPersistentBucket and intentionally left
+      // alone here.
+      s_frameCounters.persistentBucketCount =
+        static_cast<uint32_t>(pool.getBucketCount());
+      s_frameCounters.persistentBucketMembers =
+        static_cast<uint32_t>(pool.getTotalMembers());
+      s_frameCounters.persistentBlasBytes = pool.getTotalBytes();
+      // totalBlasBuilds is bumped by Task 6b's dirty-bucket build path; left at
+      // its zero-init value today.
+    }
 
     void showStaticPromotionPanel() {
       if (!ImGui::CollapsingHeader("Static Geometry Promotion", ImGuiTreeNodeFlags_None)) {

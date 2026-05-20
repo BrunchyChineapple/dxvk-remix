@@ -310,14 +310,16 @@ initializer list and can't be lifted into a separate TU.
 **Category:** index-only
 
 - **Inline tweak** at the top of the `dxvk` namespace block + the `AccelManager`
-  class body (~10 LOC, added 2026-05-20) — forward-declares the two static-promotion
-  routing hooks (`tryRouteToPersistentBucket`, `touchPersistentBlasesForFastSkip`)
-  inside `namespace fork_hooks` and grants them `friend` access on `AccelManager`.
-  Required so the bodies in `rtx_fork_static_promotion.cpp` can peek at
-  `m_blasPool` / `m_mergedInstances` / `m_activeDynamicBlases` when emitting
-  persistent TLAS instances. The third hook (`emitPersistentTlasInstances`,
-  which actually builds persistent BLASes and appends TLAS instances) lands
-  in Task 6 along with its own friend declaration.
+  class body (~22 LOC total, added 2026-05-20) — forward-declares the three
+  static-promotion routing hooks (`tryRouteToPersistentBucket`,
+  `touchPersistentBlasesForFastSkip`, `emitPersistentTlasInstances`) inside
+  `namespace fork_hooks` and grants them `friend` access on `AccelManager`.
+  Also forward-declares `DxvkBarrierSet` at `namespace dxvk` scope so the
+  friend declaration referencing it resolves without pulling in
+  `dxvk_barrier.h`. Required so the bodies in `rtx_fork_static_promotion.cpp`
+  can peek at `m_blasPool` / `m_mergedInstances` / `m_activeDynamicBlases` and
+  invoke `createBlasBuffersAndInstances` when the BLAS-build piece (deferred
+  to Task 6b) lands.
 
 ---
 
@@ -346,6 +348,26 @@ initializer list and can't be lifted into a separate TU.
   dynamic pipeline (the persistent BLAS-build + TLAS-emit hook lands in
   Task 6). No-op when the feature is disabled. Implementation in
   `rtx_fork_static_promotion.cpp`.
+
+- **Hook** at `AccelManager::mergeInstancesIntoBlas` (one-line dispatch + ~8 LOC
+  comment, added 2026-05-20) — calls `fork_hooks::emitPersistentTlasInstances`
+  after the per-instance routing loop and after the ephemeral merged bucket
+  surfaces have been collected into `m_reorderedSurfaces`, but before
+  `buildBlases`. Wide parameter list (`Rc<DxvkContext>`, `DxvkBarrierSet&`,
+  the build queue vectors, scratch offset, currentFrame) mirrors
+  `createBlasBuffersAndInstances` so the BLAS-build piece (Task 6b) can plug in
+  without touching this call site. Today (Task 6a) the hook drains the
+  persistent pool, enforces the LRU memory budget, and refreshes diagnostic
+  counters. No-op when the feature is disabled. Implementation in
+  `rtx_fork_static_promotion.cpp`.
+
+- **Hook** at `AccelManager::removeInstanceFromBucketCache` (one-line dispatch
+  + ~6 LOC comment, added 2026-05-20) — calls `fork_hooks::onInstanceRemoved`
+  at the top of the method so the persistent pool drops any membership the
+  instance had before the upstream layer's bucket-cache entry is erased. Not
+  gated on `enableStaticGeometryPromotion` (defense-in-depth — the pool may
+  still hold the instance from a session where the option was previously
+  enabled). Implementation in `rtx_fork_static_promotion.cpp`.
 
 ---
 
@@ -1294,6 +1316,9 @@ block.
 
 - **Inline tweak** at `fork_hooks` namespace block (static-promotion forward declarations, added 2026-05-20) — ~6 LOC.
   *Adds forward declarations for `tickStabilityCounters`, `tryRouteToPersistentBucket`, `touchPersistentBlasesForFastSkip`, `onInstanceRemoved`, `showStaticPromotionPanel`, `writeStaticPromotionDebugView`. Implementations in `rtx_fork_static_promotion.cpp` — the persistent merged-BLAS tier above `AccelManager::mergeInstancesIntoBlas`'s per-frame merged pool. See `docs/superpowers/specs/2026-05-20-static-geometry-promotion-design.md`.*
+
+- **Inline tweak** at `fork_hooks` namespace block (static-promotion BLAS-emit forward declaration, added 2026-05-20) — ~10 LOC.
+  *Adds the forward declaration for `emitPersistentTlasInstances`. Wide parameter list (`AccelManager&`, `Rc<DxvkContext>`, `DxvkBarrierSet&`, build queue vectors, scratch offset, currentFrame) mirrors `AccelManager::createBlasBuffersAndInstances` so the BLAS-build piece (Task 6b) can reuse the existing flow without touching the upstream call site. Today (Task 6a) the implementation in `rtx_fork_static_promotion.cpp` handles pool drain, LRU budget enforcement, and counter refresh.*
 
 ---
 
