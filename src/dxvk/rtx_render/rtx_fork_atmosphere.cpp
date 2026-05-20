@@ -828,23 +828,6 @@ namespace fork_hooks {
             "Sky-dome curvature. 0 = real-planet radius (nearly flat ceiling, "
             "horizon-grazing clouds stretch far); 1 = tight dome (clouds curve "
             "visibly down to the horizon). Atmosphere math unaffected.");
-        RemixGui::DragFloat("Distance Haze", &RtxOptions::cloudAerialHazePerKmObject(),
-                            0.005f, 0.0f, 0.5f, "%.3f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "How much distant cloud samples dim toward atmospheric color "
-            "(per-km haze extinction on cloud radiance). Higher = softer, "
-            "more washed-out distant clouds; 0 = no haze (clouds stay bright "
-            "all the way to horizon). Does NOT prevent the horizon white "
-            "wall \xe2\x80\x94 that's the Horizon Fade slider below. Default 0.05.");
-        RemixGui::DragFloat("Horizon Fade", &RtxOptions::cloudAerialFadePerKmObject(),
-                            0.005f, 0.0f, 0.5f, "%.3f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "How quickly distant cloud samples stop piling up extinction "
-            "(per-km fade rate on alpha accumulation). Higher = sky shows "
-            "through earlier at the horizon; 0 = no fade (clouds can pile "
-            "into a solid white wall on horizon-grazing rays through thick "
-            "overcast). Does NOT affect cloud appearance close to camera. "
-            "Default 0.05.");
         RemixGui::DragFloat3("Color", &RtxOptions::cloudColorObject(),
                              0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover(
@@ -882,8 +865,6 @@ namespace fork_hooks {
             "clouds. 1.0 = Nubis Cubed paper baseline; higher = brighter "
             "cumulus bottoms, lower = flatter lighting.");
 
-        ImGui::Separator();
-        ImGui::TextDisabled("Shadows");
         RemixGui::DragFloat("Ground Shadow", &RtxOptions::cloudShadowStrengthObject(),
                             0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover(
@@ -932,6 +913,26 @@ namespace fork_hooks {
             "Per-step density multiplier for layer 2 only. Cirrus is "
             "optically thin \xe2\x80\x94 default 0.30 keeps it from competing with the "
             "main cumulus deck.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Atmosphere");
+        RemixGui::DragFloat("Distance Haze", &RtxOptions::cloudAerialHazePerKmObject(),
+                            0.005f, 0.0f, 0.5f, "%.3f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "How much distant cloud samples dim toward atmospheric color "
+            "(per-km haze extinction on cloud radiance). Higher = softer, "
+            "more washed-out distant clouds; 0 = no haze (clouds stay bright "
+            "all the way to horizon). Does NOT prevent the horizon white "
+            "wall \xe2\x80\x94 that's the Horizon Fade slider below. Default 0.05.");
+        RemixGui::DragFloat("Horizon Fade", &RtxOptions::cloudAerialFadePerKmObject(),
+                            0.005f, 0.0f, 0.5f, "%.3f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "How quickly distant cloud samples stop piling up extinction "
+            "(per-km fade rate on alpha accumulation). Higher = sky shows "
+            "through earlier at the horizon; 0 = no fade (clouds can pile "
+            "into a solid white wall on horizon-grazing rays through thick "
+            "overcast). Does NOT affect cloud appearance close to camera. "
+            "Default 0.15.");
 
         ImGui::TreePop();
       }

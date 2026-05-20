@@ -944,40 +944,44 @@ namespace dxvk { namespace fork_weather {
       static int s_tuneIndex = 0;
       ImGui::Combo("Preset to Tune", &s_tuneIndex, kTunePresetNames, kTuneCount);
 
-      // Macro: expand 27 DragFloat / DragFloat3 calls for a given preset name.
+      // Macro: expand 27 DragFloat / DragFloat3 calls for a given preset name,
+      // grouped into the same section structure as the main Clouds tree.
       // Uses the RtxOptions::<presetName>_<fieldName>Object() accessor pattern.
-#define WEATHER_PRESET_SLIDERS(P)                                                                     \
-      /* Cloud (17) */                                                                                \
-      RemixGui::DragFloat("Cloud Density",              &RtxOptions::P##_cloudDensityObject(),              0.05f,  0.0f,  10.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat("Coverage Mean",              &RtxOptions::P##_cloudCoverageMeanObject(),          0.01f,  0.0f,   1.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat("Coverage Spread",            &RtxOptions::P##_cloudCoverageSpreadObject(),        0.01f,  0.0f,   1.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat("Coverage Noise Scale",       &RtxOptions::P##_cloudCoverageNoiseScaleObject(),    0.0001f,0.0f,   0.05f,  "%.4f",  sliderFlags); \
-      RemixGui::DragFloat("Type Mean",                  &RtxOptions::P##_cloudTypeMeanObject(),              0.01f,  0.0f,   1.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat("Type Spread",                &RtxOptions::P##_cloudTypeSpreadObject(),            0.01f,  0.0f,   1.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat("Type Noise Scale",           &RtxOptions::P##_cloudTypeNoiseScaleObject(),        0.0001f,0.0f,   0.05f,  "%.4f",  sliderFlags); \
-      RemixGui::DragFloat("Anvil Bias",                 &RtxOptions::P##_cloudAnvilBiasObject(),             0.01f,  0.0f,   1.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat3("Cloud Color",               &RtxOptions::P##_cloudColorObject(),                 0.01f,  0.0f,   1.5f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat("Wind Speed",                 &RtxOptions::P##_cloudWindSpeedObject(),             0.005f, 0.0f,   1.0f,   "%.3f",  sliderFlags); \
-      RemixGui::DragFloat("Wind Direction",             &RtxOptions::P##_cloudWindDirectionObject(),         1.0f,   0.0f, 360.0f,   "%.0f",  sliderFlags); \
-      RemixGui::DragFloat("Shadow Strength",            &RtxOptions::P##_cloudShadowStrengthObject(),        0.01f,  0.0f,   1.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat("Anisotropy",                 &RtxOptions::P##_cloudAnisotropyObject(),            0.01f, -1.0f,   1.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat("Thickness",                  &RtxOptions::P##_cloudThicknessObject(),             0.05f,  0.0f,  10.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat3("Shadow Tint",               &RtxOptions::P##_cloudShadowTintObject(),            0.01f,  0.0f,   1.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat("Shadow Tint Strength",       &RtxOptions::P##_cloudShadowTintStrengthObject(),    0.05f,  0.0f,   2.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat("Sunset Warmth",              &RtxOptions::P##_cloudSunsetWarmthObject(),          0.05f,  0.0f,   2.0f,   "%.2f",  sliderFlags); \
-      /* Atmosphere (3) */                                                                            \
-      RemixGui::DragFloat("Air Density",                &RtxOptions::P##_airDensityObject(),                 0.05f,  0.0f,   5.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat("Aerosol Density",            &RtxOptions::P##_aerosolDensityObject(),             0.05f,  0.0f,   5.0f,   "%.2f",  sliderFlags); \
-      RemixGui::DragFloat3("Sun Illuminance",           &RtxOptions::P##_sunIlluminanceObject(),             0.5f,   0.0f, 100.0f,   "%.1f",  sliderFlags); \
-      /* Sky/moon mood (3) */                                                                        \
-      RemixGui::DragFloat("Night Sky Brightness",       &RtxOptions::P##_nightSkyBrightnessObject(),         0.001f, 0.0f,   1.0f,   "%.3f",  sliderFlags); \
-      RemixGui::DragFloat("Moon NEE Strength",          &RtxOptions::P##_moonNeeStrengthObject(),            0.05f,  0.0f,  10.0f,   "%.2f",  sliderFlags); \
+#define WEATHER_PRESET_SLIDERS(P)                                                                                                                          \
+      ImGui::TextDisabled("Coverage & Shape");                                                                                                             \
+      RemixGui::DragFloat("Coverage",                   &RtxOptions::P##_cloudCoverageMeanObject(),          0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
+      RemixGui::DragFloat("Coverage Spread",            &RtxOptions::P##_cloudCoverageSpreadObject(),        0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
+      RemixGui::DragFloat("Coverage Patch Size",        &RtxOptions::P##_cloudCoverageNoiseScaleObject(),    0.0001f,0.0001f,0.01f,   "%.4f", sliderFlags); \
+      RemixGui::DragFloat("Cloud Type",                 &RtxOptions::P##_cloudTypeMeanObject(),              0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
+      RemixGui::DragFloat("Type Spread",                &RtxOptions::P##_cloudTypeSpreadObject(),            0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
+      RemixGui::DragFloat("Type Patch Size",            &RtxOptions::P##_cloudTypeNoiseScaleObject(),        0.0001f,0.0001f,0.01f,   "%.4f", sliderFlags); \
+      RemixGui::DragFloat("Anvil Spread",               &RtxOptions::P##_cloudAnvilBiasObject(),             0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
+      ImGui::Separator(); ImGui::TextDisabled("Look");                                                                                                     \
+      RemixGui::DragFloat("Density",                    &RtxOptions::P##_cloudDensityObject(),               0.05f,  0.0f,   10.0f,   "%.2f", sliderFlags); \
+      RemixGui::DragFloat("Depth",                      &RtxOptions::P##_cloudThicknessObject(),             0.05f,  0.0f,   10.0f,   "%.2f", sliderFlags); \
+      RemixGui::DragFloat3("Color",                     &RtxOptions::P##_cloudColorObject(),                 0.01f,  0.0f,   1.5f,    "%.2f", sliderFlags); \
+      ImGui::Separator(); ImGui::TextDisabled("Wind");                                                                                                     \
+      RemixGui::DragFloat("Wind Speed",                 &RtxOptions::P##_cloudWindSpeedObject(),             0.005f, 0.0f,   1.0f,    "%.3f", sliderFlags); \
+      RemixGui::DragFloat("Wind Direction",             &RtxOptions::P##_cloudWindDirectionObject(),         1.0f,   0.0f,   360.0f,  "%.1f\xc2\xb0", sliderFlags); \
+      ImGui::Separator(); ImGui::TextDisabled("Lighting");                                                                                                 \
+      RemixGui::DragFloat("Anisotropy",                 &RtxOptions::P##_cloudAnisotropyObject(),            0.01f, -1.0f,   1.0f,    "%.2f", sliderFlags); \
+      RemixGui::DragFloat("Ground Shadow",              &RtxOptions::P##_cloudShadowStrengthObject(),        0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
+      RemixGui::DragFloat3("Shadow Tint",               &RtxOptions::P##_cloudShadowTintObject(),            0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
+      RemixGui::DragFloat("Shadow Tint Strength",       &RtxOptions::P##_cloudShadowTintStrengthObject(),    0.05f,  0.0f,   2.0f,    "%.2f", sliderFlags); \
+      RemixGui::DragFloat("Sunset Warmth",              &RtxOptions::P##_cloudSunsetWarmthObject(),          0.05f,  0.0f,   2.0f,    "%.2f", sliderFlags); \
+      ImGui::Separator(); ImGui::TextDisabled("Atmosphere");                                                                                               \
+      RemixGui::DragFloat("Air Density",                &RtxOptions::P##_airDensityObject(),                 0.05f,  0.0f,   5.0f,    "%.2f", sliderFlags); \
+      RemixGui::DragFloat("Aerosol Density",            &RtxOptions::P##_aerosolDensityObject(),             0.05f,  0.0f,   5.0f,    "%.2f", sliderFlags); \
+      RemixGui::DragFloat3("Sun Illuminance",           &RtxOptions::P##_sunIlluminanceObject(),             0.5f,   0.0f,   100.0f,  "%.1f", sliderFlags); \
+      ImGui::Separator(); ImGui::TextDisabled("Sky & Moon Mood");                                                                                          \
+      RemixGui::DragFloat("Night Sky Brightness",       &RtxOptions::P##_nightSkyBrightnessObject(),         0.001f, 0.0f,   1.0f,    "%.3f", sliderFlags); \
+      RemixGui::DragFloat("Moon NEE Strength",          &RtxOptions::P##_moonNeeStrengthObject(),            0.05f,  0.0f,   10.0f,   "%.2f", sliderFlags); \
       RemixGui::DragFloat("Moon Atm Coupling",          &RtxOptions::P##_moonAtmosphericCouplingStrengthObject(), 0.05f, 0.0f, 10.0f, "%.2f", sliderFlags); \
-      /* Volumetric (4) */                                                                           \
-      RemixGui::DragFloat3("Transmittance Color",       &RtxOptions::P##_transmittanceColorObject(),         0.005f, 0.0f,   1.0f,   "%.3f",  sliderFlags); \
+      ImGui::Separator(); ImGui::TextDisabled("Volumetric Fog");                                                                                           \
+      RemixGui::DragFloat3("Transmittance Color",       &RtxOptions::P##_transmittanceColorObject(),         0.005f, 0.0f,   1.0f,    "%.3f", sliderFlags); \
       RemixGui::DragFloat("Transmittance Distance (m)", &RtxOptions::P##_transmittanceMeasurementDistanceMetersObject(), 5.0f, 1.0f, 2000.0f, "%.0f", sliderFlags); \
-      RemixGui::DragFloat3("Single Scattering Albedo",  &RtxOptions::P##_singleScatteringAlbedoObject(),     0.005f, 0.0f,   1.0f,   "%.3f",  sliderFlags); \
-      RemixGui::DragFloat("Volumetric Anisotropy",      &RtxOptions::P##_volumetricAnisotropyObject(),       0.01f, -1.0f,   1.0f,   "%.2f",  sliderFlags)
+      RemixGui::DragFloat3("Single Scattering Albedo",  &RtxOptions::P##_singleScatteringAlbedoObject(),     0.005f, 0.0f,   1.0f,    "%.3f", sliderFlags); \
+      RemixGui::DragFloat("Volumetric Anisotropy",      &RtxOptions::P##_volumetricAnisotropyObject(),       0.01f, -1.0f,   1.0f,    "%.2f", sliderFlags)
 
       const char* tunePreset = kTunePresetNames[s_tuneIndex];
       if      (tunePreset == std::string("clear"))         { WEATHER_PRESET_SLIDERS(clear); }
@@ -1106,13 +1110,15 @@ namespace dxvk { namespace fork_hooks {
     }
   }
 
-  // Renders the weather preset panel inside a CollapsingHeader, delegating to
-  // the active WeatherBlender's showImguiSettings(). No-op when no blender
-  // is live (tests, pre-RtxContext-init).
+  // Renders the weather preset panel inside a TreeNode (matching the
+  // surrounding atmosphere panel's tree style), delegating to the active
+  // WeatherBlender's showImguiSettings(). No-op when no blender is live
+  // (tests, pre-RtxContext-init).
   void showWeatherUI() {
     if (auto* b = fork_weather::g_activeBlender) {
-      if (ImGui::CollapsingHeader("Weather Presets")) {
+      if (ImGui::TreeNode("Weather Presets")) {
         b->showImguiSettings();
+        ImGui::TreePop();
       }
     }
   }
