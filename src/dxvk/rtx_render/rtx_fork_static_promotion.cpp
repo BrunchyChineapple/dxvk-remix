@@ -242,10 +242,32 @@ namespace dxvk {
   // first fork hook to fire each frame inside AccelManager::mergeInstancesIntoBlas.
   static bool s_prevFrameEnable = false;
 
+  // One-shot flag set when enableStaticGeometryPromotion transitions false->true,
+  // consumed by mergeInstancesIntoBlas to bypass the full-skip fast path for one
+  // frame so the per-instance routing loop gets a chance to seed the pool. Without
+  // this, a scene that's already settled into the fast-skip path (sceneGeneration
+  // unchanged) never runs tryRouteToPersistentBucket — the feature would appear
+  // dead despite high stability counts.
+  static bool s_forceFullPassNextFrame = false;
+
   namespace fork_hooks {
+
+    bool needsFullPassNow() {
+      if (s_forceFullPassNextFrame) {
+        s_forceFullPassNextFrame = false;
+        return true;
+      }
+      return false;
+    }
 
     void tickStabilityCounters(const std::vector<RtInstance*>& instances, uint32_t currentFrame) {
       const bool enabled = RtxForkStaticPromotion::enableStaticGeometryPromotion();
+
+      // Toggle-on: arm the one-shot full-pass override so the next merge takes
+      // the per-instance loop path instead of the fast-skip return.
+      if (!s_prevFrameEnable && enabled) {
+        s_forceFullPassNextFrame = true;
+      }
 
       // Drain-on-toggle-off: if the option transitioned true->false since the
       // last tick, evict every persistent bucket so no stranded BLASes are left

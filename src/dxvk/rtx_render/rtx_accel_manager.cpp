@@ -441,8 +441,12 @@ namespace dxvk {
     {
       const uint64_t currentGeneration = instanceManager.getSceneGeneration();
       const bool sceneUnchanged = (currentGeneration == m_lastProcessedGeneration);
+      // One-shot override from the persistent-promotion tier: forces the next
+      // pass through the full per-instance loop so routing can seed the pool
+      // when the option is toggled on while the scene is already settled.
+      const bool persistentForcesFullPass = fork_hooks::needsFullPassNow();
 
-      if (sceneUnchanged && !m_ommBindPending && !m_reorderedSurfaces.empty()) {
+      if (sceneUnchanged && !m_ommBindPending && !m_reorderedSurfaces.empty() && !persistentForcesFullPass) {
         m_sceneUnchangedThisFrame = true;
         // Touch pooled (merged) BLAS
         for (auto& blas : m_blasPool) {

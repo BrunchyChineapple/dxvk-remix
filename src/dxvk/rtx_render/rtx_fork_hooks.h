@@ -532,6 +532,13 @@ namespace dxvk {
     // preventing GC from collecting them while the scene is unchanged.
     void touchPersistentBlasesForFastSkip(AccelManager& mgr, uint32_t currentFrame);
 
+    // Returns true once if the persistent tier needs the next mergeInstancesIntoBlas
+    // pass to take the full per-instance routing path (bypassing the fast-skip
+    // return). Used to force one full pass on enableStaticGeometryPromotion toggle-on
+    // so routing gets a chance to seed the pool from already-stable instances. Self-
+    // clearing after each call. Implementation in rtx_fork_static_promotion.cpp.
+    bool needsFullPassNow();
+
     // Notifies the persistent tier that an RtInstance is being removed (GC,
     // hidden, mask zero) so its membership in any persistent bucket can be
     // cleaned up. Called from AccelManager::removeInstanceFromBucketCache.
