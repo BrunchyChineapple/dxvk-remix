@@ -38,7 +38,6 @@
 #include "rtx_terrain_baker.h"
 #include "rtx_neural_radiance_cache.h"
 #include "rtx_nrd_context.h"
-#include "rtx_fork_hooks.h"
 
 #include <rtx_shaders/debug_view.h>
 #include <rtx_shaders/debug_view_using_optional_extensions.h>
@@ -206,11 +205,6 @@ namespace dxvk {
                                 "of enum 875 -- they should show the SAME pattern at the SAME brightness.\n"
                                 "If they diverge, suspect a path regression (sampler / binding mismatch\n"
                                 "between the production raygen pass and the debug-view pass)."},
-        {DEBUG_VIEW_BLAS_SOURCE, "BLAS Source (Static Geometry Promotion)",
-                                "Fork diagnostic (2026-05-20, Task 3 placeholder). Will colorize each\n"
-                                "G-buffer pixel by which BLAS tier its instance landed in once Task 5\n"
-                                "wires the persistent routing. Currently a no-op writer; the menu entry\n"
-                                "exists so users can preview the selector."},
         {DEBUG_VIEW_CASCADE_LEVEL, "Terrain: Cascade Level"},
 
         {DEBUG_VIEW_VIRTUAL_HIT_DISTANCE, "Virtual Hit Distance"},
@@ -1470,14 +1464,6 @@ namespace dxvk {
       DEBUG_VIEW_BINDING_PRIMARY_CLOUD_SHADOW_FACTOR_INPUT,
       rtOutput.m_primaryCloudShadowFactor.view,
       nullptr);
-
-    // Fork: static-geometry promotion debug view (2026-05-20, Task 3).
-    // Hook is a no-op placeholder until Task 5 wires the persistent routing;
-    // calling it unconditionally keeps the dispatch shape stable and lets the
-    // future implementation slot in without another upstream edit.
-    if (debugViewIdx() == DEBUG_VIEW_BLAS_SOURCE) {
-      fork_hooks::writeStaticPromotionDebugView(*ctx);
-    }
 
     ctx->bindResourceView(DEBUG_VIEW_BINDING_VOLUME_RESERVOIRS_INPUT, globalVolumetrics.getPreviousVolumeReservoirs().view, nullptr);
     ctx->bindResourceView(DEBUG_VIEW_BINDING_VOLUME_AGE_INPUT, globalVolumetrics.getCurrentVolumeAccumulatedRadianceAge().view, nullptr);

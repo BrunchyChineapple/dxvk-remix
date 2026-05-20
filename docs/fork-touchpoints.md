@@ -227,9 +227,6 @@ check will enforce it if discipline slips.
 - **Inline tweak** at `ImGUI::showRenderingSettings` "Tonemapping" header — removed the `Tonemapping Mode` combo (Global / Local / Direct) and the standalone "User Brightness" / "User Brightness EV Range" sliders. The header body is now a single always-visible `metaToneMapping().showImguiSettings()` call between two separators. Tuning Mode (tone curve sliders) is also removed from the panel.
   *2026-05-13 tonemap refactor: mode selector removed; operator dropdown is now the primary control. 2026-05-15: local tonemap path removed entirely, so no per-path UI gate remains.*
 
-- **Hook** at `ImGUI::showRenderingSettings` (after the "Geometry" collapsing header) → `fork_hooks::showStaticPromotionPanel` in `rtx_fork_static_promotion.cpp` (added 2026-05-20). One-line dispatch.
-  *Renders the "Static Geometry Promotion" collapsing header inside the Rendering tab. Surfaces the six static-promotion RTX_OPTIONs as `RemixGui::*` widgets plus the per-frame `PromotionFrameCounters` (instance / promotion / TLAS-tier / persistent-BLAS / stability-histogram readouts). Placed adjacent to "Geometry" so all BLAS-related controls cluster.*
-
 ---
 
 ## src/dxvk/imgui/dxvk_imgui_about.cpp
@@ -302,72 +299,6 @@ initializer list and can't be lifted into a separate TU.
 
 - **Inline tweak** at `components/` include list (~line 56) — 2-line addition. Not migrated: the include manifest is the intended extension point for new components, and adding two alphabetically-placed `#include` lines is the canonical way to register fork-owned graph components.
   *Registers `components/game_value_read_bool.h` and `components/game_value_read_number.h` in the component manifest. Both are fork-owned Sense components introduced in workstream 10 (plugin-injected game-state readers); their backing store is the fork-owned `rtx_fork_game_state.h`.*
-
----
-
-## src/dxvk/rtx_render/rtx_accel_manager.h
-
-**Category:** index-only
-
-- **Inline tweak** at the top of the `dxvk` namespace block + the `AccelManager`
-  class body (~22 LOC total, added 2026-05-20) — forward-declares the three
-  static-promotion routing hooks (`tryRouteToPersistentBucket`,
-  `touchPersistentBlasesForFastSkip`, `emitPersistentTlasInstances`) inside
-  `namespace fork_hooks` and grants them `friend` access on `AccelManager`.
-  Also forward-declares `DxvkBarrierSet` at `namespace dxvk` scope so the
-  friend declaration referencing it resolves without pulling in
-  `dxvk_barrier.h`. Required so the bodies in `rtx_fork_static_promotion.cpp`
-  can peek at `m_blasPool` / `m_mergedInstances` / `m_activeDynamicBlases` and
-  invoke `createBlasBuffersAndInstances` when the BLAS-build piece (deferred
-  to Task 6b) lands.
-
----
-
-## src/dxvk/rtx_render/rtx_accel_manager.cpp
-
-**Category:** index-only
-
-- **Hook** at `AccelManager::mergeInstancesIntoBlas` (one-line dispatch, +1 LOC) —
-  calls `fork_hooks::tickStabilityCounters` once per frame after instance table
-  finalization. Adds `#include "rtx_fork_hooks.h"`. Implementation in
-  `rtx_fork_static_promotion.cpp`.
-
-- **Hook** at `AccelManager::mergeInstancesIntoBlas` full-skip fast path (one-line
-  dispatch + ~4 LOC comment, added 2026-05-20) — calls
-  `fork_hooks::touchPersistentBlasesForFastSkip` immediately after the existing
-  `m_blasPool` / `m_activeDynamicBlases` recency loops so persistent buckets get
-  the same GC-safe recency stamp on no-op frames. No-op when the feature is
-  disabled. Implementation in `rtx_fork_static_promotion.cpp`.
-
-- **Hook** at `AccelManager::mergeInstancesIntoBlas` per-instance loop (one-line
-  dispatch + ~6 LOC comment, added 2026-05-20) — calls
-  `fork_hooks::tryRouteToPersistentBucket` directly after the
-  `BlasEntry* blasEntry = instance->getBlas(); assert(blasEntry);` block and
-  before the clean-cached-bucket shortcut. On return-true the per-instance
-  routing `continue`s, dropping the instance from the per-frame merged /
-  dynamic pipeline (the persistent BLAS-build + TLAS-emit hook lands in
-  Task 6). No-op when the feature is disabled. Implementation in
-  `rtx_fork_static_promotion.cpp`.
-
-- **Hook** at `AccelManager::mergeInstancesIntoBlas` (one-line dispatch + ~8 LOC
-  comment, added 2026-05-20) — calls `fork_hooks::emitPersistentTlasInstances`
-  after the per-instance routing loop and after the ephemeral merged bucket
-  surfaces have been collected into `m_reorderedSurfaces`, but before
-  `buildBlases`. Wide parameter list (`Rc<DxvkContext>`, `DxvkBarrierSet&`,
-  the build queue vectors, scratch offset, currentFrame) mirrors
-  `createBlasBuffersAndInstances` so the BLAS-build piece (Task 6b) can plug in
-  without touching this call site. Today (Task 6a) the hook drains the
-  persistent pool, enforces the LRU memory budget, and refreshes diagnostic
-  counters. No-op when the feature is disabled. Implementation in
-  `rtx_fork_static_promotion.cpp`.
-
-- **Hook** at `AccelManager::removeInstanceFromBucketCache` (one-line dispatch
-  + ~6 LOC comment, added 2026-05-20) — calls `fork_hooks::onInstanceRemoved`
-  at the top of the method so the persistent pool drops any membership the
-  instance had before the upstream layer's bucket-cache entry is erased. Not
-  gated on `enableStaticGeometryPromotion` (defense-in-depth — the pool may
-  still hold the instance from a session where the option was previously
-  enabled). Implementation in `rtx_fork_static_promotion.cpp`.
 
 ---
 
@@ -448,15 +379,6 @@ initializer list and can't be lifted into a separate TU.
 
 ---
 
-## src/dxvk/rtx_render/rtx_debug_view.cpp
-
-**Category:** index-only (existing fork additions are tracked in commit-clustered blocks elsewhere in this file; this section catalogues the per-frame fork hook call sites).
-
-- **Inline tweak** at `dispatch` resource-binding section (added 2026-05-20) — debug-view selector entry + dispatch hook for the static-promotion BLAS-source view (`DEBUG_VIEW_BLAS_SOURCE`, enum 880). ~3 LOC dispatch + ~5 LOC selector entry.
-  *Adds a label + description block to the debug-view selector list ("BLAS Source (Static Geometry Promotion)") and dispatches `fork_hooks::writeStaticPromotionDebugView(*ctx)` when the active debug view enum matches. Hook implementation is a no-op placeholder until Task 5 wires the persistent routing. Includes `rtx_fork_hooks.h` so the hook signature is visible at the call site.*
-
----
-
 ## src/dxvk/rtx_render/rtx_game_capturer.cpp
 
 **Pre-refactor fork footprint:** +94 / -28 LOC (audit 2026-04-18)
@@ -486,20 +408,6 @@ initializer list and can't be lifted into a separate TU.
 
 - **Inline tweak** at `GameCapturer` class body (top of class, before `public:`) — 4-line `friend` declaration granting `fork_hooks::captureMaterialApiPath` access to private members.
   *Canonical pattern for hooks that must read/write private upstream state — one inline tweak per such hook, tracked here.*
-
----
-
-## src/dxvk/rtx_render/rtx_instance_manager.h
-
-**Category:** index-only
-
-- **Inline tweak** (+~25 LOC, audit 2026-05-20) — three `uint32_t` stability counter
-  fields (`m_geometryStableFrames`, `m_transformStableFrames`, `m_materialStableFrames`),
-  `VkTransformMatrixKHR m_prevFrameTransform`, `uint64_t m_prevFrameBucketKeyHash`,
-  three getters + `resetStabilityCounters()`, a forward declaration of
-  `fork_hooks::tickStabilityCounters` at namespace scope, and a `friend` declaration
-  on `RtInstance` granting that hook access to the new private fields. Used by the
-  persistent-static-promotion tier; body in `rtx_fork_static_promotion.cpp`.
 
 ---
 
@@ -1252,14 +1160,6 @@ initializer list and can't be lifted into a separate TU.
 
 ---
 
-## src/dxvk/shaders/rtx/utility/debug_view_indices.h
-
-**Category:** index-only, fork. (Other fork debug-view indices are also tracked in commit-clustered blocks earlier in this file; this is the consolidated entry going forward.)
-
-- **Inline tweak** (~7 LOC, added 2026-05-20) — adds `DEBUG_VIEW_BLAS_SOURCE = 880` plus a 5-line comment block describing the static-promotion BLAS-source colorization (Task 3 placeholder; real per-pixel routing lands after Task 5).
-
----
-
 ## src/dxvk/shaders/rtx/utility/pq.slangh
 
 - **Fork-owned** — new file (2026-05-XX). Shared SMPTE ST.2084 (PQ) constants + `PQDecode` / `PQEncode` (vec3, donut-attributed) + scalar `pq_eotfSt2084` / `pq_inverseEotfSt2084` (GT7-style, frame-buffer units). Extracted from `temporal_aa.comp.slang` so both the TAA pass and the GT7 tonemap operator can share the same math.
@@ -1307,18 +1207,12 @@ the fork-owned ImGui surface.
 
 **Category:** fork-owned (forward declaration additions)
 
-**Note:** This is a fork-owned file. It is listed here because subsequent
-fork workstreams add new forward declarations to the `fork_hooks` namespace
-block.
+**Note:** This is a fork-owned file. It is listed here because the weather
+preset workstream added two new forward declarations to the `fork_hooks`
+namespace block.
 
 - **Inline tweak** at `fork_hooks` namespace block (forward declarations) — ~2 LOC.
   *Adds `void updateWeatherBlender(class RtxContext& ctx, float deltaTimeSeconds)` and `void showWeatherUI()` forward declarations. These allow `rtx_context.cpp` and `rtx_fork_atmosphere.cpp` to call the weather hook without including the full `rtx_fork_weather.h` header at those call sites.*
-
-- **Inline tweak** at `fork_hooks` namespace block (static-promotion forward declarations, added 2026-05-20) — ~6 LOC.
-  *Adds forward declarations for `tickStabilityCounters`, `tryRouteToPersistentBucket`, `touchPersistentBlasesForFastSkip`, `onInstanceRemoved`, `showStaticPromotionPanel`, `writeStaticPromotionDebugView`. Implementations in `rtx_fork_static_promotion.cpp` — the persistent merged-BLAS tier above `AccelManager::mergeInstancesIntoBlas`'s per-frame merged pool. See `docs/superpowers/specs/2026-05-20-static-geometry-promotion-design.md`.*
-
-- **Inline tweak** at `fork_hooks` namespace block (static-promotion BLAS-emit forward declaration, added 2026-05-20) — ~10 LOC.
-  *Adds the forward declaration for `emitPersistentTlasInstances`. Wide parameter list (`AccelManager&`, `Rc<DxvkContext>`, `DxvkBarrierSet&`, build queue vectors, scratch offset, currentFrame) mirrors `AccelManager::createBlasBuffersAndInstances` so the BLAS-build piece (Task 6b) can reuse the existing flow without touching the upstream call site. Today (Task 6a) the implementation in `rtx_fork_static_promotion.cpp` handles pool drain, LRU budget enforcement, and counter refresh.*
 
 ---
 

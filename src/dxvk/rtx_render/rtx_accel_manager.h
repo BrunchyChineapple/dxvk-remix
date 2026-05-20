@@ -33,47 +33,16 @@
 #include "../util/util_vector.h"
 #include "../util/util_matrix.h"
 
-namespace dxvk
+namespace dxvk 
 {
 class DxvkContext;
 class DxvkDevice;
-class DxvkBarrierSet;
 class ResourceCache;
 class CameraManager;
 class OpacityMicromapManager;
-class RtInstance;
-class AccelManager;
-
-// Forward-declare the fork-owned routing hooks so AccelManager can grant them
-// friend access to its private bucket/pool members. Bodies in
-// rtx_fork_static_promotion.cpp.
-namespace fork_hooks {
-  bool tryRouteToPersistentBucket(AccelManager& mgr, RtInstance* instance, uint32_t currentFrame);
-  void touchPersistentBlasesForFastSkip(AccelManager& mgr, uint32_t currentFrame);
-  void emitPersistentTlasInstances(
-    AccelManager& mgr,
-    Rc<DxvkContext> ctx,
-    class DxvkBarrierSet& execBarriers,
-    std::vector<VkAccelerationStructureBuildGeometryInfoKHR>& blasToBuild,
-    std::vector<VkAccelerationStructureBuildRangeInfoKHR*>& blasRangesToBuild,
-    size_t& totalScratchMemory,
-    uint32_t currentFrame);
-}
 
 // AccelManager is responsible for maintaining the acceleration structures (BLAS and TLAS)
 class AccelManager : public CommonDeviceObject {
-  // Fork touchpoint: persistent static-geometry promotion routing hooks need
-  // to peek at the merged-instance pool and dynamic BLAS bookkeeping. Bodies
-  // live in rtx_fork_static_promotion.cpp; emitPersistentTlasInstances (the
-  // BLAS-build-and-emit hook) lands in Task 6.
-  friend bool fork_hooks::tryRouteToPersistentBucket(AccelManager&, RtInstance*, uint32_t);
-  friend void fork_hooks::touchPersistentBlasesForFastSkip(AccelManager&, uint32_t);
-  friend void fork_hooks::emitPersistentTlasInstances(
-    AccelManager&, Rc<DxvkContext>, DxvkBarrierSet&,
-    std::vector<VkAccelerationStructureBuildGeometryInfoKHR>&,
-    std::vector<VkAccelerationStructureBuildRangeInfoKHR*>&,
-    size_t&, uint32_t);
-
   class BlasBucket {
   public:
     std::vector<VkAccelerationStructureGeometryKHR> geometries {};

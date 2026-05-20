@@ -30,7 +30,6 @@
 #include "rtx_scene_manager.h"
 #include "rtx_accel_manager.h"
 #include "rtx_point_instancer_system.h"
-#include "rtx_fork_hooks.h"
 
 #include "../d3d9/d3d9_state.h"
 #include "rtx_matrix_helpers.h"
@@ -71,14 +70,6 @@ namespace dxvk {
   }
 
   void AccelManager::removeInstanceFromBucketCache(RtInstance* instance) {
-    // Persistent static promotion: notify the persistent pool so any membership
-    // in a persistent bucket is cleaned up when the upstream layer evicts the
-    // instance (GC, hidden, mask=0). Defense-in-depth — the hook is not gated
-    // on enableStaticGeometryPromotion because the pool may still hold the
-    // instance from a session where the option was previously enabled. No-op
-    // when the instance is not a persistent bucket member. Implementation in
-    // rtx_fork_static_promotion.cpp.
-    fork_hooks::onInstanceRemoved(instance);
     m_instanceBucketIndex.erase(instance);
   }
 
@@ -426,11 +417,6 @@ namespace dxvk {
     auto& instances = instanceManager.getInstanceTable();
     const uint32_t currentFrame = m_device->getCurrentFrameId();
 
-    // Persistent static promotion: update per-instance stability counters before
-    // the per-frame routing pass. No-op when the feature is disabled. Implementation
-    // in rtx_fork_static_promotion.cpp.
-    fork_hooks::tickStabilityCounters(instances, currentFrame);
-
     // --- Full-skip fast path ---
     // If no scene changes occurred since the last build, we can reuse all cached
     // BLAS/TLAS data and skip the expensive per-instance iteration, bucket merging,
@@ -441,12 +427,8 @@ namespace dxvk {
     {
       const uint64_t currentGeneration = instanceManager.getSceneGeneration();
       const bool sceneUnchanged = (currentGeneration == m_lastProcessedGeneration);
-      // One-shot override from the persistent-promotion tier: forces the next
-      // pass through the full per-instance loop so routing can seed the pool
-      // when the option is toggled on while the scene is already settled.
-      const bool persistentForcesFullPass = fork_hooks::needsFullPassNow();
 
-      if (sceneUnchanged && !m_ommBindPending && !m_reorderedSurfaces.empty() && !persistentForcesFullPass) {
+      if (sceneUnchanged && !m_ommBindPending && !m_reorderedSurfaces.empty()) {
         m_sceneUnchangedThisFrame = true;
         // Touch pooled (merged) BLAS
         for (auto& blas : m_blasPool) {
@@ -456,11 +438,6 @@ namespace dxvk {
         for (auto& dynBlas : m_activeDynamicBlases) {
           dynBlas->frameLastTouched = currentFrame;
         }
-        // Persistent static promotion: stamp recency on every persistent
-        // bucket so the LRU policy does not collect them while the scene is
-        // unchanged. No-op when the feature is disabled. Implementation in
-        // rtx_fork_static_promotion.cpp.
-        fork_hooks::touchPersistentBlasesForFastSkip(*this, currentFrame);
         // Reassign surface indices (cleared by InstanceManager::resetSurfaceIndices at frame end)
         for (uint32_t i = 0; i < m_reorderedSurfaces.size(); ++i) {
           m_reorderedSurfaces[i]->setSurfaceIndex(i);
@@ -649,16 +626,6 @@ namespace dxvk {
       // Find the blas entry for this instance early so we can check the dynamic/merged cache.
       BlasEntry* blasEntry = instance->getBlas();
       assert(blasEntry);
-
-      // Persistent static promotion: hand this instance to the persistent
-      // merged-BLAS tier when stable + eligible. When the hook returns true
-      // the instance has been claimed by the persistent pool and must skip
-      // the normal merged/dynamic routing for this frame (the actual TLAS
-      // instance emission for persistent buckets lands in Task 6). No-op
-      // when the feature is disabled.
-      if (fork_hooks::tryRouteToPersistentBucket(*this, instance, currentFrame)) {
-        continue;
-      }
 
       // On the incremental path, skip instances that belong to a clean cached bucket.
       // Their surfaces and TLAS instances will be restored from cache after the loop.
@@ -962,18 +929,6 @@ namespace dxvk {
       m_reorderedSurfaces.insert(m_reorderedSurfaces.end(), blasBucket->originalInstances.begin(), blasBucket->originalInstances.end());
       m_reorderedSurfacesFirstIndexOffset.insert(m_reorderedSurfacesFirstIndexOffset.end(), blasBucket->indexOffsets.begin(), blasBucket->indexOffsets.end());
     }
-
-    // Persistent static promotion: maintain the persistent-bucket pool (drop
-    // empty buckets, enforce the LRU memory budget, refresh diagnostic
-    // counters). Must run before buildBlases so persistent TLAS instance
-    // emission (Task 6b) can append into m_mergedInstances and contribute
-    // surfaces to m_reorderedSurfaces before the prefix-sum loop below. No-op
-    // when the feature is disabled. Implementation in
-    // rtx_fork_static_promotion.cpp.
-    fork_hooks::emitPersistentTlasInstances(
-      *this, ctx, execBarriers,
-      blasToBuild, blasRangesToBuild, totalScratchMemory,
-      currentFrame);
 
     // Build prefix sum array
     // Collect primitive count for each surface object

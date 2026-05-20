@@ -3950,9 +3950,6 @@ namespace dxvk {
       ImGui::Unindent();
     }
 
-    // Fork: persistent static-geometry promotion (2026-05-20).
-    fork_hooks::showStaticPromotionPanel();
-
     if (RemixGui::CollapsingHeader("Texture Streaming [Experimental]", collapsingHeaderClosedFlags)) {
       ImGui::Indent();
       if (RtxOptions::TextureManager::hotReload()) {

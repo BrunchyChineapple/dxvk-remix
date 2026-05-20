@@ -34,20 +34,12 @@
 #include "dxvk_cmdlist.h"
 #include "rtx_opacity_micromap_manager.h"
 
-namespace dxvk
+namespace dxvk 
 {
 class DxvkContext;
 class DxvkDevice;
 class ResourceCache;
 class CameraManager;
-class RtInstance;
-
-// Forward decl so RtInstance can friend the fork hook that writes its
-// per-frame stability counters. Implementation in
-// rtx_fork_static_promotion.cpp. See docs/fork-touchpoints.md.
-namespace fork_hooks {
-  void tickStabilityCounters(const std::vector<RtInstance*>& instances, uint32_t currentFrame);
-}
 
 // RtInstance defines a SceneObjects placement/parameterization within the current scene.
 class RtInstance {
@@ -150,18 +142,6 @@ uint32_t getFirstBillboardIndex() const { return m_firstBillboard; }
   bool testCategoryFlags(InstanceCategories... cat) const { return m_categoryFlags.any(cat...); }
   CategoryFlags getCategoryFlags() const { return m_categoryFlags; }
 
-  // Persistent static promotion: read-only accessors for the per-frame
-  // stability counters. The counters themselves are written by
-  // fork_hooks::tickStabilityCounters (declared as a friend below).
-  uint32_t getGeometryStableFrames() const { return m_geometryStableFrames; }
-  uint32_t getTransformStableFrames() const { return m_transformStableFrames; }
-  uint32_t getMaterialStableFrames() const { return m_materialStableFrames; }
-  void resetStabilityCounters() {
-    m_geometryStableFrames = 0;
-    m_transformStableFrames = 0;
-    m_materialStableFrames = 0;
-  }
-
   bool isViewModel() const;
   bool isViewModelNonReference() const;
   bool isViewModelReference() const;
@@ -193,10 +173,6 @@ private:
   void copyInstanceDataFrom(const RtInstance& src);
   void onTransformChanged();
   friend class InstanceManager;
-  // Fork touchpoint: per-frame stability counter tick needs to write the
-  // m_*StableFrames / m_prevFrame* fields directly. Tracked as an inline
-  // tweak in docs/fork-touchpoints.md.
-  friend void fork_hooks::tickStabilityCounters(const std::vector<RtInstance*>&, uint32_t);
 
   // Unique ID of the RtInstance.
   // Sentinel value UINT64_MAX indicates that such RtInstance is a "virtual" instance, and is ignored by some features,
@@ -244,30 +220,6 @@ private:
   XXH64_hash_t m_texcoordHash = kEmptyHash;
   XXH64_hash_t m_indexHash = kEmptyHash;
   VkAccelerationStructureInstanceKHR m_vkInstance;
-
-  // Persistent static promotion: per-frame stability counters. Each ticks up
-  // by 1 when its condition holds (geometry/transform/material unchanged) and
-  // resets to 0 on change. When min(all three) >= staticGeometryPromotionFrames
-  // and the instance is otherwise eligible, the instance is promoted into the
-  // persistent merged BLAS tier. See rtx_fork_static_promotion.cpp.
-  uint32_t m_geometryStableFrames = 0;
-  uint32_t m_transformStableFrames = 0;
-  uint32_t m_materialStableFrames = 0;
-  // Cached previous-frame transform for transformStableFrames comparison.
-  // Stored as the raw VkTransformMatrixKHR for direct element-wise compare
-  // under the user-configured epsilon.
-  VkTransformMatrixKHR m_prevFrameTransform {};
-  // Cached previous-frame BlasBucketKey hash for materialStableFrames comparison.
-  // Stored as a 64-bit hash of the bucket-key fields rather than the whole
-  // struct to keep the per-frame compare cheap.
-  uint64_t m_prevFrameBucketKeyHash = 0;
-  // Cached previous-frame BlasEntry VertexDataHash for geometryStableFrames
-  // comparison. Mirrors the same hash rule DrawCallCache::get uses for its
-  // cross-frame content matching, so content that the cache already identifies
-  // as "same" stays counted as stable here even when BlasEntry::frameLastUpdated
-  // gets touched by per-frame DrawPrimitiveUP-style re-submission.
-  uint64_t m_prevFrameGeometryHash = 0;
-
   VkGeometryFlagsKHR m_geometryFlags = 0;
   uint32_t m_firstBillboard = 0;
   uint32_t m_billboardCount = 0;
