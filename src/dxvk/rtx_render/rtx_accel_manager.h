@@ -41,13 +41,14 @@ class ResourceCache;
 class CameraManager;
 class OpacityMicromapManager;
 class RtInstance;
+class AccelManager;
 
 // Forward-declare the fork-owned routing hooks so AccelManager can grant them
 // friend access to its private bucket/pool members. Bodies in
 // rtx_fork_static_promotion.cpp.
 namespace fork_hooks {
-  bool tryRouteToPersistentBucket(class AccelManager& mgr, RtInstance* instance, uint32_t currentFrame);
-  void touchPersistentBlasesForFastSkip(class AccelManager& mgr, uint32_t currentFrame);
+  bool tryRouteToPersistentBucket(AccelManager& mgr, RtInstance* instance, uint32_t currentFrame);
+  void touchPersistentBlasesForFastSkip(AccelManager& mgr, uint32_t currentFrame);
 }
 
 // AccelManager is responsible for maintaining the acceleration structures (BLAS and TLAS)
