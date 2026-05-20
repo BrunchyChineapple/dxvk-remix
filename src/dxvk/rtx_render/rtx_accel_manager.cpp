@@ -30,6 +30,7 @@
 #include "rtx_scene_manager.h"
 #include "rtx_accel_manager.h"
 #include "rtx_point_instancer_system.h"
+#include "rtx_fork_hooks.h"
 
 #include "../d3d9/d3d9_state.h"
 #include "rtx_matrix_helpers.h"
@@ -416,6 +417,11 @@ namespace dxvk {
 
     auto& instances = instanceManager.getInstanceTable();
     const uint32_t currentFrame = m_device->getCurrentFrameId();
+
+    // Persistent static promotion: update per-instance stability counters before
+    // the per-frame routing pass. No-op when the feature is disabled. Implementation
+    // in rtx_fork_static_promotion.cpp.
+    fork_hooks::tickStabilityCounters(instances, currentFrame);
 
     // --- Full-skip fast path ---
     // If no scene changes occurred since the last build, we can reuse all cached

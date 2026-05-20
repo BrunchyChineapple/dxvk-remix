@@ -302,6 +302,17 @@ initializer list and can't be lifted into a separate TU.
 
 ---
 
+## src/dxvk/rtx_render/rtx_accel_manager.cpp
+
+**Category:** index-only
+
+- **Hook** at `AccelManager::mergeInstancesIntoBlas` (one-line dispatch, +1 LOC) —
+  calls `fork_hooks::tickStabilityCounters` once per frame after instance table
+  finalization. Adds `#include "rtx_fork_hooks.h"`. Implementation in
+  `rtx_fork_static_promotion.cpp`.
+
+---
+
 ## src/dxvk/rtx_render/rtx_camera_manager.cpp
 
 **Pre-refactor fork footprint:** +10 / -10 LOC (audit 2026-04-18)
@@ -408,6 +419,20 @@ initializer list and can't be lifted into a separate TU.
 
 - **Inline tweak** at `GameCapturer` class body (top of class, before `public:`) — 4-line `friend` declaration granting `fork_hooks::captureMaterialApiPath` access to private members.
   *Canonical pattern for hooks that must read/write private upstream state — one inline tweak per such hook, tracked here.*
+
+---
+
+## src/dxvk/rtx_render/rtx_instance_manager.h
+
+**Category:** index-only
+
+- **Inline tweak** (+~25 LOC, audit 2026-05-20) — three `uint32_t` stability counter
+  fields (`m_geometryStableFrames`, `m_transformStableFrames`, `m_materialStableFrames`),
+  `VkTransformMatrixKHR m_prevFrameTransform`, `uint64_t m_prevFrameBucketKeyHash`,
+  three getters + `resetStabilityCounters()`, a forward declaration of
+  `fork_hooks::tickStabilityCounters` at namespace scope, and a `friend` declaration
+  on `RtInstance` granting that hook access to the new private fields. Used by the
+  persistent-static-promotion tier; body in `rtx_fork_static_promotion.cpp`.
 
 ---
 
