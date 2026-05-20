@@ -1810,7 +1810,7 @@ float sampleCloudDensityTextured(vec3 worldPosKm,
                             smoothstep(0.7f, 0.8f, heightFraction));
   float coverageAnvil = pow(coverageLocal, anvilExponent);
 
-  float coverageThreshold = mix(0.80f, 0.15f, coverageAnvil) * heightProfile.g;
+  float coverageThreshold = mix(0.80f, 0.0f, coverageAnvil) * heightProfile.g;
   density = smoothstep(coverageThreshold, coverageThreshold + 0.25f, density);
 
   density *= heightProfile.r;
@@ -1889,7 +1889,7 @@ float sampleCloudDensityForShadow(vec3 worldPosKm,
   float anvilExponent = mix(1.0f, mix(1.0f, 0.5f, args.cloudAnvilBias),
                             smoothstep(0.7f, 0.8f, heightFraction));
   float coverageAnvil = pow(coverageLocal, anvilExponent);
-  float coverageThreshold = mix(0.80f, 0.15f, coverageAnvil) * heightProfile.g;
+  float coverageThreshold = mix(0.80f, 0.0f, coverageAnvil) * heightProfile.g;
   density = smoothstep(coverageThreshold, coverageThreshold + 0.25f, density);
   density *= heightProfile.r;
 
