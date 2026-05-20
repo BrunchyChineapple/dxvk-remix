@@ -298,14 +298,22 @@ namespace dxvk {
       for (RtInstance* inst : instances) {
         if (!inst) continue;
 
-        // Geometry: bumps when the linked BlasEntry's content was NOT updated this frame.
+        // Geometry: bumps when the linked BlasEntry's content hash matches the
+        // previous frame's. Uses the same VertexDataHash rule DrawCallCache::get
+        // uses for cross-frame content matching, so DrawPrimitiveUP-style games
+        // that re-touch BlasEntry::frameLastUpdated every frame without changing
+        // content still count as stable. Resets to 0 only when the actual vertex
+        // content differs frame-to-frame.
         BlasEntry* blas = inst->getBlas();
-        const bool geometryChanged = blas && (blas->frameLastUpdated == currentFrame);
-        if (geometryChanged) {
-          inst->m_geometryStableFrames = 0;
-        } else {
+        const uint64_t curGeometryHash = blas
+          ? static_cast<uint64_t>(blas->input.getGeometryData().getHashForRule<rules::VertexDataHash>())
+          : 0ull;
+        if (curGeometryHash != 0 && curGeometryHash == inst->m_prevFrameGeometryHash) {
           ++inst->m_geometryStableFrames;
+        } else {
+          inst->m_geometryStableFrames = 0;
         }
+        inst->m_prevFrameGeometryHash = curGeometryHash;
 
         // Transform: element-wise compare against last frame.
         const VkTransformMatrixKHR& cur = inst->getVkInstance().transform;

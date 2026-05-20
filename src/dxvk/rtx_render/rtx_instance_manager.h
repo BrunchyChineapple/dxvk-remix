@@ -261,6 +261,12 @@ private:
   // Stored as a 64-bit hash of the bucket-key fields rather than the whole
   // struct to keep the per-frame compare cheap.
   uint64_t m_prevFrameBucketKeyHash = 0;
+  // Cached previous-frame BlasEntry VertexDataHash for geometryStableFrames
+  // comparison. Mirrors the same hash rule DrawCallCache::get uses for its
+  // cross-frame content matching, so content that the cache already identifies
+  // as "same" stays counted as stable here even when BlasEntry::frameLastUpdated
+  // gets touched by per-frame DrawPrimitiveUP-style re-submission.
+  uint64_t m_prevFrameGeometryHash = 0;
 
   VkGeometryFlagsKHR m_geometryFlags = 0;
   uint32_t m_firstBillboard = 0;
