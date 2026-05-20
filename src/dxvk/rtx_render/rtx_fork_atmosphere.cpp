@@ -934,18 +934,6 @@ namespace fork_hooks {
             "overcast). Does NOT affect cloud appearance close to camera. "
             "Default 0.15.");
 
-        ImGui::Separator();
-        ImGui::TextDisabled("Aerial Perspective (fork — 2026-05-16)");
-        RemixGui::DragFloat("Aerial Extinction (1/km)",
-                            &RtxOptions::cloudAerialExtinctionPerKmObject(),
-                            0.001f, 0.0f, 0.2f, "%.4f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Per-km atmospheric extinction applied to cloud samples by march "
-            "distance. Without this, horizon-grazing rays accumulate through "
-            "100+ km of cloud volume producing a solid white wall. Higher "
-            "values fade clouds into the atmosphere faster. 0 = legacy "
-            "(no aerial perspective).");
-
         ImGui::TreePop();
       }
     }
