@@ -120,8 +120,6 @@ void integrate_direct_pass(uvec2 threadIndex)
     }
   }
 
-  RNG rng = createRNG(pixelCoordinate, cb.frameIdx);
-
   // Read the integration surface PDF
 
   const float integrationSurfacePdf = SharedIntegrationSurfacePdf[pixelCoordinate];
