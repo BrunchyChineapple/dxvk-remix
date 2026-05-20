@@ -120,7 +120,7 @@ namespace dxvk {
   namespace {
     template<int RtInstanceSize> struct CheckRtInstanceSize {
       // The second line of the build error should contain the new size of RtInstance in the template argument, i.e. `dxvk::CheckRtInstanceSize<newSize>`
-      static_assert(RtInstanceSize == 760, "RtInstance size has changed.  Fix the copy constructor above this message, then update the expected size.");
+      static_assert(RtInstanceSize == 832, "RtInstance size has changed.  Fix the copy constructor above this message, then update the expected size.");
     };
     CheckRtInstanceSize<sizeof(RtInstance)> _rtInstanceSizeTest;
   }
@@ -166,7 +166,12 @@ namespace dxvk {
     //   m_isCreatedByRenderer, m_spatialCacheHash,
     //   m_primInstanceOwner, buildGeometries, buildRanges,
     //   billboardIndices, indexOffsets, m_blasDirty,
-    //   m_billboardGeometryDirty
+    //   m_billboardGeometryDirty,
+    //   m_geometryStableFrames, m_transformStableFrames, m_materialStableFrames,
+    //   m_prevFrameTransform, m_prevFrameBucketKeyHash
+    //     — stability counters track per-instance behavior across frames; a copy
+    //       represents a new logical instance and must start fresh (K frames of
+    //       observation before it can be promoted).
   }
 
   void RtInstance::updateFromReference(const RtInstance& src, const bool preserveTransforms) {
