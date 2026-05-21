@@ -488,6 +488,26 @@ namespace fork_hooks {
         ImGui::TreePop();
       }
     }
+
+    void renderSunUI() {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+
+      if (ImGui::TreeNode("Sun")) {
+        RemixGui::DragFloat("Sun Size", &RtxOptions::sunSizeObject(), 0.01f, 0.0f, 10.0f, "%.3f\xc2\xb0", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Size of sun disc in degrees");
+
+        RemixGui::DragFloat("Sun Intensity", &RtxOptions::sunIntensityObject(), 0.01f, 0.0f, 100.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Strength of Sun");
+
+        RemixGui::DragFloat("Sun Elevation", &RtxOptions::sunElevationObject(), 0.01f, -90.0f, 90.0f, "%.2f\xc2\xb0", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Sun angle from horizon");
+
+        RemixGui::DragFloat("Sun Rotation", &RtxOptions::sunRotationObject(), 0.01f, 0.0f, 360.0f, "%.1f\xc2\xb0", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Rotation of sun around zenith");
+
+        ImGui::TreePop();
+      }
+    }
   } // anonymous namespace
 
   void showAtmosphereUI() {
@@ -594,20 +614,11 @@ namespace fork_hooks {
 
       ImGui::Separator();
 
-      // Physical Atmosphere controls (Blender Style)
-      if (ImGui::TreeNode("Atmosphere Parameters")) {
+      // Sun (lifted out of former "Atmosphere Parameters" tree)
+      renderSunUI();
 
-        RemixGui::DragFloat("Sun Size", &RtxOptions::sunSizeObject(), 0.01f, 0.0f, 10.0f, "%.3f°", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover("Size of sun disc in degrees");
-
-        RemixGui::DragFloat("Sun Intensity", &RtxOptions::sunIntensityObject(), 0.01f, 0.0f, 100.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover("Strength of Sun");
-
-        RemixGui::DragFloat("Sun Elevation", &RtxOptions::sunElevationObject(), 0.01f, -90.0f, 90.0f, "%.2f°", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover("Sun angle from horizon");
-
-        RemixGui::DragFloat("Sun Rotation", &RtxOptions::sunRotationObject(), 0.01f, 0.0f, 360.0f, "%.1f°", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover("Rotation of sun around zenith");
+      // Physical Atmosphere controls (renamed; Sun fields moved to renderSunUI above)
+      if (ImGui::TreeNode("Atmosphere")) {
 
         RemixGui::DragFloat("Altitude", &RtxOptions::altitudeObject(), 1.0f, 0.0f, 100000.0f, "%.0f m", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover("Height from sea level");
