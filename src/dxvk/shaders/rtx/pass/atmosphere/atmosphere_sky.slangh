@@ -430,16 +430,16 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
     float slotProb       = saturate(ratePerSec / kSlotsPerSecond);
 
     // Compute moon-dimming factor up front (applies to all non-fireball streaks).
-    // Use the brightest enabled moon's elevation as a proxy for sky brightness.
-    // moons[].elevation is degrees; positive = above horizon. brightness is the
-    // moon's stylistic brightness multiplier.
+    // Use the brightest above-horizon moon as a proxy for sky brightness.
+    // MoonParams.direction is a unit vector in Y-up space (direction.y = sin(elevation)).
+    // Phase 0=new, 0.5=full, 1=new — full-moon weight = 1 - 2*|phase - 0.5|.
     float moonSkyBrightness = 0.0f;
     [unroll] for (int mi = 0; mi < MAX_MOONS; ++mi) {
       MoonParams m = args.moons[mi];
-      if (m.enabled > 0.5f && m.elevation > 0.0f) {
-        // sin(elevation) gives ~1 at zenith, ~0 at horizon. Phase 0=new, 0.5=full, 1=new.
+      if (m.enabled > 0.5f && m.direction.y > 0.0f) {
         float phaseFull = 1.0f - 2.0f * abs(m.phase - 0.5f);
-        moonSkyBrightness += m.brightness * phaseFull * sin(m.elevation * (kPi / 180.0f));
+        // direction.y is already sin(elevation), so it doubles as our zenith weight.
+        moonSkyBrightness += m.brightness * phaseFull * m.direction.y;
       }
     }
     float moonDimming = exp(-moonSkyBrightness * args.meteorMoonDimmingStrength * 0.3f);
