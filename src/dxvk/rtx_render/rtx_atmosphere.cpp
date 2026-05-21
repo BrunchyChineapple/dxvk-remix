@@ -471,6 +471,7 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.padMeteor2                  = 0.0f;
 
   // ----- Aurora Borealis (fork, 2026-05-21) -----
+  args.auroraEnabled                   = RtxOptions::auroraEnabled() ? 1.0f : 0.0f;
   args.auroraActivity                  = RtxOptions::auroraActivity();
   args.auroraIntensity                 = RtxOptions::auroraIntensity();
   args.auroraPoleElevation             = RtxOptions::auroraPoleElevation();
@@ -486,7 +487,7 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.auroraGroundIlluminationStrength = RtxOptions::auroraGroundIlluminationStrength();
   args.auroraStormPulseRate            = RtxOptions::auroraStormPulseRate();
   args.auroraStormPulseDepth           = RtxOptions::auroraStormPulseDepth();
-  args.padAurora0                      = 0.0f;
+  // padAurora0 retired — slot now holds auroraEnabled toggle
   args.auroraColorLow                  = RtxOptions::auroraColorLow();
   args.padAuroraColor0                 = 0.0f;
   args.auroraColorMid                  = RtxOptions::auroraColorMid();

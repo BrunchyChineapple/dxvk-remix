@@ -863,7 +863,7 @@ vec3 sampleSkyAmbientForVolume(vec3 dirYUp,
   // mid-band color (the dominant emission color in real aurorae). Sun-elevation
   // gated via sunDirection.y so it disappears during the day. Cloud-occluded
   // by the same factor that affects regular sky ambient.
-  if (args.auroraActivity > 0.001f && args.auroraIntensity > 0.001f
+  if (args.auroraEnabled > 0.5f && args.auroraActivity > 0.001f && args.auroraIntensity > 0.001f
       && args.auroraGroundIlluminationStrength > 0.001f) {
     float sunBelow = saturate(-args.sunDirection.y * 10.0f);  // 1 when sun > 6° below horizon
     vec3 auroraAmbient = args.auroraColorMid

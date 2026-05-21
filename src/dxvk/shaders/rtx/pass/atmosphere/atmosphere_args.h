@@ -245,9 +245,11 @@ struct AtmosphereArgs {
   // emission-altitude differences (real aurorae: green oxygen low, red oxygen
   // high, purple/violet nitrogen highest). Defaults are Morrowind-flavored
   // (Daedric jade / Velothi gold / Telvanni magenta) but fully tunable.
+  // High (~250km):** Dwemer brass / Telvanni purple — deep magenta-violet at the top
+  // These all configurable via Vector3 RTX_OPTIONs so you can shift to whatever you like.
   float auroraActivity;                   // Wrapper-driven 0..1 aurora intensity. NoSave.
   float auroraIntensity;                  // User brightness scalar (multiplied by activity).
-  float auroraPoleElevation;              // Magnetic-pole elevation in degrees. Default 80 (near zenith).
+  float auroraPoleElevation;              // Magnetic-pole elevation in degrees. Default -25 (below north horizon).
   float auroraPoleRotation;               // Magnetic-pole azimuth in degrees. Default 0 (north).
 
   float auroraOvalRadius;                 // Auroral-oval half-angle from pole in degrees. Default 22.
@@ -263,7 +265,7 @@ struct AtmosphereArgs {
   float auroraGroundIlluminationStrength; // NEE-side multiplier on aurora-as-sky-ambient [0..2]. Default 1.0.
   float auroraStormPulseRate;             // Hz of pulse oscillation during storm activity. Default 0.3.
   float auroraStormPulseDepth;            // Depth of storm pulse modulation [0..1]. Default 0.4.
-  float padAurora0;                       // 16-byte alignment
+  float auroraEnabled;                    // Master toggle. 0 = aurora silent regardless of activity.
 
   // Three-zone color stack — Morrowind-flavored defaults
   vec3 auroraColorLow;                    // Lowest curtain band — Daedric jade green by default

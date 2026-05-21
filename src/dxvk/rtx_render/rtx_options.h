@@ -1401,6 +1401,11 @@ namespace dxvk {
     // PBR illumination via the existing sky-ambient NEE coupling. Activity is
     // game-driven from the wrapper (Solstheim baseline + rare Vvardenfell
     // storms + equinox boost). All other fields persist normally.
+    RTX_OPTION("rtx.atmosphere", bool, auroraEnabled, true,
+               "Master toggle for the aurora system. When off, no aurora is rendered "
+               "regardless of activity; ground illumination, cloud coupling, and curtain "
+               "visual are all suppressed. Wrapper still writes auroraActivity but it's "
+               "silently ignored by the shader.");
     RTX_OPTION_FLAG("rtx.atmosphere", float, auroraActivity, 0.0f, RtxOptionFlags::NoSave,
                     "Game-driven [0..1] aurora intensity multiplier. The wrapper drives this "
                     "based on player location (Solstheim = high, Vvardenfell = rare storms) "
@@ -1425,10 +1430,9 @@ namespace dxvk {
                "Auroral-oval half-angle from the pole, in degrees. With pole below horizon, "
                "this controls how high the upper arc of the oval rises in the sky. Default 55 "
                "= a wide arc reaching ~30° elevation from the northern horizon.");
-    RTX_OPTION("rtx.atmosphere", float, auroraOvalThickness, 18.0f,
-               "Half-width of the oval band, in degrees. 18 makes the band ~36° thick which "
-               "reads as a wide curtain when the camera is far from the pole. Lower values "
-               "produce a tighter ribbon along the oval line.");
+    RTX_OPTION("rtx.atmosphere", float, auroraOvalThickness, 6.0f,
+               "Half-width of the oval band, in degrees. 6 makes the band ~12° thick which "
+               "matches typical real aurora apparent height. Wider = thicker curtain.");
     RTX_OPTION("rtx.atmosphere", float, auroraNoiseScale, 1.5f,
                "Frequency multiplier for the ribbon noise field. Higher = finer ribbons; "
                "lower = larger coherent curtains.");

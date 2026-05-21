@@ -605,7 +605,7 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
   // magnetic-pole axis. Three vertically-stacked color zones simulate the
   // height-stratified emission of real aurorae (low oxygen green / mid
   // oxygen red / high nitrogen violet — Morrowind-flavored defaults).
-  if (args.auroraActivity > 0.001f && args.auroraIntensity > 0.001f) {
+  if (args.auroraEnabled > 0.5f && args.auroraActivity > 0.001f && args.auroraIntensity > 0.001f) {
     // Magnetic-pole direction (Y-up)
     float poleElevRad = args.auroraPoleElevation * (kPi / 180.0f);
     float poleRotRad  = args.auroraPoleRotation  * (kPi / 180.0f);
@@ -650,35 +650,48 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
       // Time-animated noise: along-band scrolls slowly, across-band morphs.
       float t = args.timeSeconds * args.auroraAnimationSpeed;
 
-      // Real aurora has STRONG vertical curtains (the "ray" structure) — much
-      // higher frequency along the across-band axis than along it. The noise
-      // UV is shaped to produce vertical streaks: high frequency along
-      // azimuth (creating thin vertical rays) + low frequency across band.
-      // The 8x ratio gives the iconic "marching ribbon" appearance.
-      vec2 noiseUV = vec2(
-        ovalUV.x * args.auroraNoiseScale * 8.0f + t * 0.4f,    // azimuth -> high freq vertical rays
-        ovalUV.y * args.auroraNoiseScale * 0.7f + t * 0.15f    // across-band -> low freq vertical envelope
+      // Real aurora structure has TWO scales:
+      //   - Coarse horizontal: wide bright clusters separated by quiet gaps.
+      //     Drives where curtains EXIST. Low frequency along band.
+      //   - Fine vertical: thin tall rays inside each cluster — the iconic
+      //     "pencil" structure caused by parallel field-line emission.
+      // Each scale is computed independently and multiplied together so we
+      // get clusters of vertical rays rather than a uniform field of noise.
+
+      // Horizontal cluster mask — controls where curtains exist.
+      // Low frequency along azimuth, even slower across the band.
+      float clusterFreq = args.auroraNoiseScale * 0.6f;
+      vec2 clusterUV = vec2(
+        ovalUV.x * clusterFreq + t * 0.3f,
+        ovalUV.y * clusterFreq * 0.5f + t * 0.08f
       );
+      float clusterMask = fbmNoise2D(clusterUV, 3, 30.0f);
+      // Sharpen so we get distinct curtains with gaps between them
+      clusterMask = saturate((clusterMask - 0.42f) * 2.5f);
+      clusterMask = smoothstep(0.0f, 1.0f, clusterMask);
 
-      // Accumulate ribbons as octaves with frequency multiplier.
-      // Each octave shifts in frequency and contributes a different vertical
-      // band of the curtain — used to drive vertical color stratification.
+      // Vertical ray structure — high frequency vertical rays inside clusters
+      float rayFreq = args.auroraNoiseScale * 4.0f;
+      vec2 rayUV = vec2(
+        ovalUV.x * rayFreq + t * 0.5f,
+        ovalUV.y * 1.5f + t * 0.2f  // low frequency across-band so rays stay tall
+      );
+      float rayDensity = fbmNoise2D(rayUV, 3, 50.0f);
+      // Multiple per-octave ray layers shift independently for shimmer
       int ribbonCount = int(clamp(args.auroraRibbonCount, 1.0f, 6.0f));
-      float baseDensity = 0.0f;
+      float layeredRays = 0.0f;
       [unroll(6)] for (int ri = 0; ri < ribbonCount; ++ri) {
-        // Each octave: scrolls at slightly different speed for shimmer.
-        // Frequencies are anisotropic — vertical detail dominates.
-        vec2 octaveUV = noiseUV * (1.0f + float(ri) * 0.5f)
-                      + vec2(float(ri) * 17.0f, t * float(ri) * 0.2f);
-        baseDensity += fbmNoise2D(octaveUV, 3, 30.0f + float(ri) * 7.0f) / (1.0f + float(ri) * 0.4f);
+        vec2 layerUV = vec2(
+          ovalUV.x * rayFreq * (1.0f + float(ri) * 0.3f) + t * (0.4f + float(ri) * 0.1f) + float(ri) * 11.0f,
+          ovalUV.y * 1.5f + t * 0.15f + float(ri) * 7.0f
+        );
+        layeredRays += fbmNoise2D(layerUV, 2, 40.0f) / float(ribbonCount);
       }
-      baseDensity = saturate(baseDensity / float(ribbonCount));
+      float rayMask = saturate((layeredRays - 0.42f) * 3.0f);
+      rayMask = pow(rayMask, 1.4f);
 
-      // Add a low-frequency mask to create coherent curtain "patches" along
-      // the band (real auroras aren't uniformly distributed — they cluster).
-      float patchMask = fbmNoise2D(vec2(ovalUV.x * 1.5f + t * 0.3f, t * 0.05f), 2, 50.0f);
-      patchMask = saturate(patchMask * 1.4f);
-      baseDensity *= mix(0.4f, 1.0f, patchMask);
+      // Combine: rays only appear where clusters say YES
+      float baseDensity = clusterMask * rayMask;
 
       // Apply density threshold — soft cutoff for sparse vs busy curtain
       float curtainDensity = saturate((baseDensity - args.auroraNoiseThreshold)
@@ -712,9 +725,17 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
         float pulsePhase = args.timeSeconds * args.auroraStormPulseRate * 2.0f * kPi;
         float pulse = 1.0f - args.auroraStormPulseDepth * stormFactor * (0.5f + 0.5f * sin(pulsePhase));
 
-        // Vertical brightness profile: brighter at the center of the curtain,
-        // softer at top and bottom edges
-        float vertProfile = pow(1.0f - abs(ovalUV.y), 1.2f);
+        // Vertical brightness profile: real aurora has SHARP lower edge
+        // (green oxygen emission peaks at ~100km, falls off rapidly below)
+        // and SOFT upper edge (red oxygen extends up to ~250km). Use a
+        // lower-edge-biased profile: max brightness at lower edge, gradual
+        // fade upward.
+        // ovalUV.y in [-1, +1]; with pole below horizon, -1 is closer to pole
+        // (lower in sky) and +1 is farther from pole (higher in sky).
+        // Lower edge bias: heavy at -0.7..0, fade out at +1.
+        float vertProfile = smoothstep(-1.0f, -0.5f, ovalUV.y)
+                          * (1.0f - smoothstep(0.0f, 1.0f, ovalUV.y * 0.8f));
+        vertProfile = saturate(vertProfile);
 
         // Faint horizon extinction (atmospheric extinction near horizon)
         float hzAuroraExt = smoothstep(-0.05f, 0.15f, viewDir.y);

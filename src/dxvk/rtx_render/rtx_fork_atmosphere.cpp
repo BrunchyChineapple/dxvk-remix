@@ -737,6 +737,11 @@ namespace fork_hooks {
     void renderAuroraUI() {
       constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
       if (ImGui::TreeNode("Aurora")) {
+        RemixGui::Checkbox("Enable Aurora", &RtxOptions::auroraEnabledObject());
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Master toggle. When off, no aurora is rendered regardless of activity. "
+            "Disables the curtain visual, cloud underside tinting, and ground glow.");
+        ImGui::Separator();
         ImGui::TextDisabled("Activity (game-driven)");
         ImGui::Text("Current activity: %.3f", RtxOptions::auroraActivity());
         ImGui::TextWrapped("Driven by player location (Solstheim baseline + rare Vvardenfell "

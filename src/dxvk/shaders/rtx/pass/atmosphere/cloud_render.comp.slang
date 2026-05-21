@@ -512,7 +512,7 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
       // color. We use the mid-band color as the dominant tint (since the
       // mid-band is what hangs lowest in the curtain). Activity-gated so this
       // contribution disappears in cells/times without aurora.
-      if (args.auroraActivity > 0.001f && args.auroraIntensity > 0.001f
+      if (args.auroraEnabled > 0.5f && args.auroraActivity > 0.001f && args.auroraIntensity > 0.001f
           && args.auroraCloudCouplingStrength > 0.001f) {
         nightLight += args.auroraColorMid
                     * args.auroraActivity * args.auroraIntensity
