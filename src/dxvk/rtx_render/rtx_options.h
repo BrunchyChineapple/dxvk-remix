@@ -1410,23 +1410,29 @@ namespace dxvk {
                "User brightness scalar applied on top of activity. 1.0 = calibrated default. "
                "Higher for stylized brilliance; 0 disables the visual entirely (also disables "
                "ground illumination).");
-    RTX_OPTION("rtx.atmosphere", float, auroraPoleElevation, 80.0f,
-               "Magnetic-pole axis elevation in degrees. Auroral oval is centered on this "
-               "direction. 80 puts the pole near zenith so the oval rings the upper sky; "
-               "lower values place the oval lower on the horizon.");
+    RTX_OPTION("rtx.atmosphere", float, auroraPoleElevation, -25.0f,
+               "Magnetic-pole axis elevation in degrees. NEGATIVE values place the pole BELOW "
+               "the horizon (this is the typical view from anywhere south of the magnetic pole "
+               "on Earth — and what a Vvardenfell/Solstheim viewer would see). The auroral oval "
+               "wraps around this axis; with the pole below horizon and a large oval radius, "
+               "the upper arc of the oval rises above the horizon as the iconic curtain band. "
+               "Default -25 puts the magnetic pole 25° below the northern horizon. POSITIVE "
+               "values rotate the oval toward zenith (e.g. 80 = standing at the pole, looking up).");
     RTX_OPTION("rtx.atmosphere", float, auroraPoleRotation, 0.0f,
                "Magnetic-pole azimuth in degrees (0 = north). Combined with "
                "auroraPoleElevation defines the curtain orientation.");
-    RTX_OPTION("rtx.atmosphere", float, auroraOvalRadius, 22.0f,
-               "Auroral-oval half-angle from the pole, in degrees. 22 is a moderate-latitude "
-               "view where the oval reads as a wide band crossing the upper sky.");
-    RTX_OPTION("rtx.atmosphere", float, auroraOvalThickness, 8.0f,
-               "Half-width of the oval band, in degrees. 8 makes the band ~16° thick "
-               "(a couple times the typical real aurora apparent thickness).");
-    RTX_OPTION("rtx.atmosphere", float, auroraNoiseScale, 2.0f,
+    RTX_OPTION("rtx.atmosphere", float, auroraOvalRadius, 55.0f,
+               "Auroral-oval half-angle from the pole, in degrees. With pole below horizon, "
+               "this controls how high the upper arc of the oval rises in the sky. Default 55 "
+               "= a wide arc reaching ~30° elevation from the northern horizon.");
+    RTX_OPTION("rtx.atmosphere", float, auroraOvalThickness, 18.0f,
+               "Half-width of the oval band, in degrees. 18 makes the band ~36° thick which "
+               "reads as a wide curtain when the camera is far from the pole. Lower values "
+               "produce a tighter ribbon along the oval line.");
+    RTX_OPTION("rtx.atmosphere", float, auroraNoiseScale, 1.5f,
                "Frequency multiplier for the ribbon noise field. Higher = finer ribbons; "
                "lower = larger coherent curtains.");
-    RTX_OPTION("rtx.atmosphere", float, auroraNoiseThreshold, 0.45f,
+    RTX_OPTION("rtx.atmosphere", float, auroraNoiseThreshold, 0.30f,
                "Density threshold below which the curtain is invisible. Lower = more aurora "
                "coverage (busier sky), higher = sparser ribbons.");
     RTX_OPTION("rtx.atmosphere", float, auroraAnimationSpeed, 0.05f,

@@ -649,9 +649,15 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
 
       // Time-animated noise: along-band scrolls slowly, across-band morphs.
       float t = args.timeSeconds * args.auroraAnimationSpeed;
+
+      // Real aurora has STRONG vertical curtains (the "ray" structure) — much
+      // higher frequency along the across-band axis than along it. The noise
+      // UV is shaped to produce vertical streaks: high frequency along
+      // azimuth (creating thin vertical rays) + low frequency across band.
+      // The 8x ratio gives the iconic "marching ribbon" appearance.
       vec2 noiseUV = vec2(
-        ovalUV.x * args.auroraNoiseScale + t * 0.4f,
-        ovalUV.y * args.auroraNoiseScale * 0.7f + t * 0.15f
+        ovalUV.x * args.auroraNoiseScale * 8.0f + t * 0.4f,    // azimuth -> high freq vertical rays
+        ovalUV.y * args.auroraNoiseScale * 0.7f + t * 0.15f    // across-band -> low freq vertical envelope
       );
 
       // Accumulate ribbons as octaves with frequency multiplier.
@@ -660,10 +666,19 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
       int ribbonCount = int(clamp(args.auroraRibbonCount, 1.0f, 6.0f));
       float baseDensity = 0.0f;
       [unroll(6)] for (int ri = 0; ri < ribbonCount; ++ri) {
-        float freq = 1.0f + float(ri) * 0.7f;
-        baseDensity += fbmNoise2D(noiseUV * freq, 3, 30.0f + float(ri) * 7.0f) / freq;
+        // Each octave: scrolls at slightly different speed for shimmer.
+        // Frequencies are anisotropic — vertical detail dominates.
+        vec2 octaveUV = noiseUV * (1.0f + float(ri) * 0.5f)
+                      + vec2(float(ri) * 17.0f, t * float(ri) * 0.2f);
+        baseDensity += fbmNoise2D(octaveUV, 3, 30.0f + float(ri) * 7.0f) / (1.0f + float(ri) * 0.4f);
       }
       baseDensity = saturate(baseDensity / float(ribbonCount));
+
+      // Add a low-frequency mask to create coherent curtain "patches" along
+      // the band (real auroras aren't uniformly distributed — they cluster).
+      float patchMask = fbmNoise2D(vec2(ovalUV.x * 1.5f + t * 0.3f, t * 0.05f), 2, 50.0f);
+      patchMask = saturate(patchMask * 1.4f);
+      baseDensity *= mix(0.4f, 1.0f, patchMask);
 
       // Apply density threshold — soft cutoff for sparse vs busy curtain
       float curtainDensity = saturate((baseDensity - args.auroraNoiseThreshold)
@@ -673,16 +688,17 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
       if (curtainDensity > 0.001f) {
         // Vertical color stratification: across-band coordinate maps to
         // low/mid/high color zones. ovalUV.y in [-1, 1]; remap to [0, 1].
+        // With pole BELOW horizon: ovalUV.y = -1 is the inner edge of the oval
+        // (lower in sky = closer to horizon), +1 is outer (higher in sky).
+        // Real aurora: green at LOW altitude (inner/lower), red mid, violet HIGH.
         float heightCoord = saturate(0.5f + 0.5f * ovalUV.y);
 
         // Three-zone blend with smooth transitions
-        // Low zone dominates 0..0.5, mid zone 0.3..0.7, high zone 0.5..1
         vec3 zoneLow  = args.auroraColorLow;
         vec3 zoneMid  = args.auroraColorMid;
         vec3 zoneHigh = args.auroraColorHigh;
 
         // Lerp between zones based on heightCoord, scaled by verticalGradient
-        // (gradient=0 collapses to zoneMid only)
         float midWeight  = exp(-pow((heightCoord - 0.5f) * 4.0f, 2.0f));
         float lowWeight  = exp(-pow((heightCoord - 0.0f) * 3.0f, 2.0f));
         float highWeight = exp(-pow((heightCoord - 1.0f) * 3.0f, 2.0f));
@@ -698,10 +714,16 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
 
         // Vertical brightness profile: brighter at the center of the curtain,
         // softer at top and bottom edges
-        float vertProfile = pow(1.0f - abs(ovalUV.y), 1.5f);
+        float vertProfile = pow(1.0f - abs(ovalUV.y), 1.2f);
 
         // Faint horizon extinction (atmospheric extinction near horizon)
-        float hzAuroraExt = smoothstep(-0.1f, 0.2f, viewDir.y);
+        float hzAuroraExt = smoothstep(-0.05f, 0.15f, viewDir.y);
+
+        // Base luminance scalar — calibrated against starBrightness (~1.0) and
+        // moon NEE so a strong aurora at activity=1 reads roughly equal to
+        // mid-bright moonlit clouds. Real aurora at peak is ~1 mag brighter
+        // than full moon over a small area, but tonemap-friendly.
+        const float kAuroraLuminanceBase = 6.0f;
 
         vec3 auroraColor = finalColor
                          * curtainDensity
@@ -711,7 +733,7 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
                          * hzAuroraExt
                          * args.auroraActivity
                          * args.auroraIntensity
-                         * 1.5f;  // base luminance scalar
+                         * kAuroraLuminanceBase;
 
         airglow += auroraColor;
       }
