@@ -24,6 +24,7 @@
 #include "rtx_imgui.h"                // RemixGui::DragFloat, ComboWithKey (showAtmosphereUI)
 #include <cstdio>                     // std::snprintf (renderMoonUI label)
 #include <cmath>                      // std::tan (cloud render camera basis)
+#include <algorithm>                  // std::max / std::min (renderChromaticityWidget)
 
 namespace dxvk {
 namespace fork_hooks {
@@ -508,6 +509,52 @@ namespace fork_hooks {
         ImGui::TreePop();
       }
     }
+
+    // Render an RtxOption<Vector3> as a ColorEdit3 chromaticity picker plus a
+    // magnitude scalar. Chromaticity is normalized using the max channel; magnitude
+    // is the max-channel value. On any widget change, writes back color * magnitude.
+    //
+    // Designed for atmospheric-coefficient triplets (Base Rayleigh / Base Mie /
+    // Base Ozone / Base Sun Illuminance) where the Vector3's per-channel ratio IS
+    // the visible "color" and the overall magnitude is the user-tunable strength.
+    void renderChromaticityWidget(const char* colorLabel,
+                                  const char* magLabel,
+                                  RtxOption<Vector3>* opt,
+                                  float magSpeed,
+                                  float magMax,
+                                  const char* magFormat,
+                                  const char* colorTooltip,
+                                  const char* magTooltip) {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+
+      const Vector3 v = opt->get();
+      float magnitude = std::max({v.x, v.y, v.z});
+      Vector3 color = (magnitude > 1e-9f)
+                      ? Vector3(v.x / magnitude, v.y / magnitude, v.z / magnitude)
+                      : Vector3(1.0f, 1.0f, 1.0f);
+
+      bool changed = false;
+      if (ImGui::ColorEdit3(colorLabel, &color.x, ImGuiColorEditFlags_NoAlpha)) {
+        changed = true;
+      }
+      if (colorTooltip) RemixGui::SetTooltipToLastWidgetOnHover(colorTooltip);
+
+      if (ImGui::DragFloat(magLabel, &magnitude, magSpeed, 0.0f, magMax, magFormat, sliderFlags)) {
+        changed = true;
+      }
+      if (magTooltip) RemixGui::SetTooltipToLastWidgetOnHover(magTooltip);
+
+      if (changed) {
+        // Clamp normalized color into [0,1] in case the picker returned an
+        // out-of-gamut value (shouldn't happen with ColorEdit3 default flags).
+        color.x = std::max(0.0f, std::min(1.0f, color.x));
+        color.y = std::max(0.0f, std::min(1.0f, color.y));
+        color.z = std::max(0.0f, std::min(1.0f, color.z));
+        opt->setImmediately(Vector3(color.x * magnitude,
+                                    color.y * magnitude,
+                                    color.z * magnitude));
+      }
+    }
   } // anonymous namespace
 
   void showAtmosphereUI() {
@@ -637,10 +684,35 @@ namespace fork_hooks {
           RemixGui::DragFloat("Atmosphere Thickness", &RtxOptions::atmosphereThicknessObject(), 1.0f, 10.0f, 500.0f, "%.0f km", sliderFlags);
           RemixGui::DragFloat("Mie Anisotropy", &RtxOptions::mieAnisotropyObject(), 0.01f, -1.0f, 1.0f, "%.2f", sliderFlags);
 
-          RemixGui::DragFloat3("Base Sun Illuminance", &RtxOptions::sunIlluminanceObject(), 0.1f, 0.0f, 100.0f, "%.1f", sliderFlags);
-          RemixGui::DragFloat3("Base Rayleigh", &RtxOptions::rayleighScatteringObject(), 0.0001f, 0.0f, 0.0001f, "%.6f", sliderFlags);
-          RemixGui::DragFloat3("Base Mie", &RtxOptions::mieScatteringObject(), 0.0001f, 0.0f, 0.0001f, "%.6f", sliderFlags);
-          RemixGui::DragFloat3("Base Ozone", &RtxOptions::ozoneAbsorptionObject(), 0.0001f, 0.0f, 0.01f, "%.6f", sliderFlags);
+          renderChromaticityWidget(
+              "Sun Color (Base)", "Sun Illuminance",
+              &RtxOptions::sunIlluminanceObject(),
+              0.1f, 100.0f, "%.1f",
+              "Sun spectral color (Hillaire base illuminance, chromaticity).",
+              "Sun base illuminance magnitude (overall sun-power level).");
+
+          renderChromaticityWidget(
+              "Air Color (Base)", "Air Scattering Strength",
+              &RtxOptions::rayleighScatteringObject(),
+              0.0005f, 0.1f, "%.4f km\xe2\x81\xbb\xc2\xb9",
+              "Air molecule scattering chromaticity (Rayleigh per-channel scattering coefficients). "
+              "Larger blue = cooler sky.",
+              "Air scattering magnitude. Higher = more atmospheric scattering overall.");
+
+          renderChromaticityWidget(
+              "Dust Color (Base)", "Dust Scattering Strength",
+              &RtxOptions::mieScatteringObject(),
+              0.0005f, 0.05f, "%.4f km\xe2\x81\xbb\xc2\xb9",
+              "Aerosol / dust scattering chromaticity (Mie per-channel coefficients).",
+              "Dust scattering magnitude. Higher = hazier atmosphere.");
+
+          renderChromaticityWidget(
+              "Ozone Tint (Base)", "Ozone Absorption Strength",
+              &RtxOptions::ozoneAbsorptionObject(),
+              0.0001f, 0.05f, "%.5f km\xe2\x81\xbb\xc2\xb9",
+              "Ozone absorption chromaticity (per-channel coefficients). "
+              "Affects twilight color and high-altitude tint.",
+              "Ozone absorption magnitude.");
           RemixGui::DragFloat("Ozone Layer Altitude", &RtxOptions::ozoneLayerAltitudeObject(), 0.5f, 0.0f, 50.0f, "%.1f km", sliderFlags);
           RemixGui::DragFloat("Ozone Layer Width", &RtxOptions::ozoneLayerWidthObject(), 0.5f, 1.0f, 30.0f, "%.1f km", sliderFlags);
 
