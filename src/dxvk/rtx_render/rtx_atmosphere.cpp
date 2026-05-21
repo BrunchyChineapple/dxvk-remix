@@ -386,8 +386,9 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
 
   // Sidereal sky rotation. Default axis (elevation 90, rotation 0) keeps the
   // pre-rotation behavior; non-default values come from rtx.conf or game
-  // plugin pushes. starRotation is the only field expected to change frame-
-  // to-frame, so it is the only one flagged NoSave.
+  // plugin pushes. starRotation is game-drivable per-frame but also persists
+  // when saved (last writer wins during a session; cold start uses the saved
+  // value until any plugin push lands).
   args.starRotation      = RtxOptions::starRotation();
   args.starAxisElevation = RtxOptions::starAxisElevation();
   args.starAxisRotation  = RtxOptions::starAxisRotation();
