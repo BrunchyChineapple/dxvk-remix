@@ -408,19 +408,33 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
 
   // ----- Meteor / shooting star system (fork, 2026-05-21) -----
   //
-  // Streak slots are time-quantized: each slot is 1 second long. We sum across
-  // up to MAX_STREAKS_PER_SECOND active slots to support high shower rates.
+  // Slot system:
+  //   - kSlotsPerSecond is how often we DECIDE whether to spawn a streak.
+  //   - Each spawned streak then lives independently for kStreakLifetime
+  //     seconds (longer than the slot interval so streaks overlap).
+  //   - Travel speed is in chord/second so it feels right regardless of
+  //     slot/lifetime tuning.
+  //
   // Each slot independently decides:
   //   - Whether to spawn (probability ∝ rate / MAX_STREAKS_PER_SECOND)
   //   - Whether it's a fireball (separate roll vs meteorFireballChance)
   //   - Start position (uniform sphere for sporadics; cone around radiant for showers)
   //   - Travel direction (away from radiant for showers; random for sporadics)
   //   - Color (lerp toward random tint by meteorColorVariation)
-  // The slot system replaces the prior single-slot 4-second hardcoded path —
-  // baseRate of 0.25 with MAX_STREAKS_PER_SECOND=8 gives matching density.
+  //
+  // Streaks living longer than kSlotDuration overlap, so high-rate showers
+  // can show many streaks on screen at once. The lookback loop iterates
+  // through enough past slots to cover the longest possible streak lifetime.
   {
-    const int   kMaxStreaksPerSecond = 8;
-    const float kSlotsPerSecond      = float(kMaxStreaksPerSecond);
+    const int   kMaxStreaksPerSecond  = 8;
+    const float kSlotsPerSecond       = float(kMaxStreaksPerSecond);
+    const float kSlotDuration         = 1.0f / kSlotsPerSecond;        // 0.125 s
+    const float kStreakLifetime       = 2.0f;                          // seconds (regular)
+    const float kFireballLifetime     = 3.0f;                          // seconds (slower)
+    const float kStreakSpeedPerSec    = 0.10f;                         // chord/sec (regular)
+    const float kFireballSpeedPerSec  = 0.05f;                         // chord/sec (fireballs)
+    // Lookback covers the longest possible streak lifetime
+    const int   kLookbackSlots        = 24;  // 24 * 0.125s = 3.0s = fireball lifetime
 
     // Effective spawn probability per slot:
     //   total streaks/sec = baseRate + activity * peakRate
@@ -454,17 +468,15 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
     );
     float radiantSpreadRad = args.meteorRadiantSpread * (kPi / 180.0f);
 
-    // Iterate active slots. Each second has kMaxStreaksPerSecond slots; each
-    // slot is kSlotDuration seconds long. We check the slot containing
-    // timeSeconds and the immediately previous one (for cross-slot streak
-    // life — streaks travel ~half a second).
-    const float kSlotDuration = 1.0f / kSlotsPerSecond;
-
-    [unroll] for (int slotOffset = 0; slotOffset < 2; ++slotOffset) {
+    // Iterate through the last kLookbackSlots slot boundaries. Each slot's
+    // spawn decision is deterministic in slotIndex, so it never re-rolls
+    // across frames — frame N and frame N+1 see the same set of active streaks.
+    [unroll] for (int slotOffset = 0; slotOffset < kLookbackSlots; ++slotOffset) {
       float slotStartTime = floor(args.timeSeconds / kSlotDuration) * kSlotDuration
                           - float(slotOffset) * kSlotDuration;
       float slotIndex     = floor(slotStartTime / kSlotDuration);
-      float slotFrac      = saturate((args.timeSeconds - slotStartTime) / kSlotDuration);
+      float elapsed       = args.timeSeconds - slotStartTime;
+      if (elapsed < 0.0f) continue;
 
       // Roll for spawn — gate by per-slot probability
       float spawnRoll = hash31(vec3(slotIndex, 0.0f, 42.0f));
@@ -473,6 +485,10 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
         float typeRoll      = hash31(vec3(slotIndex, 1.0f, 42.0f));
         float fireballRoll  = hash31(vec3(slotIndex, 2.0f, 42.0f));
         bool  isFireball    = fireballRoll < args.meteorFireballChance;
+
+        // Skip streaks whose lifetime has already passed
+        float streakLifetime = isFireball ? kFireballLifetime : kStreakLifetime;
+        if (elapsed > streakLifetime) continue;
 
         // Decide if this is a shower meteor (radiant-biased) or sporadic (random).
         // Probability of shower-type = activity * peakRate / totalRate.
@@ -495,7 +511,7 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
           vec3 tangent = normalize(cross(worldUp, radiantDir));
           vec3 bitan   = cross(radiantDir, tangent);
           streakStart = radiantDir * cos(coneTheta)
-                      + (tangent * cos(conePhi) + bitan * sin(conePhi)) * sin(coneTheta);
+                      + (tangent * cos(conePhi) + bitan * sin(coneTheta)) * sin(coneTheta);
           streakStart = normalize(streakStart);
 
           // Move direction: away from radiant in a slightly randomized direction
@@ -516,12 +532,16 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
           streakMoveDir = normalize(vec3(cos(streakAng) * 0.3f, -0.4f, sin(streakAng) * 0.3f));
         }
 
-        // Fireballs travel slower and brighter; regular streaks travel quickly
-        float travelSpeed = isFireball ? 0.18f : 0.4f;
+        // Streak progress: how far along its lifetime [0, 1]
+        float streakLife = elapsed / streakLifetime;
+
+        // Real-world travel distance (chord/sec * elapsed sec)
+        float speed       = isFireball ? kFireballSpeedPerSec : kStreakSpeedPerSec;
+        float travelDist  = elapsed * speed;
         float streakLen   = args.meteorTrailLength * (isFireball ? 1.6f : 1.0f);
 
-        vec3 headPos = normalize(streakStart + streakMoveDir * slotFrac * travelSpeed);
-        vec3 tailPos = normalize(streakStart + streakMoveDir * (slotFrac * travelSpeed - streakLen));
+        vec3 headPos = normalize(streakStart + streakMoveDir * travelDist);
+        vec3 tailPos = normalize(streakStart + streakMoveDir * (travelDist - streakLen));
 
         vec3 v = normalize(viewDir);
         vec3 segVec = headPos - tailPos;
@@ -541,8 +561,8 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
           float tailFade = t / max(segLen, 0.001f);
           tailFade = pow(tailFade, 1.5f);
 
-          // Slot-time fade — peaks mid-slot, fades at edges
-          float timeFade = sin(slotFrac * kPi);
+          // Lifetime-based fade — peaks mid-life, fades at start and end
+          float timeFade = sin(streakLife * kPi);
 
           // Per-streak color variation. Real meteors range green/blue/red/yellow
           // depending on composition. Generate a randomized tint by perturbing
