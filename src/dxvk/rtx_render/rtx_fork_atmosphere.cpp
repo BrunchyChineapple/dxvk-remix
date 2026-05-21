@@ -478,11 +478,38 @@ namespace fork_hooks {
           }
           RemixGui::SetTooltipToLastWidgetOnHover("Procedural surface preset. Knobs below tune the chosen style.");
 
-          RemixGui::DragFloat("Crater Density",      pCraterDensity,   0.01f, 0.0f, 2.0f, "%.2f", sliderFlags);
-          RemixGui::DragFloat("Surface Contrast",    pSurfaceContrast, 0.01f, 0.0f, 3.0f, "%.2f", sliderFlags);
-          RemixGui::DragFloat("Surface Noise Scale", pNoiseScale,      0.01f, 0.1f, 5.0f, "%.2f", sliderFlags);
-          RemixGui::DragFloat("Dark Side Brightness",pDarkSide,        0.005f,0.0f, 1.0f, "%.3f", sliderFlags);
-          RemixGui::DragFloat("Roughness",           pRoughness,       0.01f, 0.0f, 3.0f, "%.2f", sliderFlags);
+          RemixGui::DragFloat("Crater Density", pCraterDensity, 0.01f, 0.0f, 2.0f, "%.2f", sliderFlags);
+
+          // #8: Detail knob replaces Surface Contrast + Surface Noise Scale.
+          // Detail is transient ImGui state — reconstructed from current Contrast on each
+          // frame. NoiseScale is overwritten by the curve when Detail changes; off-curve
+          // .conf values are preserved on the Contrast side only.
+          //
+          // Curve (two-segment linear hitting three anchors exactly):
+          //   Detail = 0.0 -> Contrast=0.5, NoiseScale=2.0  (smooth, coarse)
+          //   Detail = 1.0 -> Contrast=1.0, NoiseScale=1.0  (default)
+          //   Detail = 2.0 -> Contrast=1.5, NoiseScale=0.5  (punchy, fine)
+          float detail = (pSurfaceContrast->get() - 0.5f) / 0.5f;
+          detail = std::max(0.0f, std::min(2.0f, detail));
+          if (ImGui::DragFloat("Detail", &detail, 0.01f, 0.0f, 2.0f, "%.2f", sliderFlags)) {
+            float newContrast, newNoiseScale;
+            if (detail <= 1.0f) {
+              newContrast   = 0.5f + 0.5f * detail;          // 0.5 -> 1.0
+              newNoiseScale = 2.0f - 1.0f * detail;          // 2.0 -> 1.0
+            } else {
+              newContrast   = 1.0f + 0.5f * (detail - 1.0f); // 1.0 -> 1.5
+              newNoiseScale = 1.0f - 0.5f * (detail - 1.0f); // 1.0 -> 0.5
+            }
+            pSurfaceContrast->setImmediately(newContrast);
+            pNoiseScale->setImmediately(newNoiseScale);
+          }
+          RemixGui::SetTooltipToLastWidgetOnHover(
+              "Combined surface detail: smooth/coarse <- 0.0 ... 1.0 (default) ... 2.0 -> punchy/fine. "
+              "Drives Surface Contrast and Surface Noise Scale via a two-segment linear curve. "
+              "Power users can .conf-tune surfaceContrast / surfaceNoiseScale individually for off-curve combinations.");
+
+          RemixGui::DragFloat("Dark Side Brightness", pDarkSide,  0.005f, 0.0f, 1.0f, "%.3f", sliderFlags);
+          RemixGui::DragFloat("Roughness",            pRoughness, 0.01f,  0.0f, 3.0f, "%.2f", sliderFlags);
           ImGui::TreePop();
         }
 
