@@ -1227,6 +1227,10 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", bool, sunDisc, true, "Include the sun itself in the output.");
     RTX_OPTION("rtx.atmosphere", float, sunSize, 0.545f, "Size of sun disc in degrees.");
     RTX_OPTION("rtx.atmosphere", float, sunIntensity, 1.0f, "Strength of Sun.");
+    // Morrowind override: sunElevation/sunRotation are NoSave because the wrapper
+    // drives them every frame from the game's clock. Upstream made these plain
+    // RTX_OPTIONs so dev-menu tweaks persist; we route through the Derived layer
+    // so per-frame writes don't pollute user.conf.
     RTX_OPTION_FLAG("rtx.atmosphere", float, sunElevation, 15.0f, RtxOptionFlags::NoSave,
                     "Sun angle from horizon in degrees. Game-driven every frame.");
     RTX_OPTION_FLAG("rtx.atmosphere", float, sunRotation, 0.0f, RtxOptionFlags::NoSave,
@@ -1311,11 +1315,11 @@ namespace dxvk {
                "T^2.5, well below cloud body brightness at typical T<0.1 cores while leaving "
                "clear sky (T=1) unaffected. Lower = stars survive thicker clouds; 1.0 = no "
                "extra extinction (pure standard composite).");
-    RTX_OPTION("rtx.atmosphere", float, starAmbientCouplingStrength, 0.01f,
+    RTX_OPTION("rtx.atmosphere", float, starAmbientCouplingStrength, 0.005f,
                "Coupling strength of starlight/airglow into the cloud-march nightLight term. "
                "Adds a faint per-ray ambient based on (nightSkyColor * starBrightness * this) "
                "so cloud bodies lift slightly under starry skies, the same way moon-zenith "
-               "fill brightens cloud bodies near the moon. Default 0.01 = per-mille level; "
+               "fill brightens cloud bodies near the moon. Default 0.005 = sub-per-mille level; "
                "0 disables the coupling.");
 
     // ----- Per-moon parameters (fork) -----
@@ -1351,10 +1355,10 @@ namespace dxvk {
                "Moon " #N " dark-side brightness as fraction of lit side.");                    \
     RTX_OPTION("rtx.atmosphere.moon" #N, float, roughnessAmount##N, 1.0f,                       \
                "Moon " #N " micro-detail surface roughness amplitude.");                        \
-    RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, float, elevation##N, 45.0f, RtxOptionFlags::NoSave,\
-                    "Moon " #N " elevation in degrees. Game-driven every frame.");              \
+    RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, float, elevation##N, 45.0f, RtxOptionFlags::NoSave, \
+                    "Moon " #N " elevation in degrees. Game-driven every frame.");               \
     RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, float, rotation##N, 90.0f, RtxOptionFlags::NoSave, \
-                    "Moon " #N " rotation in degrees. Game-driven every frame.");               \
+                    "Moon " #N " rotation in degrees. Game-driven every frame.");                \
     RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, float, phase##N, 0.5f, RtxOptionFlags::NoSave,    \
                     "Moon " #N " phase [0,1]. Game-driven every frame.")
 
@@ -1449,6 +1453,14 @@ namespace dxvk {
                "Ambient airglow per-moon strength contribution to nightLight. The cloud "
                "volume gets a uniform sky-bounce from each enabled moon scaled by this "
                "constant. Default 0.0015.");
+    RTX_OPTION("rtx.atmosphere", float, moonSilverLiningIntensity, 1.0f,
+               "Master multiplier on the combined cloud-moon silver-lining contribution "
+               "(Lambert diffuse + HG phase). Default 1.0 = current calibrated look. "
+               "Composes with moonCloudDiffuseGain/PhaseGain for ratio tuning.");
+    RTX_OPTION("rtx.atmosphere", float, moonHaloGlowStrength, 1.0f,
+               "Master multiplier on the combined moon halo + ambient airglow contribution. "
+               "Default 1.0 = current calibrated look. Composes with moonHaloMagnitude / "
+               "moonAmbientAirglow for ratio tuning.");
 
     // Cloud parameters (procedural FBM cloud layer)
     // Morrowind override: cloudEnabled stays true because the wrapper drives
@@ -1534,8 +1546,10 @@ namespace dxvk {
                "Mean cloud type across the sky [0,1]: 0=stratus, 0.5=stratocumulus, 1=cumulus.");
     RTX_OPTION("rtx.atmosphere", float, cloudTypeSpread, 0.5f,
                "Spatial variation amplitude for cloud type [0,1]. 0=uniform, 1=full range across the sky.");
-    RTX_OPTION("rtx.atmosphere", float, cloudTypeNoiseScale, 0.01f,
-               "Region size frequency for type noise. Numerically smaller = larger spatial features.");
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeNoiseScale, 0.001f,
+               "Region size frequency for type noise. Numerically smaller = larger spatial features. "
+               "Capped at 0.0034 in the UI because faster variation puts visible 2D-noise cell "
+               "structure at sub-cumulus scales (regular grid of cumulus blobs).");
     // Morrowind override: cloudCoverageMean is NoSave because the wrapper drives
     // it from GetCurrentWeather every frame. Upstream declares this as a plain
     // RTX_OPTION; we route it through the Derived layer so per-frame writes
