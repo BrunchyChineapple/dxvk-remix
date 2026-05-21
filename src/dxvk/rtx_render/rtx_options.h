@@ -1518,8 +1518,10 @@ namespace dxvk {
                "Mean cloud type across the sky [0,1]: 0=stratus, 0.5=stratocumulus, 1=cumulus.");
     RTX_OPTION("rtx.atmosphere", float, cloudTypeSpread, 0.5f,
                "Spatial variation amplitude for cloud type [0,1]. 0=uniform, 1=full range across the sky.");
-    RTX_OPTION("rtx.atmosphere", float, cloudTypeNoiseScale, 0.01f,
-               "Region size frequency for type noise. Numerically smaller = larger spatial features.");
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeNoiseScale, 0.001f,
+               "Region size frequency for type noise. Numerically smaller = larger spatial features. "
+               "Capped at 0.0034 in the UI because faster variation puts visible 2D-noise cell "
+               "structure at sub-cumulus scales (regular grid of cumulus blobs).");
     RTX_OPTION("rtx.atmosphere", float, cloudCoverageMean, 0.85f,
                "Mean cloud coverage across the sky [0,1]: 0=clear, 1=overcast.");
     RTX_OPTION("rtx.atmosphere", float, cloudCoverageSpread, 1.0f,
