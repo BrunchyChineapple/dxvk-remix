@@ -1396,6 +1396,78 @@ namespace dxvk {
                "wash out faint meteors; 1.0 = physically-plausible suppression, 0 = no moon "
                "interaction. Doesn't affect fireballs (they survive moonlit skies).");
 
+    // ----- Aurora Borealis / Australis (fork, 2026-05-21) -----
+    // Procedural simulated aurora rendered in the night sky path. Ground gets
+    // PBR illumination via the existing sky-ambient NEE coupling. Activity is
+    // game-driven from the wrapper (Solstheim baseline + rare Vvardenfell
+    // storms + equinox boost). All other fields persist normally.
+    RTX_OPTION_FLAG("rtx.atmosphere", float, auroraActivity, 0.0f, RtxOptionFlags::NoSave,
+                    "Game-driven [0..1] aurora intensity multiplier. The wrapper drives this "
+                    "based on player location (Solstheim = high, Vvardenfell = rare storms) "
+                    "and the in-game calendar (equinox boost). NoSave so per-frame writes "
+                    "don't pollute user.conf.");
+    RTX_OPTION("rtx.atmosphere", float, auroraIntensity, 1.0f,
+               "User brightness scalar applied on top of activity. 1.0 = calibrated default. "
+               "Higher for stylized brilliance; 0 disables the visual entirely (also disables "
+               "ground illumination).");
+    RTX_OPTION("rtx.atmosphere", float, auroraPoleElevation, 80.0f,
+               "Magnetic-pole axis elevation in degrees. Auroral oval is centered on this "
+               "direction. 80 puts the pole near zenith so the oval rings the upper sky; "
+               "lower values place the oval lower on the horizon.");
+    RTX_OPTION("rtx.atmosphere", float, auroraPoleRotation, 0.0f,
+               "Magnetic-pole azimuth in degrees (0 = north). Combined with "
+               "auroraPoleElevation defines the curtain orientation.");
+    RTX_OPTION("rtx.atmosphere", float, auroraOvalRadius, 22.0f,
+               "Auroral-oval half-angle from the pole, in degrees. 22 is a moderate-latitude "
+               "view where the oval reads as a wide band crossing the upper sky.");
+    RTX_OPTION("rtx.atmosphere", float, auroraOvalThickness, 8.0f,
+               "Half-width of the oval band, in degrees. 8 makes the band ~16° thick "
+               "(a couple times the typical real aurora apparent thickness).");
+    RTX_OPTION("rtx.atmosphere", float, auroraNoiseScale, 2.0f,
+               "Frequency multiplier for the ribbon noise field. Higher = finer ribbons; "
+               "lower = larger coherent curtains.");
+    RTX_OPTION("rtx.atmosphere", float, auroraNoiseThreshold, 0.45f,
+               "Density threshold below which the curtain is invisible. Lower = more aurora "
+               "coverage (busier sky), higher = sparser ribbons.");
+    RTX_OPTION("rtx.atmosphere", float, auroraAnimationSpeed, 0.05f,
+               "Rate at which the curtain morphs over time. 0.05 = subtle minute-scale drift "
+               "(matches real aurora rhythms). 0 freezes the curtain.");
+    RTX_OPTION("rtx.atmosphere", float, auroraRibbonCount, 3.0f,
+               "Number of stacked ribbons (rendered as height-stratified noise octaves). "
+               "Higher = more vertical detail; 3 default gives a clean three-zone look "
+               "(low green / mid gold / high violet).");
+    RTX_OPTION("rtx.atmosphere", float, auroraVerticalGradient, 1.0f,
+               "Strength of the height-based color stratification [0..1]. 1.0 = full "
+               "low/mid/high zoning (Morrowind-flavored). 0 = uniform color (just auroraColorMid).");
+    RTX_OPTION("rtx.atmosphere", float, auroraCloudCouplingStrength, 0.5f,
+               "How strongly aurora tints cloud undersides [0..1]. Real auroras illuminate "
+               "the clouds beneath them with their dominant color. 0 disables.");
+    RTX_OPTION("rtx.atmosphere", float, auroraGroundIlluminationStrength, 1.0f,
+               "NEE-side multiplier on aurora-as-sky-ambient contribution to surface lighting. "
+               "1.0 = physically-plausible (faint but present green/violet cast on snow). "
+               "Higher for stylized exaggeration; 0 disables ground illumination.");
+    RTX_OPTION("rtx.atmosphere", float, auroraStormPulseRate, 0.3f,
+               "Hz of the slow brightness pulse during high-activity periods. Real aurora "
+               "storms exhibit ~5-15 second pulse cycles. 0.3 Hz default = ~3.3s cycle. "
+               "0 disables pulsing.");
+    RTX_OPTION("rtx.atmosphere", float, auroraStormPulseDepth, 0.4f,
+               "Depth of the storm pulse modulation [0..1]. 0.4 means brightness oscillates "
+               "between 60% and 100% during storm periods. 0 = no pulsing.");
+
+    // Morrowind-flavored 3-zone color palette
+    RTX_OPTION("rtx.atmosphere", Vector3, auroraColorLow, Vector3(0.15f, 0.95f, 0.55f),
+               "Lowest aurora curtain band color. Default Daedric jade green (Azura's domain "
+               "tint). Earth's real aurora has 557.7nm O2 green here; we lean into a more "
+               "saturated jade. Real-Earth alternative: Vector3(0.0, 1.0, 0.45).");
+    RTX_OPTION("rtx.atmosphere", Vector3, auroraColorMid, Vector3(0.95f, 0.75f, 0.30f),
+               "Middle aurora curtain band color. Default Velothi gold / Sotha amber — warm "
+               "cream-yellow uncommon on Earth but feels right for Tamriel. Real-Earth "
+               "alternative: Vector3(0.95, 0.4, 0.4) (red O2 at ~250km).");
+    RTX_OPTION("rtx.atmosphere", Vector3, auroraColorHigh, Vector3(0.65f, 0.25f, 0.85f),
+               "Highest aurora curtain band color. Default Telvanni magenta — deep violet "
+               "with a touch of lavender. Real-Earth alternative: Vector3(0.5, 0.2, 0.95) "
+               "(N2 first-positive at very high altitude).");
+
     // ----- Per-moon parameters (fork) -----
     // MAX_MOONS in atmosphere_args.h must equal the number of DECLARE_MOON_OPTIONS
     // invocations below. Morrowind override: moon 0 (Secunda) and moon 1 (Masser)

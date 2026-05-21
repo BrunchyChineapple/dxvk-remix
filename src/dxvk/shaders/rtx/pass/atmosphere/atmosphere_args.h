@@ -229,6 +229,50 @@ struct AtmosphereArgs {
   float padMeteor1;
   float padMeteor2;
 
+  // ----- Aurora Borealis / Australis (fork, 2026-05-21) -----
+  //
+  // Procedural curtain rendered in atmosphere_sky.slangh (camera ray) +
+  // contribution to cloud nightLight (cloud underside green tint) and surface
+  // NEE ambient (faint ground glow).
+  //
+  // Curtain geometry: two sky-direction conditions must hold for a view ray
+  // to "hit" aurora:
+  //   1. Direction lies within an oval band centered on the magnetic-pole
+  //      axis (auroraPoleElevation/Rotation, default near sky-north).
+  //   2. The ribbon noise field is above a threshold at that location.
+  //
+  // Vertical color stratification: three stacked color zones simulating
+  // emission-altitude differences (real aurorae: green oxygen low, red oxygen
+  // high, purple/violet nitrogen highest). Defaults are Morrowind-flavored
+  // (Daedric jade / Velothi gold / Telvanni magenta) but fully tunable.
+  float auroraActivity;                   // Wrapper-driven 0..1 aurora intensity. NoSave.
+  float auroraIntensity;                  // User brightness scalar (multiplied by activity).
+  float auroraPoleElevation;              // Magnetic-pole elevation in degrees. Default 80 (near zenith).
+  float auroraPoleRotation;               // Magnetic-pole azimuth in degrees. Default 0 (north).
+
+  float auroraOvalRadius;                 // Auroral-oval half-angle from pole in degrees. Default 22.
+  float auroraOvalThickness;              // Oval band half-width in degrees. Default 8.
+  float auroraNoiseScale;                 // Noise feature size [0.5..6]. Higher = finer ribbons.
+  float auroraNoiseThreshold;             // Density threshold [0..1]. Lower = more aurora coverage.
+
+  float auroraAnimationSpeed;             // Rate of curtain morphing per second. Default 0.05.
+  float auroraRibbonCount;                // Number of stacked ribbons (rendered as octaves). Default 3.
+  float auroraVerticalGradient;           // Strength of low/mid/high color stratification [0..1].
+  float auroraCloudCouplingStrength;      // How much aurora tints cloud undersides [0..1]. Default 0.5.
+
+  float auroraGroundIlluminationStrength; // NEE-side multiplier on aurora-as-sky-ambient [0..2]. Default 1.0.
+  float auroraStormPulseRate;             // Hz of pulse oscillation during storm activity. Default 0.3.
+  float auroraStormPulseDepth;            // Depth of storm pulse modulation [0..1]. Default 0.4.
+  float padAurora0;                       // 16-byte alignment
+
+  // Three-zone color stack — Morrowind-flavored defaults
+  vec3 auroraColorLow;                    // Lowest curtain band — Daedric jade green by default
+  float padAuroraColor0;
+  vec3 auroraColorMid;                    // Middle band — Velothi gold by default
+  float padAuroraColor1;
+  vec3 auroraColorHigh;                   // Highest band — Telvanni magenta by default
+  float padAuroraColor2;
+
   // ----- Cloud parameters (fork: procedural FBM cloud layer at fixed altitude) -----
   vec3 cloudColor;          // Cloud base color (typically white)
   float cloudDensity;       // Overall opacity/density multiplier

@@ -600,6 +600,124 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
   float airglowHorizonBoost = 1.0f + 0.5f * exp(-viewElevation * 5.0f);
   vec3 airglow = args.nightSkyColor * args.nightSkyBrightness * airglowHorizonBoost;
 
+  // ----- Aurora curtain (fork, 2026-05-21) -----
+  // Procedural aurora rendered as a band-aligned noise field around the
+  // magnetic-pole axis. Three vertically-stacked color zones simulate the
+  // height-stratified emission of real aurorae (low oxygen green / mid
+  // oxygen red / high nitrogen violet — Morrowind-flavored defaults).
+  if (args.auroraActivity > 0.001f && args.auroraIntensity > 0.001f) {
+    // Magnetic-pole direction (Y-up)
+    float poleElevRad = args.auroraPoleElevation * (kPi / 180.0f);
+    float poleRotRad  = args.auroraPoleRotation  * (kPi / 180.0f);
+    vec3 poleDir = vec3(
+      cos(poleElevRad) * cos(poleRotRad),
+      sin(poleElevRad),
+      cos(poleElevRad) * sin(poleRotRad)
+    );
+
+    // Angular distance from view direction to pole (in radians)
+    float cosToPole = clamp(dot(viewDir, poleDir), -1.0f, 1.0f);
+    float angleToPole = acos(cosToPole);
+    float angleToPoleDeg = angleToPole * (180.0f / kPi);
+
+    // Distance from the auroral oval ring (in degrees)
+    float ringDelta = abs(angleToPoleDeg - args.auroraOvalRadius);
+
+    // Soft-edge band membership: 1 at center of oval, 0 outside the band
+    float bandMask = saturate(1.0f - ringDelta / max(args.auroraOvalThickness, 0.5f));
+    bandMask = smoothstep(0.0f, 1.0f, bandMask);
+
+    if (bandMask > 0.001f) {
+      // Compute oval-tangent + radial coordinates so noise maps along the
+      // ribbon's natural axes (curtain-along-band, height-across-band).
+      // Tangent = direction along the oval ring; bitan = radial outward.
+      vec3 worldUp = abs(poleDir.y) < 0.99f ? vec3(0,1,0) : vec3(1,0,0);
+      vec3 ringTangent = normalize(cross(poleDir, worldUp));
+      // Project view onto the oval-local frame
+      vec3 viewProj = viewDir - poleDir * cosToPole;
+      float viewProjLen = length(viewProj);
+      vec2 ovalUV = vec2(0.0f, 0.0f);
+      if (viewProjLen > 0.001f) {
+        vec3 viewTangentDir = viewProj / viewProjLen;
+        // Azimuth around the pole (along-band axis, [-pi..pi])
+        float azimuth = atan2(dot(viewTangentDir, cross(ringTangent, poleDir)),
+                              dot(viewTangentDir, ringTangent));
+        ovalUV.x = azimuth;                                    // along the curtain
+        ovalUV.y = (angleToPoleDeg - args.auroraOvalRadius)    // across the curtain
+                 / max(args.auroraOvalThickness, 0.5f);
+      }
+
+      // Time-animated noise: along-band scrolls slowly, across-band morphs.
+      float t = args.timeSeconds * args.auroraAnimationSpeed;
+      vec2 noiseUV = vec2(
+        ovalUV.x * args.auroraNoiseScale + t * 0.4f,
+        ovalUV.y * args.auroraNoiseScale * 0.7f + t * 0.15f
+      );
+
+      // Accumulate ribbons as octaves with frequency multiplier.
+      // Each octave shifts in frequency and contributes a different vertical
+      // band of the curtain — used to drive vertical color stratification.
+      int ribbonCount = int(clamp(args.auroraRibbonCount, 1.0f, 6.0f));
+      float baseDensity = 0.0f;
+      [unroll(6)] for (int ri = 0; ri < ribbonCount; ++ri) {
+        float freq = 1.0f + float(ri) * 0.7f;
+        baseDensity += fbmNoise2D(noiseUV * freq, 3, 30.0f + float(ri) * 7.0f) / freq;
+      }
+      baseDensity = saturate(baseDensity / float(ribbonCount));
+
+      // Apply density threshold — soft cutoff for sparse vs busy curtain
+      float curtainDensity = saturate((baseDensity - args.auroraNoiseThreshold)
+                                      / max(1.0f - args.auroraNoiseThreshold, 0.001f));
+      curtainDensity = smoothstep(0.0f, 1.0f, curtainDensity);
+
+      if (curtainDensity > 0.001f) {
+        // Vertical color stratification: across-band coordinate maps to
+        // low/mid/high color zones. ovalUV.y in [-1, 1]; remap to [0, 1].
+        float heightCoord = saturate(0.5f + 0.5f * ovalUV.y);
+
+        // Three-zone blend with smooth transitions
+        // Low zone dominates 0..0.5, mid zone 0.3..0.7, high zone 0.5..1
+        vec3 zoneLow  = args.auroraColorLow;
+        vec3 zoneMid  = args.auroraColorMid;
+        vec3 zoneHigh = args.auroraColorHigh;
+
+        // Lerp between zones based on heightCoord, scaled by verticalGradient
+        // (gradient=0 collapses to zoneMid only)
+        float midWeight  = exp(-pow((heightCoord - 0.5f) * 4.0f, 2.0f));
+        float lowWeight  = exp(-pow((heightCoord - 0.0f) * 3.0f, 2.0f));
+        float highWeight = exp(-pow((heightCoord - 1.0f) * 3.0f, 2.0f));
+        float weightSum = lowWeight + midWeight + highWeight;
+        vec3 zonedColor = (zoneLow * lowWeight + zoneMid * midWeight + zoneHigh * highWeight) / max(weightSum, 0.001f);
+        // Lerp toward midColor when verticalGradient is low
+        vec3 finalColor = lerp(zoneMid, zonedColor, saturate(args.auroraVerticalGradient));
+
+        // Storm pulse: gentle brightness oscillation when activity > 0.5 (storms only)
+        float stormFactor = smoothstep(0.5f, 0.9f, args.auroraActivity);
+        float pulsePhase = args.timeSeconds * args.auroraStormPulseRate * 2.0f * kPi;
+        float pulse = 1.0f - args.auroraStormPulseDepth * stormFactor * (0.5f + 0.5f * sin(pulsePhase));
+
+        // Vertical brightness profile: brighter at the center of the curtain,
+        // softer at top and bottom edges
+        float vertProfile = pow(1.0f - abs(ovalUV.y), 1.5f);
+
+        // Faint horizon extinction (atmospheric extinction near horizon)
+        float hzAuroraExt = smoothstep(-0.1f, 0.2f, viewDir.y);
+
+        vec3 auroraColor = finalColor
+                         * curtainDensity
+                         * bandMask
+                         * vertProfile
+                         * pulse
+                         * hzAuroraExt
+                         * args.auroraActivity
+                         * args.auroraIntensity
+                         * 1.5f;  // base luminance scalar
+
+        airglow += auroraColor;
+      }
+    }
+  }
+
   starsOut   = stars   * nightFactor;
   airglowOut = airglow * nightFactor;
 }

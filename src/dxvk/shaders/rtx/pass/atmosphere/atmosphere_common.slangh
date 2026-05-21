@@ -853,7 +853,30 @@ vec3 sampleSkyAmbientForVolume(vec3 dirYUp,
   // independently of the overall sky-ambient strength. 1.0 = full cloud
   // occlusion (physical baseline); 0.0 = sky ambient ignores clouds.
   float cloudFactor = lerp(1.0f, cloudTrans, args.cloudSkyAmbientCloudOcclusionStrength);
-  return skyRadiance * cloudFactor;
+  vec3 result = skyRadiance * cloudFactor;
+
+  // Aurora ground illumination (fork, 2026-05-21).
+  // Real auroras cast a faint colored glow on surfaces below them. We add a
+  // small uniform contribution to sky ambient when activity is non-zero —
+  // direction-independent because the curtain spans a wide sector of upper
+  // sky and the glow integrates over the full visible portion. Tinted by the
+  // mid-band color (the dominant emission color in real aurorae). Sun-elevation
+  // gated via sunDirection.y so it disappears during the day. Cloud-occluded
+  // by the same factor that affects regular sky ambient.
+  if (args.auroraActivity > 0.001f && args.auroraIntensity > 0.001f
+      && args.auroraGroundIlluminationStrength > 0.001f) {
+    float sunBelow = saturate(-args.sunDirection.y * 10.0f);  // 1 when sun > 6° below horizon
+    vec3 auroraAmbient = args.auroraColorMid
+                       * args.auroraActivity
+                       * args.auroraIntensity
+                       * args.auroraGroundIlluminationStrength
+                       * sunBelow
+                       * cloudFactor
+                       * 0.05f;  // calibrated faint contribution
+    result += auroraAmbient;
+  }
+
+  return result;
 }
 
 // Sample the full-sphere sky-view LUT for the sky-miss radiance path. The LUT
