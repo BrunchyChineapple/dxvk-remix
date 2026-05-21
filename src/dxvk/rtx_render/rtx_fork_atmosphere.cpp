@@ -734,104 +734,6 @@ namespace fork_hooks {
       }
     }
 
-    void renderAuroraUI() {
-      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
-      if (ImGui::TreeNode("Aurora")) {
-        RemixGui::Checkbox("Enable Aurora", &RtxOptions::auroraEnabledObject());
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Master toggle. When off, no aurora is rendered regardless of activity. "
-            "Disables the curtain visual, cloud underside tinting, and ground glow.");
-        ImGui::Separator();
-        ImGui::TextDisabled("Activity (game-driven)");
-        ImGui::Text("Current activity: %.3f", RtxOptions::auroraActivity());
-        ImGui::TextWrapped("Driven by player location (Solstheim baseline + rare Vvardenfell "
-                           "storms), in-game calendar (equinox boost), and time of night.");
-
-        ImGui::Separator();
-        ImGui::TextDisabled("Strength");
-        RemixGui::DragFloat("Intensity", &RtxOptions::auroraIntensityObject(),
-                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "User brightness scalar applied on top of activity. 1.0 = calibrated default. "
-            "0 disables both visual and ground illumination.");
-        RemixGui::DragFloat("Cloud Coupling Strength", &RtxOptions::auroraCloudCouplingStrengthObject(),
-                            0.05f, 0.0f, 2.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "How strongly aurora tints cloud undersides. 0 disables cloud tinting.");
-        RemixGui::DragFloat("Ground Illumination Strength", &RtxOptions::auroraGroundIlluminationStrengthObject(),
-                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "NEE-side multiplier on aurora-as-sky-ambient contribution to surface lighting. "
-            "1.0 = physically-plausible faint glow on the ground. 0 disables ground glow.");
-
-        ImGui::Separator();
-        ImGui::TextDisabled("Curtain Geometry");
-        RemixGui::DragFloat("Pole Elevation", &RtxOptions::auroraPoleElevationObject(),
-                            1.0f, 0.0f, 90.0f, "%.0f°", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Magnetic-pole axis elevation. 80° puts the pole near zenith so the oval "
-            "rings the upper sky; lower values place the oval lower.");
-        RemixGui::DragFloat("Pole Rotation", &RtxOptions::auroraPoleRotationObject(),
-                            1.0f, 0.0f, 360.0f, "%.0f°", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover("Magnetic-pole azimuth (0 = north).");
-        RemixGui::DragFloat("Oval Radius", &RtxOptions::auroraOvalRadiusObject(),
-                            1.0f, 5.0f, 60.0f, "%.0f°", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Auroral-oval half-angle from the pole. 22° = moderate-latitude wide-band view.");
-        RemixGui::DragFloat("Oval Thickness", &RtxOptions::auroraOvalThicknessObject(),
-                            0.5f, 1.0f, 30.0f, "%.1f°", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover("Half-width of the oval band.");
-
-        ImGui::Separator();
-        ImGui::TextDisabled("Curtain Texture");
-        RemixGui::DragFloat("Noise Scale", &RtxOptions::auroraNoiseScaleObject(),
-                            0.1f, 0.5f, 6.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Frequency of the ribbon noise field. Higher = finer ribbons.");
-        RemixGui::DragFloat("Density Threshold", &RtxOptions::auroraNoiseThresholdObject(),
-                            0.01f, 0.0f, 0.95f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Density cutoff for visible ribbons. Lower = more aurora coverage.");
-        RemixGui::DragFloat("Ribbon Count", &RtxOptions::auroraRibbonCountObject(),
-                            1.0f, 1.0f, 6.0f, "%.0f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover("Number of stacked ribbons / vertical color zones.");
-        RemixGui::DragFloat("Animation Speed", &RtxOptions::auroraAnimationSpeedObject(),
-                            0.005f, 0.0f, 1.0f, "%.3f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Rate of curtain morphing per second. 0.05 = subtle minute-scale drift.");
-
-        ImGui::Separator();
-        ImGui::TextDisabled("Color Palette");
-        RemixGui::DragFloat("Vertical Gradient", &RtxOptions::auroraVerticalGradientObject(),
-                            0.05f, 0.0f, 1.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Strength of low/mid/high color stratification. 1 = full 3-zone blend, "
-            "0 = uniform mid-color.");
-        RemixGui::ColorEdit3("Low (Daedric Jade)",   &RtxOptions::auroraColorLowObject());
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Lowest curtain band color. Default Daedric jade green.");
-        RemixGui::ColorEdit3("Mid (Velothi Gold)",   &RtxOptions::auroraColorMidObject());
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Middle curtain band color. Default Velothi gold / Sotha amber.");
-        RemixGui::ColorEdit3("High (Telvanni Magenta)", &RtxOptions::auroraColorHighObject());
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Highest curtain band color. Default Telvanni magenta.");
-
-        ImGui::Separator();
-        ImGui::TextDisabled("Storm Pulsing");
-        RemixGui::DragFloat("Pulse Rate (Hz)", &RtxOptions::auroraStormPulseRateObject(),
-                            0.05f, 0.0f, 3.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Frequency of brightness oscillation during storm activity (>0.5).");
-        RemixGui::DragFloat("Pulse Depth", &RtxOptions::auroraStormPulseDepthObject(),
-                            0.05f, 0.0f, 1.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "How much storm pulses modulate brightness. 0 = no pulsing.");
-
-        ImGui::TreePop();
-      }
-    }
-
     void renderMoonGlobalLightingUI() {
       constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
       if (ImGui::TreeNode("Global Lighting")) {
@@ -1072,7 +974,6 @@ namespace fork_hooks {
         renderMilkyWayUI();
         renderStarAppearanceUI();
         renderMeteorsUI();
-        renderAuroraUI();
 
         ImGui::TreePop();
       }

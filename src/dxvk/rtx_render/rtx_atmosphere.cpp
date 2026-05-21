@@ -310,12 +310,6 @@ namespace {
     // the sky / cloud LUTs (meteors render in the runtime-miss path), so
     // normalize it out of the cache key.
     args.meteorShowerActivity        = 0.0f;
-    // Aurora activity changes per-frame from the wrapper. The visual is
-    // composited in the runtime-miss path; the only LUT influence is via the
-    // ground-illumination NEE coupling which we accept as a cache miss when
-    // it changes. Normalize the activity field out of the cache key — coupling
-    // strength + colors stay in.
-    args.auroraActivity              = 0.0f;
   }
 } // anonymous namespace
 
@@ -469,31 +463,6 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.padMeteor0                  = 0.0f;
   args.padMeteor1                  = 0.0f;
   args.padMeteor2                  = 0.0f;
-
-  // ----- Aurora Borealis (fork, 2026-05-21) -----
-  args.auroraEnabled                   = RtxOptions::auroraEnabled() ? 1.0f : 0.0f;
-  args.auroraActivity                  = RtxOptions::auroraActivity();
-  args.auroraIntensity                 = RtxOptions::auroraIntensity();
-  args.auroraPoleElevation             = RtxOptions::auroraPoleElevation();
-  args.auroraPoleRotation              = RtxOptions::auroraPoleRotation();
-  args.auroraOvalRadius                = RtxOptions::auroraOvalRadius();
-  args.auroraOvalThickness             = RtxOptions::auroraOvalThickness();
-  args.auroraNoiseScale                = RtxOptions::auroraNoiseScale();
-  args.auroraNoiseThreshold            = RtxOptions::auroraNoiseThreshold();
-  args.auroraAnimationSpeed            = RtxOptions::auroraAnimationSpeed();
-  args.auroraRibbonCount               = RtxOptions::auroraRibbonCount();
-  args.auroraVerticalGradient          = RtxOptions::auroraVerticalGradient();
-  args.auroraCloudCouplingStrength     = RtxOptions::auroraCloudCouplingStrength();
-  args.auroraGroundIlluminationStrength = RtxOptions::auroraGroundIlluminationStrength();
-  args.auroraStormPulseRate            = RtxOptions::auroraStormPulseRate();
-  args.auroraStormPulseDepth           = RtxOptions::auroraStormPulseDepth();
-  // padAurora0 retired — slot now holds auroraEnabled toggle
-  args.auroraColorLow                  = RtxOptions::auroraColorLow();
-  args.padAuroraColor0                 = 0.0f;
-  args.auroraColorMid                  = RtxOptions::auroraColorMid();
-  args.padAuroraColor1                 = 0.0f;
-  args.auroraColorHigh                 = RtxOptions::auroraColorHigh();
-  args.padAuroraColor2                 = 0.0f;
 
   // Cloud parameters
   {
