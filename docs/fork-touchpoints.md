@@ -553,6 +553,9 @@ initializer list and can't be lifted into a separate TU.
 - **Inline tweak** at `RtxOptions` class body (Phase 2 default migration) — net 0 LOC, value/text changes only.
   *Phase 2 (2026-05-08) shifts the per-moon `brightness##N` default from 4.0 → 1.0 (physical neutral; was magic-number magnitude-cheat) and the per-moon `color##N` default from (0.85, 0.87, 0.92) → (0.12, 0.12, 0.12) (neutral lunar Bond albedo; the prior cool-blue tint was magnitude-cheating). Retires the `cloudMoonBrightness` RTX_OPTION (its job -- scaling the cloud path's magic-number magnitude -- was eliminated by the Phase 2 unified physical irradiance scaffold). See `2026-05-08-moon-physical-irradiance-design.md`.*
 
+- **Inline tweak** at `RtxOptions` class body (cloud-look master multipliers) — +8 LOC.
+  *Sky/moon ImGui simplification pass (2026-05-21) added `moonSilverLiningIntensity` and `moonHaloGlowStrength` RTX_OPTIONs (both default 1.0). Applied C++-side in `RtxAtmosphere::getAtmosphereArgs()` as multipliers on the existing cloud-look + halo + airglow knob values, so the five Phase-3-Task-2 fine knobs collapse to three ImGui sliders (Silver Lining Intensity / Sharpness / Halo Glow) while the underlying ratio constants remain `.conf`-tunable. Shaders unchanged — masters apply at args population. Default 1.0 = byte-identical to pre-2026-05-21 behavior. See `2026-05-20-sky-moon-imgui-persistence-and-reorg-design.md`.*
+
 - **Inline tweak** at `(file scope)` (weather header include) -- 1-line addition near the existing `rtx_fork_*.h` includes.
   *Adds `#include "rtx_fork_weather.h"` so the `DECLARE_ALL_WEATHER_PRESETS()` macro is in scope before it is used inside the `RtxOptions` class body.*
 
