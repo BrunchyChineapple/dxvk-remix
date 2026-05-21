@@ -621,6 +621,62 @@ namespace fork_hooks {
         ImGui::TreePop();
       }
     }
+
+    void renderMoonGlobalLightingUI() {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+      if (ImGui::TreeNode("Global Lighting")) {
+        RemixGui::DragFloat("Atmospheric Coupling", &RtxOptions::moonAtmosphericCouplingStrengthObject(),
+                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Multiplier on the moon's contribution to atmospheric scattering. "
+            "0 = no blue-dome around the moon; 1 = default; >1 = exaggerated.");
+
+        RemixGui::DragFloat("NEE Strength", &RtxOptions::moonNeeStrengthObject(),
+                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "World-side master multiplier on direct moon lighting (surface NEE + cloud + future volumetric).");
+
+        RemixGui::DragFloat("Surface Brightness", &RtxOptions::surfaceMoonBrightnessObject(),
+                            1.0f, 0.0f, 200.0f, "%.1f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Per-path multiplier on surface NEE (ground moonlight).");
+
+        RemixGui::DragFloat("Cloud Brightness", &RtxOptions::cloudMoonBrightnessObject(),
+                            0.1f, 0.0f, 50.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Per-path multiplier on cloud-moon lighting (silver-lining + ambient airglow).");
+
+        RemixGui::DragFloat("Halo Brightness", &RtxOptions::haloMoonBrightnessObject(),
+                            0.5f, 0.0f, 100.0f, "%.1f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Per-path multiplier on the disk halo Gaussian glow.");
+        ImGui::TreePop();
+      }
+    }
+
+    void renderMoonCloudLookUI() {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+      if (ImGui::TreeNode("Cloud-Look & Halo Shape")) {
+        RemixGui::DragFloat("Silver Lining Intensity", &RtxOptions::moonSilverLiningIntensityObject(),
+                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness of the cloud glow right in front of the moon. Master multiplier "
+            "on silver-lining contribution (Lambert diffuse + HG phase). 0 = no silver lining. "
+            "1 = default. Power users can .conf-tune moonCloudDiffuseGain / moonCloudPhaseGain for ratio.");
+
+        RemixGui::DragFloat("Silver Lining Sharpness", &RtxOptions::moonCloudAnisotropyObject(),
+                            0.01f, -1.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Tightness of the silver-lining glow peak. Higher = sharper pinpoint; lower = softer falloff. "
+            "Henyey-Greenstein g for cloud-moon forward scatter. Default 0.85.");
+
+        RemixGui::DragFloat("Halo Glow", &RtxOptions::moonHaloGlowStrengthObject(),
+                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness of the disk halo + ambient airglow around the moon. Master multiplier. "
+            "0 = no halo / airglow. 1 = default. Power users can .conf-tune moonHaloMagnitude / "
+            "moonAmbientAirglow for ratio.");
+        ImGui::TreePop();
+      }
+    }
   } // anonymous namespace
 
   void showAtmosphereUI() {
@@ -803,93 +859,10 @@ namespace fork_hooks {
         ImGui::TreePop();
       }
 
-      // ----- Moons tree (fork) -----
+      // ----- Moons tree (fork, restructured) -----
       if (ImGui::TreeNode("Moons")) {
-        // Global moon-strength sliders apply across all moons. Per-moon enable +
-        // appearance lives inside renderMoonUI below.
-        RemixGui::DragFloat("Atmospheric Coupling",
-                            &RtxOptions::moonAtmosphericCouplingStrengthObject(),
-                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Multiplier on the moon's contribution to atmospheric scattering. "
-            "0 = no blue-dome around the moon (sky stays pure black); 1 = default; "
-            ">1 = exaggerated.");
-
-        RemixGui::DragFloat("NEE Strength",
-                            &RtxOptions::moonNeeStrengthObject(),
-                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "World-side master multiplier on direct moon lighting (surface NEE + "
-            "cloud illumination + future volumetric). 0 = moon does not light the "
-            "world; 1 = default physical-baseline; >1 = brighten across all world-"
-            "side paths simultaneously. Per-path fine-tuning via the three sliders "
-            "below.");
-
-        RemixGui::DragFloat("Surface Brightness",
-                            &RtxOptions::surfaceMoonBrightnessObject(),
-                            1.0f, 0.0f, 200.0f, "%.1f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Per-path stylistic multiplier on surface NEE (ground moonlight). "
-            "Default 50.0 = user-tested visibility baseline under FNV tonemapper "
-            "at m.brightness=1.0. Set to 1.0 for physically-pure (very dim).");
-
-        RemixGui::DragFloat("Cloud Brightness",
-                            &RtxOptions::cloudMoonBrightnessObject(),
-                            0.1f, 0.0f, 50.0f, "%.2f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Per-path stylistic multiplier on cloud-moon lighting (directional silver-"
-            "lining + ambient airglow). Default 2.0 = user-tested baseline at "
-            "m.brightness=1.0. Set to 1.0 for physically-pure; higher for stronger "
-            "silver-lining peak on the cloud directly in front of the moon.");
-
-        RemixGui::DragFloat("Halo Brightness",
-                            &RtxOptions::haloMoonBrightnessObject(),
-                            0.5f, 0.0f, 100.0f, "%.1f", sliderFlags);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Per-path stylistic multiplier on the disk halo Gaussian glow. "
-            "Default 15.0 = user-tested baseline at m.brightness=1.0. "
-            "Set to 1.0 for physically-pure.");
-
-        if (ImGui::TreeNode("Cloud-Look & Halo Shape")) {
-          RemixGui::DragFloat("Cloud Diffuse Gain",
-                              &RtxOptions::moonCloudDiffuseGainObject(),
-                              0.01f, 0.0f, 1.0f, "%.3f", sliderFlags);
-          RemixGui::SetTooltipToLastWidgetOnHover(
-              "Cloud-moon Lambert diffuse weight. Lower = stronger silver-lining "
-              "contrast (off-axis clouds darker); higher = more uniform cloud "
-              "lighting. Default 0.10.");
-
-          RemixGui::DragFloat("Cloud Phase Gain",
-                              &RtxOptions::moonCloudPhaseGainObject(),
-                              0.01f, 0.0f, 2.0f, "%.3f", sliderFlags);
-          RemixGui::SetTooltipToLastWidgetOnHover(
-              "Cloud-moon HG phase weight. Higher = brighter silver-lining peak "
-              "on cloud directly in front of moon. Default 0.30.");
-
-          RemixGui::DragFloat("Cloud Anisotropy",
-                              &RtxOptions::moonCloudAnisotropyObject(),
-                              0.01f, -1.0f, 1.0f, "%.3f", sliderFlags);
-          RemixGui::SetTooltipToLastWidgetOnHover(
-              "HG anisotropy for cloud-moon forward scatter. Higher = sharper "
-              "silver-lining peak; lower = softer falloff. Default 0.85.");
-
-          RemixGui::DragFloat("Halo Magnitude (shape)",
-                              &RtxOptions::moonHaloMagnitudeObject(),
-                              0.0005f, 0.0f, 0.05f, "%.4f", sliderFlags);
-          RemixGui::SetTooltipToLastWidgetOnHover(
-              "Disk halo Gaussian shape strength. Use Halo Brightness above for "
-              "the tonemapper-correction multiplier; this is the underlying shape "
-              "constant. Default 0.0015.");
-
-          RemixGui::DragFloat("Ambient Airglow",
-                              &RtxOptions::moonAmbientAirglowObject(),
-                              0.0005f, 0.0f, 0.05f, "%.4f", sliderFlags);
-          RemixGui::SetTooltipToLastWidgetOnHover(
-              "Ambient airglow per-moon strength contribution to cloud volume "
-              "background luminance. Default 0.0015.");
-
-          ImGui::TreePop();
-        }
+        renderMoonGlobalLightingUI();
+        renderMoonCloudLookUI();
 
         for (int i = 0; i < static_cast<int>(MAX_MOONS); ++i) {
           renderMoonUI(i);
