@@ -601,162 +601,174 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
   vec3 airglow = args.nightSkyColor * args.nightSkyBrightness * airglowHorizonBoost;
 
   // ----- Aurora curtain (fork, 2026-05-21) -----
-  // Procedural aurora rendered as a band-aligned noise field around the
-  // magnetic-pole axis. Three vertically-stacked color zones simulate the
-  // height-stratified emission of real aurorae (low oxygen green / mid
-  // oxygen red / high nitrogen violet — Morrowind-flavored defaults).
+  // Aurora rendered using the standard "plane projection" technique used in
+  // games and demoscene since the early 2000s. The math:
+  //   1. Aurora is a 3D emissive sheet hanging at altitude H above the player
+  //      (~100km in real life, scaled to a unit-sphere convention here).
+  //   2. We trace each view ray UPWARD until it intersects this horizontal
+  //      plane at height H, getting a 2D ground-projected hit point (x, z).
+  //   3. Sample noise on (x, z) — adjacent rays hitting nearby plane points
+  //      produces the perspective-foreshortened curtain look automatically.
+  //   4. Multiple "altitude shells" sampled at different heights produce
+  //      vertical stratification because each shell projects to a different
+  //      noise location for the same view ray.
+  //
+  // Key advantage over the prior pole-relative approach: vertical curtain
+  // rays form NATURALLY from perspective on the plane — no anisotropic noise
+  // tricks required. This is how every working aurora shader does it.
   if (args.auroraEnabled > 0.5f && args.auroraActivity > 0.001f && args.auroraIntensity > 0.001f) {
-    // Magnetic-pole direction (Y-up)
-    float poleElevRad = args.auroraPoleElevation * (kPi / 180.0f);
-    float poleRotRad  = args.auroraPoleRotation  * (kPi / 180.0f);
-    vec3 poleDir = vec3(
-      cos(poleElevRad) * cos(poleRotRad),
-      sin(poleElevRad),
-      cos(poleElevRad) * sin(poleRotRad)
-    );
+    // View ray must point upward (above horizon) — aurora hangs above us
+    if (viewDir.y > 0.02f) {
+      // Project to two altitude shells; each shell contributes a color zone.
+      // Shell heights are relative units (we don't actually use km — the noise
+      // scale knob handles real-world calibration).
+      const float kAuroraHeightLow  = 1.0f;   // bottom of curtain
+      const float kAuroraHeightMid  = 1.4f;
+      const float kAuroraHeightHigh = 1.8f;   // top of curtain
 
-    // Angular distance from view direction to pole (in radians)
-    float cosToPole = clamp(dot(viewDir, poleDir), -1.0f, 1.0f);
-    float angleToPole = acos(cosToPole);
-    float angleToPoleDeg = angleToPole * (180.0f / kPi);
-
-    // Distance from the auroral oval ring (in degrees)
-    float ringDelta = abs(angleToPoleDeg - args.auroraOvalRadius);
-
-    // Soft-edge band membership: 1 at center of oval, 0 outside the band
-    float bandMask = saturate(1.0f - ringDelta / max(args.auroraOvalThickness, 0.5f));
-    bandMask = smoothstep(0.0f, 1.0f, bandMask);
-
-    if (bandMask > 0.001f) {
-      // Compute oval-tangent + radial coordinates so noise maps along the
-      // ribbon's natural axes (curtain-along-band, height-across-band).
-      // Tangent = direction along the oval ring; bitan = radial outward.
-      vec3 worldUp = abs(poleDir.y) < 0.99f ? vec3(0,1,0) : vec3(1,0,0);
-      vec3 ringTangent = normalize(cross(poleDir, worldUp));
-      // Project view onto the oval-local frame
-      vec3 viewProj = viewDir - poleDir * cosToPole;
-      float viewProjLen = length(viewProj);
-      vec2 ovalUV = vec2(0.0f, 0.0f);
-      if (viewProjLen > 0.001f) {
-        vec3 viewTangentDir = viewProj / viewProjLen;
-        // Azimuth around the pole (along-band axis, [-pi..pi])
-        float azimuth = atan2(dot(viewTangentDir, cross(ringTangent, poleDir)),
-                              dot(viewTangentDir, ringTangent));
-        ovalUV.x = azimuth;                                    // along the curtain
-        ovalUV.y = (angleToPoleDeg - args.auroraOvalRadius)    // across the curtain
-                 / max(args.auroraOvalThickness, 0.5f);
-      }
-
-      // Time-animated noise: along-band scrolls slowly, across-band morphs.
       float t = args.timeSeconds * args.auroraAnimationSpeed;
 
-      // Real aurora structure has TWO scales:
-      //   - Coarse horizontal: wide bright clusters separated by quiet gaps.
-      //     Drives where curtains EXIST. Low frequency along band.
-      //   - Fine vertical: thin tall rays inside each cluster — the iconic
-      //     "pencil" structure caused by parallel field-line emission.
-      // Each scale is computed independently and multiplied together so we
-      // get clusters of vertical rays rather than a uniform field of noise.
+      // Pole rotation acts as the "magnetic-north" wind direction —
+      // curtains drift along this axis. Pole elevation gates how much the
+      // curtain band tilts (90 = horizontal sheet directly overhead, 0 = no
+      // band, useful as a master fade).
+      float poleRotRad = args.auroraPoleRotation * (kPi / 180.0f);
+      vec2 driftDir = vec2(cos(poleRotRad), sin(poleRotRad));
 
-      // Horizontal cluster mask — controls where curtains exist.
-      // Low frequency along azimuth, even slower across the band.
-      float clusterFreq = args.auroraNoiseScale * 0.6f;
-      vec2 clusterUV = vec2(
-        ovalUV.x * clusterFreq + t * 0.3f,
-        ovalUV.y * clusterFreq * 0.5f + t * 0.08f
-      );
-      float clusterMask = fbmNoise2D(clusterUV, 3, 30.0f);
-      // Sharpen so we get distinct curtains with gaps between them
-      clusterMask = saturate((clusterMask - 0.42f) * 2.5f);
-      clusterMask = smoothstep(0.0f, 1.0f, clusterMask);
+      // Helper: project ray to plane at height h, return 2D hit point (x, z)
+      // and the distance traveled (used for atmospheric extinction).
+      // Note: viewDir is in Y-up space; we treat (x, z) as the ground plane.
+      // Since viewDir is unit-length and viewDir.y > 0, ray reaches plane at:
+      //   t_hit = h / viewDir.y
+      //   hit  = viewDir * t_hit
+      // 2D coords are hit.xz; distance is t_hit.
 
-      // Vertical ray structure — high frequency vertical rays inside clusters
-      float rayFreq = args.auroraNoiseScale * 4.0f;
-      vec2 rayUV = vec2(
-        ovalUV.x * rayFreq + t * 0.5f,
-        ovalUV.y * 1.5f + t * 0.2f  // low frequency across-band so rays stay tall
-      );
-      float rayDensity = fbmNoise2D(rayUV, 3, 50.0f);
-      // Multiple per-octave ray layers shift independently for shimmer
-      int ribbonCount = int(clamp(args.auroraRibbonCount, 1.0f, 6.0f));
-      float layeredRays = 0.0f;
-      [unroll(6)] for (int ri = 0; ri < ribbonCount; ++ri) {
-        vec2 layerUV = vec2(
-          ovalUV.x * rayFreq * (1.0f + float(ri) * 0.3f) + t * (0.4f + float(ri) * 0.1f) + float(ri) * 11.0f,
-          ovalUV.y * 1.5f + t * 0.15f + float(ri) * 7.0f
-        );
-        layeredRays += fbmNoise2D(layerUV, 2, 40.0f) / float(ribbonCount);
+      // Sample three altitude shells, each contributes a color zone.
+      // Use rotated/scaled UVs per shell so each height has independent noise.
+      float densityLow  = 0.0f;
+      float densityMid  = 0.0f;
+      float densityHigh = 0.0f;
+      float anyDensity  = 0.0f;
+
+      // Shared per-shell sampler: cluster mask × ray detail
+      float scale = max(args.auroraNoiseScale, 0.1f);
+
+      // --- Low shell (curtain bottom — green, sharp lower edge) ---
+      {
+        float tHit = kAuroraHeightLow / viewDir.y;
+        vec2 hit = vec2(viewDir.x, viewDir.z) * tHit;
+        // Drift along magnetic axis with time
+        vec2 uv = (hit * scale * 0.04f) + driftDir * t;
+
+        // Cluster mask — large-scale "where are the curtains"
+        float cluster = fbmNoise2D(uv * 0.6f, 3, 40.0f);
+        cluster = saturate((cluster - 0.40f) * 2.4f);
+        // Detail rays — sharp variation within clusters
+        float detail = fbmNoise2D(uv * 2.5f + vec2(t * 0.6f, t * 0.2f), 3, 60.0f);
+        detail = saturate((detail - 0.42f) * 2.0f);
+        densityLow = cluster * detail;
+        // Threshold soft cutoff
+        densityLow = saturate((densityLow - args.auroraNoiseThreshold)
+                              / max(1.0f - args.auroraNoiseThreshold, 0.001f));
+        anyDensity = max(anyDensity, densityLow);
       }
-      float rayMask = saturate((layeredRays - 0.42f) * 3.0f);
-      rayMask = pow(rayMask, 1.4f);
 
-      // Combine: rays only appear where clusters say YES
-      float baseDensity = clusterMask * rayMask;
+      // --- Mid shell (curtain body — gold/amber) ---
+      {
+        float tHit = kAuroraHeightMid / viewDir.y;
+        vec2 hit = vec2(viewDir.x, viewDir.z) * tHit;
+        // Slight rotation + offset so mid layer doesn't lock-step with low
+        vec2 uv = (hit * scale * 0.04f) + driftDir * t * 0.85f + vec2(13.7f, 5.1f);
 
-      // Apply density threshold — soft cutoff for sparse vs busy curtain
-      float curtainDensity = saturate((baseDensity - args.auroraNoiseThreshold)
-                                      / max(1.0f - args.auroraNoiseThreshold, 0.001f));
-      curtainDensity = smoothstep(0.0f, 1.0f, curtainDensity);
+        float cluster = fbmNoise2D(uv * 0.55f, 3, 35.0f);
+        cluster = saturate((cluster - 0.40f) * 2.2f);
+        float detail = fbmNoise2D(uv * 2.2f + vec2(t * 0.4f, t * 0.3f), 3, 55.0f);
+        detail = saturate((detail - 0.42f) * 1.8f);
+        densityMid = cluster * detail;
+        densityMid = saturate((densityMid - args.auroraNoiseThreshold)
+                              / max(1.0f - args.auroraNoiseThreshold, 0.001f));
+        anyDensity = max(anyDensity, densityMid);
+      }
 
-      if (curtainDensity > 0.001f) {
-        // Vertical color stratification: across-band coordinate maps to
-        // low/mid/high color zones. ovalUV.y in [-1, 1]; remap to [0, 1].
-        // With pole BELOW horizon: ovalUV.y = -1 is the inner edge of the oval
-        // (lower in sky = closer to horizon), +1 is outer (higher in sky).
-        // Real aurora: green at LOW altitude (inner/lower), red mid, violet HIGH.
-        float heightCoord = saturate(0.5f + 0.5f * ovalUV.y);
+      // --- High shell (curtain top — magenta, soft fadeout) ---
+      {
+        float tHit = kAuroraHeightHigh / viewDir.y;
+        vec2 hit = vec2(viewDir.x, viewDir.z) * tHit;
+        vec2 uv = (hit * scale * 0.04f) + driftDir * t * 0.7f + vec2(31.2f, 17.9f);
 
-        // Three-zone blend with smooth transitions
-        vec3 zoneLow  = args.auroraColorLow;
-        vec3 zoneMid  = args.auroraColorMid;
-        vec3 zoneHigh = args.auroraColorHigh;
+        float cluster = fbmNoise2D(uv * 0.5f, 3, 30.0f);
+        cluster = saturate((cluster - 0.40f) * 2.0f);
+        float detail = fbmNoise2D(uv * 1.8f + vec2(t * 0.3f, t * 0.4f), 3, 50.0f);
+        detail = saturate((detail - 0.45f) * 1.6f);
+        densityHigh = cluster * detail;
+        densityHigh = saturate((densityHigh - args.auroraNoiseThreshold)
+                               / max(1.0f - args.auroraNoiseThreshold, 0.001f));
+        anyDensity = max(anyDensity, densityHigh);
+      }
 
-        // Lerp between zones based on heightCoord, scaled by verticalGradient
-        float midWeight  = exp(-pow((heightCoord - 0.5f) * 4.0f, 2.0f));
-        float lowWeight  = exp(-pow((heightCoord - 0.0f) * 3.0f, 2.0f));
-        float highWeight = exp(-pow((heightCoord - 1.0f) * 3.0f, 2.0f));
-        float weightSum = lowWeight + midWeight + highWeight;
-        vec3 zonedColor = (zoneLow * lowWeight + zoneMid * midWeight + zoneHigh * highWeight) / max(weightSum, 0.001f);
-        // Lerp toward midColor when verticalGradient is low
-        vec3 finalColor = lerp(zoneMid, zonedColor, saturate(args.auroraVerticalGradient));
+      if (anyDensity > 0.001f) {
+        // Combine shells with brightness falloff (lower brighter, higher dimmer)
+        // and color stratification.
+        // Use verticalGradient knob: 0 = collapse all to mid color, 1 = full stratification.
+        float gradient = saturate(args.auroraVerticalGradient);
+        vec3 colorLow  = lerp(args.auroraColorMid, args.auroraColorLow,  gradient);
+        vec3 colorMid  = args.auroraColorMid;
+        vec3 colorHigh = lerp(args.auroraColorMid, args.auroraColorHigh, gradient);
 
-        // Storm pulse: gentle brightness oscillation when activity > 0.5 (storms only)
+        // Real aurora luminance falloff with altitude:
+        //   green @100km = brightest, red @250km dimmer, violet @300km dimmest.
+        const float kLowWeight  = 1.0f;
+        const float kMidWeight  = 0.55f;
+        const float kHighWeight = 0.30f;
+
+        vec3 auroraColor = colorLow  * densityLow  * kLowWeight
+                         + colorMid  * densityMid  * kMidWeight
+                         + colorHigh * densityHigh * kHighWeight;
+
+        // Storm pulse (gentle brightness oscillation at activity > 0.5)
         float stormFactor = smoothstep(0.5f, 0.9f, args.auroraActivity);
-        float pulsePhase = args.timeSeconds * args.auroraStormPulseRate * 2.0f * kPi;
+        float pulsePhase  = args.timeSeconds * args.auroraStormPulseRate * 2.0f * kPi;
         float pulse = 1.0f - args.auroraStormPulseDepth * stormFactor * (0.5f + 0.5f * sin(pulsePhase));
 
-        // Vertical brightness profile: real aurora has SHARP lower edge
-        // (green oxygen emission peaks at ~100km, falls off rapidly below)
-        // and SOFT upper edge (red oxygen extends up to ~250km). Use a
-        // lower-edge-biased profile: max brightness at lower edge, gradual
-        // fade upward.
-        // ovalUV.y in [-1, +1]; with pole below horizon, -1 is closer to pole
-        // (lower in sky) and +1 is farther from pole (higher in sky).
-        // Lower edge bias: heavy at -0.7..0, fade out at +1.
-        float vertProfile = smoothstep(-1.0f, -0.5f, ovalUV.y)
-                          * (1.0f - smoothstep(0.0f, 1.0f, ovalUV.y * 0.8f));
-        vertProfile = saturate(vertProfile);
+        // Distance falloff: rays nearly horizontal travel very far through
+        // the plane and would otherwise wrap and look ugly. Fade out aurora
+        // toward the horizon to match the apparent atmospheric extinction.
+        // Also gives a clean "doesn't extend forever" look.
+        float horizonFade = smoothstep(0.02f, 0.20f, viewDir.y);
 
-        // Faint horizon extinction (atmospheric extinction near horizon)
-        float hzAuroraExt = smoothstep(-0.05f, 0.15f, viewDir.y);
+        // Auroral oval mask (optional): use auroraPoleElevation to limit
+        // the band to a hemisphere around the pole. With pole below horizon
+        // (negative elevation), this naturally gates the band to north.
+        // Soft mask so it isn't a hard cut.
+        float ovalMask = 1.0f;
+        if (args.auroraOvalThickness > 0.5f && args.auroraOvalRadius > 1.0f) {
+          // Pole direction (Y-up)
+          float poleElevRad = args.auroraPoleElevation * (kPi / 180.0f);
+          vec3 poleDir = vec3(
+            cos(poleElevRad) * cos(poleRotRad),
+            sin(poleElevRad),
+            cos(poleElevRad) * sin(poleRotRad)
+          );
+          // Angular distance from view to pole
+          float cosToPole = clamp(dot(viewDir, poleDir), -1.0f, 1.0f);
+          float angleDeg  = acos(cosToPole) * (180.0f / kPi);
+          float ringDelta = abs(angleDeg - args.auroraOvalRadius);
+          // Soft falloff outside the oval band
+          float bandWidth = max(args.auroraOvalThickness * 2.0f, 1.0f);
+          ovalMask = saturate(1.0f - ringDelta / bandWidth);
+          ovalMask = smoothstep(0.0f, 1.0f, ovalMask);
+        }
 
-        // Base luminance scalar — calibrated against starBrightness (~1.0) and
-        // moon NEE so a strong aurora at activity=1 reads roughly equal to
-        // mid-bright moonlit clouds. Real aurora at peak is ~1 mag brighter
-        // than full moon over a small area, but tonemap-friendly.
-        const float kAuroraLuminanceBase = 6.0f;
+        // Base luminance — calibrated for tonemap-friendly visibility
+        const float kAuroraLuminanceBase = 4.0f;
 
-        vec3 auroraColor = finalColor
-                         * curtainDensity
-                         * bandMask
-                         * vertProfile
-                         * pulse
-                         * hzAuroraExt
-                         * args.auroraActivity
-                         * args.auroraIntensity
-                         * kAuroraLuminanceBase;
-
-        airglow += auroraColor;
+        airglow += auroraColor
+                 * pulse
+                 * horizonFade
+                 * ovalMask
+                 * args.auroraActivity
+                 * args.auroraIntensity
+                 * kAuroraLuminanceBase;
       }
     }
   }
