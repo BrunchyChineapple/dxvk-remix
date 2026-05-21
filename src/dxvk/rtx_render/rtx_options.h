@@ -1330,6 +1330,72 @@ namespace dxvk {
                "fill brightens cloud bodies near the moon. Default 0.005 = sub-per-mille level; "
                "0 disables the coupling.");
 
+    // ----- Meteor / shooting star system (fork, 2026-05-21) -----
+    // Replaces the old hardcoded "one streak every 4s" path in atmosphere_sky.slangh.
+    // Streaks per second = meteorBaseRate + meteorShowerActivity * meteorShowerPeakRate.
+    // The activity field is NoSave because the wrapper drives it from the in-game
+    // calendar (Morrowind meteor showers in Sun's Dawn / Mid Year / Last Seed /
+    // Frost Fall / Sun's Dusk / Evening Star). All other fields are persistent.
+    RTX_OPTION("rtx.atmosphere", float, meteorBaseRate, 0.25f,
+               "Background sporadic meteor rate per second when the sun is below horizon. "
+               "Random radiants. 0 disables the always-on background. Default 0.25 = "
+               "one every 4 seconds (matches the prior hardcoded slot rate).");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, meteorShowerActivity, 0.0f, RtxOptionFlags::NoSave,
+                    "Game-driven [0..1] meteor shower intensity multiplier. The wrapper ramps "
+                    "this up during in-game shower events based on the Morrowind calendar. 0 = "
+                    "no shower active (only baseRate sporadics), 1 = peak shower. NoSave so per-"
+                    "frame writes don't pollute user.conf.");
+    RTX_OPTION("rtx.atmosphere", float, meteorShowerPeakRate, 5.0f,
+               "Streaks per second at peak shower (when meteorShowerActivity = 1.0). Real "
+               "shower ZHRs range from ~10 (minor) to ~100 (Geminids/Perseids); 5/sec = ~3000 "
+               "ZHR which is stylized but readable on-screen. Lower for more subtle showers.");
+    RTX_OPTION("rtx.atmosphere", float, meteorBrightness, 1.0f,
+               "Brightness scalar applied to all meteor streak intensity. 1.0 = calibrated "
+               "default. Higher for stylized brilliance, lower for understated.");
+    RTX_OPTION("rtx.atmosphere", Vector3, meteorColor, Vector3(1.0f, 0.95f, 0.85f),
+               "Base color tint for meteor streaks. Default warm-white (1.0, 0.95, 0.85) "
+               "matches typical iron/nickel meteor composition. Per-streak variation around "
+               "this base is controlled by meteorColorVariation.");
+    RTX_OPTION("rtx.atmosphere", float, meteorTrailLength, 0.05f,
+               "Streak length in unit-sphere chord units. 0.05 = ~3 degrees of sky. Larger = "
+               "longer trails (slower-looking meteors), smaller = shorter quick streaks.");
+    RTX_OPTION("rtx.atmosphere", float, meteorTrailWidth, 1.0f,
+               "Multiplier on the Gaussian falloff sharpness across the streak. 1.0 = "
+               "calibrated baseline. Higher = thinner more pinpoint streak, lower = wider "
+               "softer streak.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, meteorRadiantElevation, 60.0f, RtxOptionFlags::NoSave,
+                    "Elevation in degrees of the shower radiant point. All shower meteors emanate "
+                    "from a cone around this direction (sporadic background ignores it). Wrapper "
+                    "drives this per-shower from the canonical Morrowind shower table — NoSave so "
+                    "calendar-driven writes don't pollute user.conf.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, meteorRadiantRotation, 180.0f, RtxOptionFlags::NoSave,
+                    "Azimuth in degrees of the shower radiant point (0 = +X, 90 = +Z). Wrapper "
+                    "drives this per-shower. NoSave.");
+    RTX_OPTION("rtx.atmosphere", float, meteorRadiantSpread, 25.0f,
+               "Cone half-angle in degrees around the radiant within which shower streaks "
+               "appear. Tight (~10) = sharp Geminid-like radiant cluster, wide (~45) = diffuse "
+               "scattered shower.");
+    RTX_OPTION("rtx.atmosphere", bool, meteorEnableRadiantBias, true,
+               "When true, shower meteors emanate from the radiant point (real meteor showers "
+               "do this). When false, all streaks are randomly distributed regardless of "
+               "shower activity. The base sporadic rate always uses random distribution.");
+    RTX_OPTION("rtx.atmosphere", float, meteorFireballChance, 0.05f,
+               "Per-streak probability [0..1] of becoming a bright slow fireball. Real "
+               "fireballs are rare (~1 in 100); 0.05 default is stylized for visibility. "
+               "0 disables fireballs.");
+    RTX_OPTION("rtx.atmosphere", float, meteorFireballBrightness, 4.0f,
+               "Brightness multiplier applied to fireball-class streaks on top of "
+               "meteorBrightness. Real fireballs are 100x+ brighter than typical meteors; "
+               "4x is a tonemapped-friendly default.");
+    RTX_OPTION("rtx.atmosphere", float, meteorColorVariation, 0.3f,
+               "Random per-streak hue variation [0..1]. 0 = all meteors use exactly meteorColor, "
+               "1 = full random tinting (green from copper, blue from magnesium, red from "
+               "nitrogen, etc., simulating composition variance).");
+    RTX_OPTION("rtx.atmosphere", float, meteorMoonDimmingStrength, 1.0f,
+               "How aggressively bright moons dim faint meteors. Real bright moonlit nights "
+               "wash out faint meteors; 1.0 = physically-plausible suppression, 0 = no moon "
+               "interaction. Doesn't affect fireballs (they survive moonlit skies).");
+
     // ----- Per-moon parameters (fork) -----
     // MAX_MOONS in atmosphere_args.h must equal the number of DECLARE_MOON_OPTIONS
     // invocations below. Morrowind override: moon 0 (Secunda) and moon 1 (Masser)

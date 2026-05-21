@@ -406,49 +406,171 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
   // Star field (includes galactic density band — no separate nebula overlay needed)
   vec3 stars = evalStarField(viewDir, args) * horizonExtinction;
 
-  // Shooting stars — thin streaks with fading tail
+  // ----- Meteor / shooting star system (fork, 2026-05-21) -----
+  //
+  // Streak slots are time-quantized: each slot is 1 second long. We sum across
+  // up to MAX_STREAKS_PER_SECOND active slots to support high shower rates.
+  // Each slot independently decides:
+  //   - Whether to spawn (probability ∝ rate / MAX_STREAKS_PER_SECOND)
+  //   - Whether it's a fireball (separate roll vs meteorFireballChance)
+  //   - Start position (uniform sphere for sporadics; cone around radiant for showers)
+  //   - Travel direction (away from radiant for showers; random for sporadics)
+  //   - Color (lerp toward random tint by meteorColorVariation)
+  // The slot system replaces the prior single-slot 4-second hardcoded path —
+  // baseRate of 0.25 with MAX_STREAKS_PER_SECOND=8 gives matching density.
   {
-    float slotTime = floor(args.timeSeconds / 4.0f);
-    float slotFrac = fract(args.timeSeconds / 4.0f);
+    const int   kMaxStreaksPerSecond = 8;
+    const float kSlotsPerSecond      = float(kMaxStreaksPerSecond);
 
-    float slotHash = hash31(vec3(slotTime, 0.0f, 42.0f));
-    if (slotHash > 0.92f) {
-      float startTheta = hash31(vec3(slotTime, 1.0f, 42.0f)) * kPi * 0.5f + 0.3f;
-      float startPhi = hash31(vec3(slotTime, 2.0f, 42.0f)) * 2.0f * kPi;
+    // Effective spawn probability per slot:
+    //   total streaks/sec = baseRate + activity * peakRate
+    //   per-slot probability = (streaks/sec) / kSlotsPerSecond
+    float showerActivity = saturate(args.meteorShowerActivity);
+    float ratePerSec     = args.meteorBaseRate + showerActivity * args.meteorShowerPeakRate;
+    float slotProb       = saturate(ratePerSec / kSlotsPerSecond);
 
-      vec3 streakStart = vec3(
-        sin(startTheta) * cos(startPhi),
-        cos(startTheta),
-        sin(startTheta) * sin(startPhi)
-      );
+    // Compute moon-dimming factor up front (applies to all non-fireball streaks).
+    // Use the brightest enabled moon's elevation as a proxy for sky brightness.
+    // moons[].elevation is degrees; positive = above horizon. brightness is the
+    // moon's stylistic brightness multiplier.
+    float moonSkyBrightness = 0.0f;
+    [unroll] for (int mi = 0; mi < MAX_MOONS; ++mi) {
+      MoonParams m = args.moons[mi];
+      if (m.enabled > 0.5f && m.elevation > 0.0f) {
+        // sin(elevation) gives ~1 at zenith, ~0 at horizon. Phase 0=new, 0.5=full, 1=new.
+        float phaseFull = 1.0f - 2.0f * abs(m.phase - 0.5f);
+        moonSkyBrightness += m.brightness * phaseFull * sin(m.elevation * (kPi / 180.0f));
+      }
+    }
+    float moonDimming = exp(-moonSkyBrightness * args.meteorMoonDimmingStrength * 0.3f);
 
-      float streakAng = hash31(vec3(slotTime, 3.0f, 42.0f)) * kPi;
-      vec3 streakMoveDir = normalize(vec3(cos(streakAng) * 0.3f, -0.4f, sin(streakAng) * 0.3f));
+    // Radiant point in world-space direction (Y-up). Spherical -> cartesian.
+    float radElevRad = args.meteorRadiantElevation * (kPi / 180.0f);
+    float radRotRad  = args.meteorRadiantRotation  * (kPi / 180.0f);
+    vec3 radiantDir = vec3(
+      cos(radElevRad) * cos(radRotRad),
+      sin(radElevRad),
+      cos(radElevRad) * sin(radRotRad)
+    );
+    float radiantSpreadRad = args.meteorRadiantSpread * (kPi / 180.0f);
 
-      float streakLen = 0.05f;  // Longer tail
-      vec3 headPos = normalize(streakStart + streakMoveDir * slotFrac * 0.4f);  // Faster travel
-      vec3 tailPos = normalize(streakStart + streakMoveDir * (slotFrac * 0.4f - streakLen));
+    // Iterate active slots. Each second has kMaxStreaksPerSecond slots; each
+    // slot is kSlotDuration seconds long. We check the slot containing
+    // timeSeconds and the immediately previous one (for cross-slot streak
+    // life — streaks travel ~half a second).
+    const float kSlotDuration = 1.0f / kSlotsPerSecond;
 
-      vec3 v = normalize(viewDir);
-      vec3 segVec = headPos - tailPos;
-      float segLen = length(segVec);
-      if (segLen > 0.001f) {
-        vec3 segNorm = segVec / segLen;
-        float t = dot(v - tailPos, segNorm);
-        t = clamp(t, 0.0f, segLen);
-        vec3 closest = tailPos + segNorm * t;
-        float dist = length(v - closest);
+    [unroll] for (int slotOffset = 0; slotOffset < 2; ++slotOffset) {
+      float slotStartTime = floor(args.timeSeconds / kSlotDuration) * kSlotDuration
+                          - float(slotOffset) * kSlotDuration;
+      float slotIndex     = floor(slotStartTime / kSlotDuration);
+      float slotFrac      = saturate((args.timeSeconds - slotStartTime) / kSlotDuration);
 
-        // Thinner streak — tighter Gaussian falloff
-        float streakBright = exp(-dist * dist * 18000000.0f);
+      // Roll for spawn — gate by per-slot probability
+      float spawnRoll = hash31(vec3(slotIndex, 0.0f, 42.0f));
+      if (spawnRoll > 1.0f - slotProb) {
+        // This slot spawned a streak. Roll for shower-vs-sporadic, fireball, position, direction, color.
+        float typeRoll      = hash31(vec3(slotIndex, 1.0f, 42.0f));
+        float fireballRoll  = hash31(vec3(slotIndex, 2.0f, 42.0f));
+        bool  isFireball    = fireballRoll < args.meteorFireballChance;
 
-        // Tail gradient: bright head fading to dim tail
-        float tailFade = t / max(segLen, 0.001f);
-        tailFade = pow(tailFade, 1.5f);
+        // Decide if this is a shower meteor (radiant-biased) or sporadic (random).
+        // Probability of shower-type = activity * peakRate / totalRate.
+        float showerFraction = (ratePerSec > 0.001f)
+                             ? (showerActivity * args.meteorShowerPeakRate / ratePerSec)
+                             : 0.0f;
+        bool  isShowerMeteor = (typeRoll < showerFraction)
+                            && (args.meteorEnableRadiantBias > 0.5f);
 
-        float timeFade = sin(slotFrac * kPi);
+        // Streak start position
+        vec3 streakStart;
+        vec3 streakMoveDir;
+        if (isShowerMeteor) {
+          // Spawn near radiant: cone with half-angle radiantSpreadRad around radiantDir
+          float coneTheta = acos(1.0f - hash31(vec3(slotIndex, 3.0f, 42.0f)) * (1.0f - cos(radiantSpreadRad)));
+          float conePhi   = hash31(vec3(slotIndex, 4.0f, 42.0f)) * 2.0f * kPi;
 
-        stars += vec3(1.0f, 0.95f, 0.85f) * streakBright * tailFade * timeFade * 2.0f;
+          // Build local frame around radiantDir
+          vec3 worldUp = abs(radiantDir.y) < 0.99f ? vec3(0,1,0) : vec3(1,0,0);
+          vec3 tangent = normalize(cross(worldUp, radiantDir));
+          vec3 bitan   = cross(radiantDir, tangent);
+          streakStart = radiantDir * cos(coneTheta)
+                      + (tangent * cos(conePhi) + bitan * sin(conePhi)) * sin(coneTheta);
+          streakStart = normalize(streakStart);
+
+          // Move direction: away from radiant in a slightly randomized direction
+          vec3 awayFromRadiant = normalize(streakStart - radiantDir * dot(streakStart, radiantDir));
+          float jitter = (hash31(vec3(slotIndex, 5.0f, 42.0f)) - 0.5f) * 0.5f;
+          vec3 perpJitter = normalize(cross(streakStart, awayFromRadiant)) * jitter;
+          streakMoveDir = normalize(awayFromRadiant + perpJitter);
+        } else {
+          // Sporadic: random upper hemisphere, random direction
+          float startTheta = hash31(vec3(slotIndex, 1.0f, 42.0f)) * kPi * 0.5f + 0.3f;
+          float startPhi   = hash31(vec3(slotIndex, 2.0f, 42.0f)) * 2.0f * kPi;
+          streakStart = vec3(
+            sin(startTheta) * cos(startPhi),
+            cos(startTheta),
+            sin(startTheta) * sin(startPhi)
+          );
+          float streakAng = hash31(vec3(slotIndex, 3.0f, 42.0f)) * kPi;
+          streakMoveDir = normalize(vec3(cos(streakAng) * 0.3f, -0.4f, sin(streakAng) * 0.3f));
+        }
+
+        // Fireballs travel slower and brighter; regular streaks travel quickly
+        float travelSpeed = isFireball ? 0.18f : 0.4f;
+        float streakLen   = args.meteorTrailLength * (isFireball ? 1.6f : 1.0f);
+
+        vec3 headPos = normalize(streakStart + streakMoveDir * slotFrac * travelSpeed);
+        vec3 tailPos = normalize(streakStart + streakMoveDir * (slotFrac * travelSpeed - streakLen));
+
+        vec3 v = normalize(viewDir);
+        vec3 segVec = headPos - tailPos;
+        float segLen = length(segVec);
+        if (segLen > 0.001f) {
+          vec3 segNorm = segVec / segLen;
+          float t = dot(v - tailPos, segNorm);
+          t = clamp(t, 0.0f, segLen);
+          vec3 closest = tailPos + segNorm * t;
+          float dist = length(v - closest);
+
+          // Gaussian falloff across the streak. Scale by user trailWidth.
+          float widthScale = max(args.meteorTrailWidth, 0.01f);
+          float streakBright = exp(-dist * dist * 18000000.0f * widthScale);
+
+          // Tail gradient — bright head fading to dim tail
+          float tailFade = t / max(segLen, 0.001f);
+          tailFade = pow(tailFade, 1.5f);
+
+          // Slot-time fade — peaks mid-slot, fades at edges
+          float timeFade = sin(slotFrac * kPi);
+
+          // Per-streak color variation. Real meteors range green/blue/red/yellow
+          // depending on composition. Generate a randomized tint by perturbing
+          // each channel independently.
+          vec3 streakColor = args.meteorColor;
+          if (args.meteorColorVariation > 0.001f) {
+            vec3 colorJitter = vec3(
+              hash31(vec3(slotIndex, 6.0f, 42.0f)),
+              hash31(vec3(slotIndex, 7.0f, 42.0f)),
+              hash31(vec3(slotIndex, 8.0f, 42.0f))
+            );
+            // Lerp from base color toward a random hue, modulated by variation strength
+            colorJitter = colorJitter * 2.0f - 1.0f; // [-1, 1]
+            streakColor = streakColor + colorJitter * args.meteorColorVariation * 0.5f;
+            streakColor = max(streakColor, vec3(0.0f));
+          }
+
+          // Brightness: scaled by user multiplier, fireball bonus, and (for non-fireballs) moon dimming
+          float brightnessScalar = args.meteorBrightness * 2.0f;
+          if (isFireball) {
+            brightnessScalar *= args.meteorFireballBrightness;
+            // Fireballs survive moonlight (real fireballs do), so no moonDimming
+          } else {
+            brightnessScalar *= moonDimming;
+          }
+
+          stars += streakColor * streakBright * tailFade * timeFade * brightnessScalar;
+        }
       }
     }
   }

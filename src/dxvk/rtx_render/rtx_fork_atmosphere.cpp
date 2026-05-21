@@ -649,6 +649,91 @@ namespace fork_hooks {
       }
     }
 
+    void renderMeteorsUI() {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+      if (ImGui::TreeNode("Meteors & Showers")) {
+        ImGui::TextDisabled("Activity (game-driven; read-only at runtime)");
+        // Read-only display of the current activity value driven by the wrapper
+        const float currentActivity = RtxOptions::meteorShowerActivity();
+        ImGui::Text("Current shower activity: %.3f", currentActivity);
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Rates");
+        RemixGui::DragFloat("Base Rate (per sec)", &RtxOptions::meteorBaseRateObject(),
+                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Background sporadic meteors per second. Always on at night when sun is below horizon. "
+            "0.25 = ~1 every 4 seconds. Random radiants.");
+        RemixGui::DragFloat("Peak Shower Rate (per sec)", &RtxOptions::meteorShowerPeakRateObject(),
+                            0.5f, 0.0f, 50.0f, "%.1f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Streaks per second at peak shower (when activity = 1.0). Multiplied by activity. "
+            "5/sec is stylized for cinematic visibility; lower for realistic shower densities.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Appearance");
+        RemixGui::DragFloat("Brightness", &RtxOptions::meteorBrightnessObject(),
+                            0.1f, 0.0f, 10.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Master brightness scalar on streak intensity.");
+        RemixGui::DragFloat3("Color", &RtxOptions::meteorColorObject(),
+                             0.01f, 0.0f, 2.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Base streak tint. Default warm-white matches typical iron/nickel meteors. "
+            "Per-streak random variation around this controlled by Color Variation.");
+        RemixGui::DragFloat("Color Variation", &RtxOptions::meteorColorVariationObject(),
+                            0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Random per-streak hue variation. 0 = all meteors use exactly Color, 1 = full random "
+            "tinting (green/blue/red simulating composition variance: copper/magnesium/nitrogen).");
+        RemixGui::DragFloat("Trail Length", &RtxOptions::meteorTrailLengthObject(),
+                            0.005f, 0.005f, 0.3f, "%.3f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Streak length in unit-sphere chord. 0.05 = ~3 degrees of sky. "
+            "Larger = longer slower-looking trails.");
+        RemixGui::DragFloat("Trail Width", &RtxOptions::meteorTrailWidthObject(),
+                            0.05f, 0.1f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Sharpness of the Gaussian falloff across the streak. "
+            "Higher = thinner pinpoint streak, lower = wider softer.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Fireballs");
+        RemixGui::DragFloat("Fireball Chance", &RtxOptions::meteorFireballChanceObject(),
+                            0.005f, 0.0f, 1.0f, "%.3f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Per-streak probability of being a slow bright fireball. Real fireballs are ~1 in 100; "
+            "0.05 default is stylized for visibility. Fireballs ignore moon dimming.");
+        RemixGui::DragFloat("Fireball Brightness Mult", &RtxOptions::meteorFireballBrightnessObject(),
+                            0.5f, 1.0f, 50.0f, "%.1f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Brightness multiplier for fireball-class streaks.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Radiant (game-driven during showers)");
+        ImGui::Text("Current radiant: %.1f° elev / %.1f° az",
+                    RtxOptions::meteorRadiantElevation(),
+                    RtxOptions::meteorRadiantRotation());
+        RemixGui::DragFloat("Radiant Spread", &RtxOptions::meteorRadiantSpreadObject(),
+                            1.0f, 1.0f, 90.0f, "%.0f°", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Cone half-angle around the radiant where shower meteors spawn. "
+            "Tight (~10°) = sharp Geminid-like cluster. Wide (~45°) = diffuse scattered.");
+        RemixGui::Checkbox("Enable Radiant Bias", &RtxOptions::meteorEnableRadiantBiasObject());
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "When on, shower meteors emanate from the radiant (real meteor showers do this). "
+            "When off, all meteors are randomly distributed regardless of shower activity.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Environment");
+        RemixGui::DragFloat("Moon Dimming Strength", &RtxOptions::meteorMoonDimmingStrengthObject(),
+                            0.05f, 0.0f, 2.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "How aggressively bright moons dim faint meteors. 1.0 = physically-plausible. "
+            "0 = no moon interaction. Doesn't affect fireballs (they survive moonlit skies).");
+
+        ImGui::TreePop();
+      }
+    }
+
     void renderMoonGlobalLightingUI() {
       constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
       if (ImGui::TreeNode("Global Lighting")) {
@@ -888,6 +973,7 @@ namespace fork_hooks {
         renderStarsUI();
         renderMilkyWayUI();
         renderStarAppearanceUI();
+        renderMeteorsUI();
 
         ImGui::TreePop();
       }

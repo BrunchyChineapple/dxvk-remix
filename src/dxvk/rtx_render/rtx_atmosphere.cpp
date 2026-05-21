@@ -306,6 +306,10 @@ namespace {
     args.cloudVoxelGridSunDirty      = 0u;
     args.cloudVoxelGridAmbientDirty  = 0u;
     args.cloudVoxelGridFrameOffset   = 0.0f;
+    // Meteor activity changes per-frame from the wrapper but doesn't affect
+    // the sky / cloud LUTs (meteors render in the runtime-miss path), so
+    // normalize it out of the cache key.
+    args.meteorShowerActivity        = 0.0f;
   }
 } // anonymous namespace
 
@@ -439,6 +443,26 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.padCloudLook0                   = 0.0f;
   args.padCloudLook1                   = 0.0f;
   args.padCloudLook2                   = 0.0f;
+
+  // ----- Meteor / shooting star system (fork, 2026-05-21) -----
+  args.meteorBaseRate              = RtxOptions::meteorBaseRate();
+  args.meteorShowerActivity        = RtxOptions::meteorShowerActivity();
+  args.meteorShowerPeakRate        = RtxOptions::meteorShowerPeakRate();
+  args.meteorBrightness            = RtxOptions::meteorBrightness();
+  args.meteorColor                 = RtxOptions::meteorColor();
+  args.meteorTrailLength           = RtxOptions::meteorTrailLength();
+  args.meteorTrailWidth            = RtxOptions::meteorTrailWidth();
+  args.meteorRadiantElevation      = RtxOptions::meteorRadiantElevation();
+  args.meteorRadiantRotation       = RtxOptions::meteorRadiantRotation();
+  args.meteorRadiantSpread         = RtxOptions::meteorRadiantSpread();
+  args.meteorEnableRadiantBias     = RtxOptions::meteorEnableRadiantBias() ? 1.0f : 0.0f;
+  args.meteorFireballChance        = RtxOptions::meteorFireballChance();
+  args.meteorFireballBrightness    = RtxOptions::meteorFireballBrightness();
+  args.meteorColorVariation        = RtxOptions::meteorColorVariation();
+  args.meteorMoonDimmingStrength   = RtxOptions::meteorMoonDimmingStrength();
+  args.padMeteor0                  = 0.0f;
+  args.padMeteor1                  = 0.0f;
+  args.padMeteor2                  = 0.0f;
 
   // Cloud parameters
   {
