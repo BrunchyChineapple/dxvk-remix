@@ -810,6 +810,11 @@ namespace fork_hooks {
 
       ImGui::Separator();
 
+      // ----- Weather Presets panel (fork, placed right under atmosphere presets) -----
+      fork_hooks::showWeatherUI();
+
+      ImGui::Separator();
+
       // Sun (lifted out of former "Atmosphere Parameters" tree)
       renderSunUI();
 
@@ -897,9 +902,6 @@ namespace fork_hooks {
         }
         ImGui::TreePop();
       }
-
-      // ----- Weather Presets panel (fork) -----
-      fork_hooks::showWeatherUI();
 
       // ----- Clouds tree (fork) -----
       // Simplified menu surface 2026-05-19. 14 user-facing sliders + 1 checkbox
