@@ -1430,6 +1430,14 @@ namespace dxvk {
                "Ambient airglow per-moon strength contribution to nightLight. The cloud "
                "volume gets a uniform sky-bounce from each enabled moon scaled by this "
                "constant. Default 0.0015.");
+    RTX_OPTION("rtx.atmosphere", float, moonSilverLiningIntensity, 1.0f,
+               "Master multiplier on the combined cloud-moon silver-lining contribution "
+               "(Lambert diffuse + HG phase). Default 1.0 = current calibrated look. "
+               "Composes with moonCloudDiffuseGain/PhaseGain for ratio tuning.");
+    RTX_OPTION("rtx.atmosphere", float, moonHaloGlowStrength, 1.0f,
+               "Master multiplier on the combined moon halo + ambient airglow contribution. "
+               "Default 1.0 = current calibrated look. Composes with moonHaloMagnitude / "
+               "moonAmbientAirglow for ratio tuning.");
 
     // Cloud parameters (procedural FBM cloud layer)
     RTX_OPTION("rtx.atmosphere", bool, cloudEnabled, true, "Enable procedural cloud rendering.");

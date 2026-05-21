@@ -426,11 +426,16 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.padMoonNee2                     = 0.0f;
 
   // ----- Moon cloud-look + halo shape constants (fork, Phase 3 Task 2) -----
-  args.moonCloudDiffuseGain            = RtxOptions::moonCloudDiffuseGain();
-  args.moonCloudPhaseGain              = RtxOptions::moonCloudPhaseGain();
+  // moonSilverLiningIntensity / moonHaloGlowStrength are master multipliers
+  // applied here at args-population time so shaders see the pre-scaled value.
+  // Default 1.0 yields byte-identical behavior to pre-master-multiplier builds.
+  const float silverLining             = RtxOptions::moonSilverLiningIntensity();
+  const float haloGlow                 = RtxOptions::moonHaloGlowStrength();
+  args.moonCloudDiffuseGain            = RtxOptions::moonCloudDiffuseGain()  * silverLining;
+  args.moonCloudPhaseGain              = RtxOptions::moonCloudPhaseGain()    * silverLining;
   args.moonCloudAnisotropy             = RtxOptions::moonCloudAnisotropy();
-  args.moonHaloMagnitude               = RtxOptions::moonHaloMagnitude();
-  args.moonAmbientAirglow              = RtxOptions::moonAmbientAirglow();
+  args.moonHaloMagnitude               = RtxOptions::moonHaloMagnitude()     * haloGlow;
+  args.moonAmbientAirglow              = RtxOptions::moonAmbientAirglow()    * haloGlow;
   args.padCloudLook0                   = 0.0f;
   args.padCloudLook1                   = 0.0f;
   args.padCloudLook2                   = 0.0f;
