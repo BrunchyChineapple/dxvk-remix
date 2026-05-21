@@ -1226,7 +1226,12 @@ namespace dxvk {
     // Atmosphere parameters
     RTX_OPTION("rtx.atmosphere", bool, sunDisc, true, "Include the sun itself in the output.");
     RTX_OPTION("rtx.atmosphere", float, sunSize, 0.545f, "Size of sun disc in degrees.");
-    RTX_OPTION("rtx.atmosphere", float, sunIntensity, 1.0f, "Strength of Sun.");
+    // Morrowind override: sunIntensity is NoSave because the wrapper drives it
+    // (sets to 0 in interiors to suppress sun illumination). Routed through the
+    // Derived layer so dev-menu sessions don't accidentally bake interior=0 into
+    // user.conf on save.
+    RTX_OPTION_FLAG("rtx.atmosphere", float, sunIntensity, 1.0f, RtxOptionFlags::NoSave,
+                    "Strength of Sun. Game-driven every frame (set to 0 in interiors).");
     // Morrowind override: sunElevation/sunRotation are NoSave because the wrapper
     // drives them every frame from the game's clock. Upstream made these plain
     // RTX_OPTIONs so dev-menu tweaks persist; we route through the Derived layer
@@ -1271,16 +1276,19 @@ namespace dxvk {
                "Celestial pole elevation from horizon in degrees. 90 = pole at zenith (default, matches pre-rotation behavior).");
     RTX_OPTION("rtx.atmosphere", float, starAxisRotation, 0.0f,
                "Celestial pole azimuth in degrees (0 = North). Only relevant when starAxisElevation != 90.");
-    RTX_OPTION("rtx.atmosphere", float, nightSkyBrightness, 0.008f,
-               "Ambient night-sky brightness from airglow and zodiacal light.");
+    // Morrowind override: nightSkyBrightness and milkyWayEnabled are NoSave
+    // because the wrapper drives them (zeros nightSky and disables milky way
+    // in interiors to suppress all night-sky illumination through cracks).
+    RTX_OPTION_FLAG("rtx.atmosphere", float, nightSkyBrightness, 0.008f, RtxOptionFlags::NoSave,
+                    "Ambient night-sky brightness from airglow and zodiacal light. Game-driven every frame.");
     RTX_OPTION("rtx.atmosphere", Vector3, nightSkyColor, Vector3(0.15f, 0.2f, 0.4f),
                "Base color tint of the night-sky airglow.");
     // ----- Milky Way controls (fork) -----
-    RTX_OPTION("rtx.atmosphere", bool, milkyWayEnabled, false,
-               "Master toggle for the galactic-band Milky Way effects: increased star density "
-               "inside the band, and the diffuse background dust glow. When disabled, the star "
-               "field is uniformly distributed at the base density across the whole sky. Off by "
-               "default -- stylized opt-in for users who want the band aesthetic.");
+    RTX_OPTION_FLAG("rtx.atmosphere", bool, milkyWayEnabled, false, RtxOptionFlags::NoSave,
+                    "Master toggle for the galactic-band Milky Way effects. Game-driven (forced "
+                    "off in interiors). When disabled, the star field is uniformly distributed at "
+                    "the base density across the whole sky. Off by default -- stylized opt-in for "
+                    "users who want the band aesthetic.");
     RTX_OPTION("rtx.atmosphere", float, milkyWayDensityBoost, 0.3f,
                "Density threshold reduction inside the galactic band. Higher = more (and dimmer) "
                "stars visible only in the band region, producing the dense-band look.");
@@ -1331,8 +1339,8 @@ namespace dxvk {
     // every frame from Morrowind's scenegraph; appearance knobs persist
     // normally in user config.
 #define DECLARE_MOON_OPTIONS(N, DEFAULT_ENABLED, DEFAULT_RADIUS, DEFAULT_BRIGHTNESS, DEFAULT_COLOR, DEFAULT_STYLE) \
-    RTX_OPTION("rtx.atmosphere.moon" #N, bool, enabled##N, DEFAULT_ENABLED,                     \
-               "Enable moon " #N " rendering.");                                                \
+    RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, bool, enabled##N, DEFAULT_ENABLED, RtxOptionFlags::NoSave, \
+                    "Enable moon " #N " rendering. Game-driven (forced off in interiors).");        \
     RTX_OPTION("rtx.atmosphere.moon" #N, float, angularRadius##N, DEFAULT_RADIUS,               \
                "Moon " #N " angular diameter in degrees.");                                     \
     RTX_OPTION("rtx.atmosphere.moon" #N, float, brightness##N, DEFAULT_BRIGHTNESS,              \
@@ -1466,7 +1474,11 @@ namespace dxvk {
     // Morrowind override: cloudEnabled stays true because the wrapper drives
     // cloudCoverageMean from GetCurrentWeather every frame (see distantland.cpp).
     // Low coverage on Clear weather already hides the clouds.
-    RTX_OPTION("rtx.atmosphere", bool, cloudEnabled, true, "Enable procedural cloud rendering.");
+    // Morrowind override: cloudEnabled is NoSave because the wrapper drives it
+    // (forced false in interiors to kill cloud rendering). cloudCoverageMean
+    // is also NoSave because the wrapper drives it from GetCurrentWeather.
+    RTX_OPTION_FLAG("rtx.atmosphere", bool, cloudEnabled, true, RtxOptionFlags::NoSave,
+                    "Enable procedural cloud rendering. Game-driven (forced off in interiors).");
     RTX_OPTION("rtx.atmosphere", float, cloudDensity, 1.65f, "Cloud opacity/density multiplier.");
     RTX_OPTION("rtx.atmosphere", float, cloudAltitude, 1.3f, "Cloud layer altitude in kilometers.");
     RTX_OPTION("rtx.atmosphere", Vector3, cloudColor, Vector3(0.89f, 0.92f, 1.0f), "Base cloud color (albedo).");
