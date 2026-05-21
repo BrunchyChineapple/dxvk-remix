@@ -612,14 +612,14 @@ namespace fork_hooks {
                             0.01f, 0.0f, 2.0f, "%.3f", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover(
             "Diffuse band-glow brightness (the soft dust haze across the Milky Way). 0 disables the glow.");
-        RemixGui::DragFloat3("Outer Color", &RtxOptions::milkyWayBackgroundColorObject(),
-                             0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::ColorEdit3("Outer Color", &RtxOptions::milkyWayBackgroundColorObject());
         RemixGui::SetTooltipToLastWidgetOnHover(
             "Cool outer-edge tint of the band (where young stars dominate). Default cool blue.");
-        RemixGui::DragFloat3("Core Color", &RtxOptions::milkyWayCoreColorObject(),
-                             0.01f, 0.0f, 2.0f, "%.2f", sliderFlags);
+        RemixGui::ColorEdit3("Core Color", &RtxOptions::milkyWayCoreColorObject(),
+                             ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
         RemixGui::SetTooltipToLastWidgetOnHover(
-            "Warm bright-core tint at the galactic center. Default warm cream/yellow.");
+            "Warm bright-core tint at the galactic center. Default warm cream/yellow. "
+            "HDR — values above 1.0 push beyond LDR gamut for a brighter core.");
         // #4: Dust Color slider is intentionally dropped from ImGui.
         // RtxOption rtx.atmosphere.milkyWayDustColor remains .conf-tunable.
         RemixGui::DragFloat("Dust Amount", &RtxOptions::milkyWayDustAmountObject(),
@@ -876,8 +876,9 @@ namespace fork_hooks {
         RemixGui::DragFloat("Night Sky Brightness", &RtxOptions::nightSkyBrightnessObject(),
                             0.001f, 0.0f, 0.1f, "%.4f", sliderFlags);
         RemixGui::SetTooltipToLastWidgetOnHover("Airglow / ambient night-sky brightness.");
-        RemixGui::DragFloat3("Night Sky Color", &RtxOptions::nightSkyColorObject(),
-                             0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::ColorEdit3("Night Sky Color", &RtxOptions::nightSkyColorObject());
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Tint of the ambient night-sky / airglow contribution. Magnitude is set by Night Sky Brightness above.");
 
         renderStarsUI();
         renderMilkyWayUI();
