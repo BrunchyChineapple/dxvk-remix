@@ -1226,7 +1226,16 @@ namespace dxvk {
     // Atmosphere parameters
     RTX_OPTION("rtx.atmosphere", bool, sunDisc, true, "Include the sun itself in the output.");
     RTX_OPTION("rtx.atmosphere", float, sunSize, 0.545f, "Size of sun disc in degrees.");
-    RTX_OPTION("rtx.atmosphere", float, sunIntensity, 1.0f, "Strength of Sun.");
+    // Morrowind override: sunIntensity is NoSave because the wrapper drives it
+    // (sets to 0 in interiors to suppress sun illumination). Routed through the
+    // Derived layer so dev-menu sessions don't accidentally bake interior=0 into
+    // user.conf on save.
+    RTX_OPTION_FLAG("rtx.atmosphere", float, sunIntensity, 1.0f, RtxOptionFlags::NoSave,
+                    "Strength of Sun. Game-driven every frame (set to 0 in interiors).");
+    // Morrowind override: sunElevation/sunRotation are NoSave because the wrapper
+    // drives them every frame from the game's clock. Upstream made these plain
+    // RTX_OPTIONs so dev-menu tweaks persist; we route through the Derived layer
+    // so per-frame writes don't pollute user.conf.
     RTX_OPTION_FLAG("rtx.atmosphere", float, sunElevation, 15.0f, RtxOptionFlags::NoSave,
                     "Sun angle from horizon in degrees. Game-driven every frame.");
     RTX_OPTION_FLAG("rtx.atmosphere", float, sunRotation, 0.0f, RtxOptionFlags::NoSave,
@@ -1267,16 +1276,19 @@ namespace dxvk {
                "Celestial pole elevation from horizon in degrees. 90 = pole at zenith (default, matches pre-rotation behavior).");
     RTX_OPTION("rtx.atmosphere", float, starAxisRotation, 0.0f,
                "Celestial pole azimuth in degrees (0 = North). Only relevant when starAxisElevation != 90.");
-    RTX_OPTION("rtx.atmosphere", float, nightSkyBrightness, 0.008f,
-               "Ambient night-sky brightness from airglow and zodiacal light.");
+    // Morrowind override: nightSkyBrightness and milkyWayEnabled are NoSave
+    // because the wrapper drives them (zeros nightSky and disables milky way
+    // in interiors to suppress all night-sky illumination through cracks).
+    RTX_OPTION_FLAG("rtx.atmosphere", float, nightSkyBrightness, 0.008f, RtxOptionFlags::NoSave,
+                    "Ambient night-sky brightness from airglow and zodiacal light. Game-driven every frame.");
     RTX_OPTION("rtx.atmosphere", Vector3, nightSkyColor, Vector3(0.15f, 0.2f, 0.4f),
                "Base color tint of the night-sky airglow.");
     // ----- Milky Way controls (fork) -----
-    RTX_OPTION("rtx.atmosphere", bool, milkyWayEnabled, false,
-               "Master toggle for the galactic-band Milky Way effects: increased star density "
-               "inside the band, and the diffuse background dust glow. When disabled, the star "
-               "field is uniformly distributed at the base density across the whole sky. Off by "
-               "default -- stylized opt-in for users who want the band aesthetic.");
+    RTX_OPTION_FLAG("rtx.atmosphere", bool, milkyWayEnabled, false, RtxOptionFlags::NoSave,
+                    "Master toggle for the galactic-band Milky Way effects. Game-driven (forced "
+                    "off in interiors). When disabled, the star field is uniformly distributed at "
+                    "the base density across the whole sky. Off by default -- stylized opt-in for "
+                    "users who want the band aesthetic.");
     RTX_OPTION("rtx.atmosphere", float, milkyWayDensityBoost, 0.3f,
                "Density threshold reduction inside the galactic band. Higher = more (and dimmer) "
                "stars visible only in the band region, producing the dense-band look.");
@@ -1311,12 +1323,78 @@ namespace dxvk {
                "T^2.5, well below cloud body brightness at typical T<0.1 cores while leaving "
                "clear sky (T=1) unaffected. Lower = stars survive thicker clouds; 1.0 = no "
                "extra extinction (pure standard composite).");
-    RTX_OPTION("rtx.atmosphere", float, starAmbientCouplingStrength, 0.01f,
+    RTX_OPTION("rtx.atmosphere", float, starAmbientCouplingStrength, 0.005f,
                "Coupling strength of starlight/airglow into the cloud-march nightLight term. "
                "Adds a faint per-ray ambient based on (nightSkyColor * starBrightness * this) "
                "so cloud bodies lift slightly under starry skies, the same way moon-zenith "
-               "fill brightens cloud bodies near the moon. Default 0.01 = per-mille level; "
+               "fill brightens cloud bodies near the moon. Default 0.005 = sub-per-mille level; "
                "0 disables the coupling.");
+
+    // ----- Meteor / shooting star system (fork, 2026-05-21) -----
+    // Replaces the old hardcoded "one streak every 4s" path in atmosphere_sky.slangh.
+    // Streaks per second = meteorBaseRate + meteorShowerActivity * meteorShowerPeakRate.
+    // The activity field is NoSave because the wrapper drives it from the in-game
+    // calendar (Morrowind meteor showers in Sun's Dawn / Mid Year / Last Seed /
+    // Frost Fall / Sun's Dusk / Evening Star). All other fields are persistent.
+    RTX_OPTION("rtx.atmosphere", float, meteorBaseRate, 0.25f,
+               "Background sporadic meteor rate per second when the sun is below horizon. "
+               "Random radiants. 0 disables the always-on background. Default 0.25 = "
+               "one every 4 seconds (matches the prior hardcoded slot rate).");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, meteorShowerActivity, 0.0f, RtxOptionFlags::NoSave,
+                    "Game-driven [0..1] meteor shower intensity multiplier. The wrapper ramps "
+                    "this up during in-game shower events based on the Morrowind calendar. 0 = "
+                    "no shower active (only baseRate sporadics), 1 = peak shower. NoSave so per-"
+                    "frame writes don't pollute user.conf.");
+    RTX_OPTION("rtx.atmosphere", float, meteorShowerPeakRate, 5.0f,
+               "Streaks per second at peak shower (when meteorShowerActivity = 1.0). Real "
+               "shower ZHRs range from ~10 (minor) to ~100 (Geminids/Perseids); 5/sec = ~3000 "
+               "ZHR which is stylized but readable on-screen. Lower for more subtle showers.");
+    RTX_OPTION("rtx.atmosphere", float, meteorBrightness, 1.0f,
+               "Brightness scalar applied to all meteor streak intensity. 1.0 = calibrated "
+               "default. Higher for stylized brilliance, lower for understated.");
+    RTX_OPTION("rtx.atmosphere", Vector3, meteorColor, Vector3(1.0f, 0.95f, 0.85f),
+               "Base color tint for meteor streaks. Default warm-white (1.0, 0.95, 0.85) "
+               "matches typical iron/nickel meteor composition. Per-streak variation around "
+               "this base is controlled by meteorColorVariation.");
+    RTX_OPTION("rtx.atmosphere", float, meteorTrailLength, 0.05f,
+               "Streak length in unit-sphere chord units. 0.05 = ~3 degrees of sky. Larger = "
+               "longer trails (slower-looking meteors), smaller = shorter quick streaks.");
+    RTX_OPTION("rtx.atmosphere", float, meteorTrailWidth, 1.0f,
+               "Multiplier on the Gaussian falloff sharpness across the streak. 1.0 = "
+               "calibrated baseline. Higher = thinner more pinpoint streak, lower = wider "
+               "softer streak.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, meteorRadiantElevation, 60.0f, RtxOptionFlags::NoSave,
+                    "Elevation in degrees of the shower radiant point. All shower meteors emanate "
+                    "from a cone around this direction (sporadic background ignores it). Wrapper "
+                    "drives this per-shower from the canonical Morrowind shower table — NoSave so "
+                    "calendar-driven writes don't pollute user.conf.");
+    RTX_OPTION_FLAG("rtx.atmosphere", float, meteorRadiantRotation, 180.0f, RtxOptionFlags::NoSave,
+                    "Azimuth in degrees of the shower radiant point (0 = +X, 90 = +Z). Wrapper "
+                    "drives this per-shower. NoSave.");
+    RTX_OPTION("rtx.atmosphere", float, meteorRadiantSpread, 25.0f,
+               "Cone half-angle in degrees around the radiant within which shower streaks "
+               "appear. Tight (~10) = sharp Geminid-like radiant cluster, wide (~45) = diffuse "
+               "scattered shower.");
+    RTX_OPTION("rtx.atmosphere", bool, meteorEnableRadiantBias, true,
+               "When true, shower meteors emanate from the radiant point (real meteor showers "
+               "do this). When false, all streaks are randomly distributed regardless of "
+               "shower activity. The base sporadic rate always uses random distribution.");
+    RTX_OPTION("rtx.atmosphere", float, meteorFireballChance, 0.05f,
+               "Per-streak probability [0..1] of becoming a bright slow fireball. Real "
+               "fireballs are rare (~1 in 100); 0.05 default is stylized for visibility. "
+               "0 disables fireballs.");
+    RTX_OPTION("rtx.atmosphere", float, meteorFireballBrightness, 4.0f,
+               "Brightness multiplier applied to fireball-class streaks on top of "
+               "meteorBrightness. Real fireballs are 100x+ brighter than typical meteors; "
+               "4x is a tonemapped-friendly default.");
+    RTX_OPTION("rtx.atmosphere", float, meteorColorVariation, 0.3f,
+               "Random per-streak hue variation [0..1]. 0 = all meteors use exactly meteorColor, "
+               "1 = full random tinting (green from copper, blue from magnesium, red from "
+               "nitrogen, etc., simulating composition variance).");
+    RTX_OPTION("rtx.atmosphere", float, meteorMoonDimmingStrength, 1.0f,
+               "How aggressively bright moons dim faint meteors. Real bright moonlit nights "
+               "wash out faint meteors; 1.0 = physically-plausible suppression, 0 = no moon "
+               "interaction. Doesn't affect fireballs (they survive moonlit skies).");
 
     // ----- Per-moon parameters (fork) -----
     // MAX_MOONS in atmosphere_args.h must equal the number of DECLARE_MOON_OPTIONS
@@ -1327,8 +1405,8 @@ namespace dxvk {
     // every frame from Morrowind's scenegraph; appearance knobs persist
     // normally in user config.
 #define DECLARE_MOON_OPTIONS(N, DEFAULT_ENABLED, DEFAULT_RADIUS, DEFAULT_BRIGHTNESS, DEFAULT_COLOR, DEFAULT_STYLE) \
-    RTX_OPTION("rtx.atmosphere.moon" #N, bool, enabled##N, DEFAULT_ENABLED,                     \
-               "Enable moon " #N " rendering.");                                                \
+    RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, bool, enabled##N, DEFAULT_ENABLED, RtxOptionFlags::NoSave, \
+                    "Enable moon " #N " rendering. Game-driven (forced off in interiors).");        \
     RTX_OPTION("rtx.atmosphere.moon" #N, float, angularRadius##N, DEFAULT_RADIUS,               \
                "Moon " #N " angular diameter in degrees.");                                     \
     RTX_OPTION("rtx.atmosphere.moon" #N, float, brightness##N, DEFAULT_BRIGHTNESS,              \
@@ -1351,10 +1429,10 @@ namespace dxvk {
                "Moon " #N " dark-side brightness as fraction of lit side.");                    \
     RTX_OPTION("rtx.atmosphere.moon" #N, float, roughnessAmount##N, 1.0f,                       \
                "Moon " #N " micro-detail surface roughness amplitude.");                        \
-    RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, float, elevation##N, 45.0f, RtxOptionFlags::NoSave,\
-                    "Moon " #N " elevation in degrees. Game-driven every frame.");              \
+    RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, float, elevation##N, 45.0f, RtxOptionFlags::NoSave, \
+                    "Moon " #N " elevation in degrees. Game-driven every frame.");               \
     RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, float, rotation##N, 90.0f, RtxOptionFlags::NoSave, \
-                    "Moon " #N " rotation in degrees. Game-driven every frame.");               \
+                    "Moon " #N " rotation in degrees. Game-driven every frame.");                \
     RTX_OPTION_FLAG("rtx.atmosphere.moon" #N, float, phase##N, 0.5f, RtxOptionFlags::NoSave,    \
                     "Moon " #N " phase [0,1]. Game-driven every frame.")
 
@@ -1449,12 +1527,24 @@ namespace dxvk {
                "Ambient airglow per-moon strength contribution to nightLight. The cloud "
                "volume gets a uniform sky-bounce from each enabled moon scaled by this "
                "constant. Default 0.0015.");
+    RTX_OPTION("rtx.atmosphere", float, moonSilverLiningIntensity, 1.0f,
+               "Master multiplier on the combined cloud-moon silver-lining contribution "
+               "(Lambert diffuse + HG phase). Default 1.0 = current calibrated look. "
+               "Composes with moonCloudDiffuseGain/PhaseGain for ratio tuning.");
+    RTX_OPTION("rtx.atmosphere", float, moonHaloGlowStrength, 1.0f,
+               "Master multiplier on the combined moon halo + ambient airglow contribution. "
+               "Default 1.0 = current calibrated look. Composes with moonHaloMagnitude / "
+               "moonAmbientAirglow for ratio tuning.");
 
     // Cloud parameters (procedural FBM cloud layer)
     // Morrowind override: cloudEnabled stays true because the wrapper drives
     // cloudCoverageMean from GetCurrentWeather every frame (see distantland.cpp).
     // Low coverage on Clear weather already hides the clouds.
-    RTX_OPTION("rtx.atmosphere", bool, cloudEnabled, true, "Enable procedural cloud rendering.");
+    // Morrowind override: cloudEnabled is NoSave because the wrapper drives it
+    // (forced false in interiors to kill cloud rendering). cloudCoverageMean
+    // is also NoSave because the wrapper drives it from GetCurrentWeather.
+    RTX_OPTION_FLAG("rtx.atmosphere", bool, cloudEnabled, true, RtxOptionFlags::NoSave,
+                    "Enable procedural cloud rendering. Game-driven (forced off in interiors).");
     RTX_OPTION("rtx.atmosphere", float, cloudDensity, 1.65f, "Cloud opacity/density multiplier.");
     RTX_OPTION("rtx.atmosphere", float, cloudAltitude, 1.3f, "Cloud layer altitude in kilometers.");
     RTX_OPTION("rtx.atmosphere", Vector3, cloudColor, Vector3(0.89f, 0.92f, 1.0f), "Base cloud color (albedo).");
@@ -1534,8 +1624,10 @@ namespace dxvk {
                "Mean cloud type across the sky [0,1]: 0=stratus, 0.5=stratocumulus, 1=cumulus.");
     RTX_OPTION("rtx.atmosphere", float, cloudTypeSpread, 0.5f,
                "Spatial variation amplitude for cloud type [0,1]. 0=uniform, 1=full range across the sky.");
-    RTX_OPTION("rtx.atmosphere", float, cloudTypeNoiseScale, 0.01f,
-               "Region size frequency for type noise. Numerically smaller = larger spatial features.");
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeNoiseScale, 0.001f,
+               "Region size frequency for type noise. Numerically smaller = larger spatial features. "
+               "Capped at 0.0034 in the UI because faster variation puts visible 2D-noise cell "
+               "structure at sub-cumulus scales (regular grid of cumulus blobs).");
     // Morrowind override: cloudCoverageMean is NoSave because the wrapper drives
     // it from GetCurrentWeather every frame. Upstream declares this as a plain
     // RTX_OPTION; we route it through the Derived layer so per-frame writes
@@ -1610,6 +1702,23 @@ namespace dxvk {
                "Nubis Cubed sigma_ms value deep inside cloud (sdf <= -cloudMsSdfDepth).");
     RTX_OPTION("rtx.atmosphere", float, cloudMsSdfDepth, 128.0f,
                "Nubis Cubed SDF depth in meters at which sigma_ms saturates to deep value.");
+
+    // Sunset ambient warm/cool blend (fork — 2026-05-21).
+    // At low sun, the ambient sky color used for cloud volumetric scattering is
+    // sampled both in the sun direction (warm) and the anti-sun horizon (cool),
+    // and per-sample blended by the D_sun voxel grid so shadowed cloud interiors
+    // pick up the cool side while sun-lit edges stay warm. The effect smoothly
+    // ramps off above cloudSunsetAmbientRampHighSun so daytime clouds are
+    // unaffected. cloudSunsetAmbientStrength = 0 disables the feature entirely.
+    RTX_OPTION("rtx.atmosphere", float, cloudSunsetAmbientStrength, 1.0f,
+               "Master strength of the sunset warm/cool ambient blend. 0 = feature off, "
+               "1 = baseline contrast, >1 = exaggerated cool side.");
+    RTX_OPTION("rtx.atmosphere", float, cloudSunsetAmbientReachInvKm, 1.0f,
+               "How aggressively D_sun (self-shadow optical depth, km) penetrates the cool blend. "
+               "Higher = clouds turn cool faster with shadow depth.");
+    RTX_OPTION("rtx.atmosphere", float, cloudSunsetAmbientRampHighSun, 0.4f,
+               "sin(sun elevation) at which the sunset ambient effect smooth-fades to zero. "
+               "Default 0.4 (~24 degrees above horizon). Effect is at full strength when sun is at the horizon.");
 
     // Nubis Cubed sky-miss composite gate (fork — 2026-05-12, C5).
     // When true, the primary-ray sky-miss path samples the AtmosphereCloudRender

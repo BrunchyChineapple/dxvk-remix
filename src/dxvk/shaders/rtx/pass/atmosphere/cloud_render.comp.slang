@@ -196,7 +196,9 @@ float sampleCloudSunOpticalDepth_local(vec3 cloudHitPos, vec3 sunDir,
 struct CloudShadeContext {
   vec3  sunDirYUp;
   vec3  sunRadiance;
-  vec3  skyRadiance;
+  vec3  skyRadianceWarm;     // Sun-direction sky LUT sample (warm at sunset).
+  vec3  skyRadianceCool;     // Anti-sun-horizon sky LUT sample (cool at sunset).
+                             // Per-sample blend happens in evalNubisCubedSample.
   vec3  combinedMoonDir;
   vec3  combinedMoonDiffuseCoeff;
   vec3  combinedMoonPhaseAmt;
@@ -267,8 +269,8 @@ void marchCloudSlab(vec3   viewDirYUp,
     // doesn't need its own spread knobs. Mean values are per-slab so layer 2
     // can pick a different baseline (cirrus typeMean ~= 0.05 vs cumulus 0.5).
     vec2 sampleXZ = vec2(samplePos.x, samplePos.z);
-    float typeNoise     = smoothNoise2D(sampleXZ * args.cloudTypeNoiseScale, 200.0f + slabNoiseSeedOffset);
-    float coverageNoise = smoothNoise2D(sampleXZ * args.cloudCoverageNoiseScale, 250.0f + slabNoiseSeedOffset);
+    float typeNoise     = cloudControlField2D(sampleXZ * args.cloudTypeNoiseScale, 200.0f + slabNoiseSeedOffset);
+    float coverageNoise = cloudControlField2D(sampleXZ * args.cloudCoverageNoiseScale, 250.0f + slabNoiseSeedOffset);
     float typeLocal     = saturate(slabTypeMean     + (typeNoise     - 0.5f) * args.cloudTypeSpread);
     float coverageLocal = saturate(slabCoverageMean + (coverageNoise - 0.5f) * args.cloudCoverageSpread);
 
@@ -288,7 +290,8 @@ void marchCloudSlab(vec3   viewDirYUp,
     // cirrus is too thin to need precomputed shadow data of its own.
     NubisCubedLighting lighting = evalNubisCubedSample(
         samplePos, hf, density,
-        viewDirYUp, ctx.sunDirYUp, ctx.sunRadiance, ctx.skyRadiance,
+        viewDirYUp, ctx.sunDirYUp, ctx.sunRadiance,
+        ctx.skyRadianceWarm, ctx.skyRadianceCool,
         args, /*isZUp=*/false);
 
     // ===== Per-sample moon direct light =====
@@ -416,10 +419,24 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
   vec3 sunDirForAmbient = sunDirYUp;
   sunDirForAmbient.y = max(sunDirForAmbient.y, 0.05f);
   sunDirForAmbient = normalize(sunDirForAmbient);
-  vec3 skyRadiance = sampleSkyAmbientForVolume(sunDirForAmbient, args,
-                                                AtmosphereSkyViewLut,
-                                                AtmosphereCloudSkyTransmittanceLut,
-                                                AtmosphereSkyViewSampler);
+  vec3 skyRadianceWarm = sampleSkyAmbientForVolume(sunDirForAmbient, args,
+                                                    AtmosphereSkyViewLut,
+                                                    AtmosphereCloudSkyTransmittanceLut,
+                                                    AtmosphereSkyViewSampler);
+
+  // Anti-sun horizon sample for the per-sample warm/cool blend (fork —
+  // 2026-05-21). Mirrors the sun-direction sample's small y-lift to keep
+  // the lookup above sampleSkyAmbientForVolume's below-horizon zero-clamp.
+  // At sunset, this picks up the deep teal / Belt-of-Venus pink band on the
+  // opposite side of the sky; at midday, the cloudSunsetAmbientRampHighSun
+  // smoothstep inside evalNubisCubedSample rolls the contribution to zero
+  // so this sample never reaches the composite.
+  vec3 antiSunDir = vec3(-sunDirYUp.x, 0.05f, -sunDirYUp.z);
+  antiSunDir = normalize(antiSunDir);
+  vec3 skyRadianceCool = sampleSkyAmbientForVolume(antiSunDir, args,
+                                                    AtmosphereSkyViewLut,
+                                                    AtmosphereCloudSkyTransmittanceLut,
+                                                    AtmosphereSkyViewSampler);
 
   // ===== Per-pixel moon-lighting precompute =====
   // Direct port of evalClouds (atmosphere_sky.slangh:756-884). The Nubis Cubed
@@ -558,7 +575,8 @@ void main(uint3 dispatchId : SV_DispatchThreadID) {
   CloudShadeContext ctx;
   ctx.sunDirYUp                = sunDirYUp;
   ctx.sunRadiance              = sunRadiance;
-  ctx.skyRadiance              = skyRadiance;
+  ctx.skyRadianceWarm          = skyRadianceWarm;
+  ctx.skyRadianceCool          = skyRadianceCool;
   ctx.combinedMoonDir          = combinedMoonDir;
   ctx.combinedMoonDiffuseCoeff = combinedMoonDiffuseCoeff;
   ctx.combinedMoonPhaseAmt     = combinedMoonPhaseAmt;

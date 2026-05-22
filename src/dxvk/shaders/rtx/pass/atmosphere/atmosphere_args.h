@@ -195,6 +195,40 @@ struct AtmosphereArgs {
   float padCloudLook1;
   float padCloudLook2;
 
+  // ----- Meteor / shooting star system (fork, 2026-05-21) -----
+  // Replaces the old hardcoded "one streak every 4s" path. Now driven by:
+  //   - meteorBaseRate: streaks per second always-on at night (sporadic background)
+  //   - meteorShowerActivity: 0..1 game-driven multiplier (wrapper ramps during
+  //     in-game showers based on the Morrowind calendar)
+  //   - meteorShowerPeakRate: streaks per second at peak shower
+  // Effective rate per second = baseRate + activity * peakRate.
+  // Per-streak: brightness, length, gaussian width, color.
+  // Radiant: all shower streaks emanate from a sky direction (real meteor showers
+  // do this — Geminids radiate from Gemini, etc.). Sporadic background ignores
+  // the radiant and uses random directions.
+  float meteorBaseRate;                   // Background sporadic rate (per-second). Default 0.25.
+  float meteorShowerActivity;             // Wrapper-driven 0..1 shower intensity multiplier. NoSave.
+  float meteorShowerPeakRate;             // Peak shower rate (per-second). Default 5.0.
+  float meteorBrightness;                 // Brightness scalar. Default 1.0.
+
+  vec3 meteorColor;                       // Base streak tint. Default warm-white (1.0, 0.95, 0.85).
+  float meteorTrailLength;                // Streak length in unit-sphere chord. Default 0.05.
+
+  float meteorTrailWidth;                 // Gaussian falloff sharpness mult. Higher = thinner. Default 1.0.
+  float meteorRadiantElevation;           // Shower radiant point elevation in degrees. Default 60.
+  float meteorRadiantRotation;            // Shower radiant point azimuth in degrees. Default 180.
+  float meteorRadiantSpread;              // Cone half-angle around radiant in degrees. Default 25.
+
+  float meteorEnableRadiantBias;          // 1=shower streaks emanate from radiant, 0=random everywhere. Default 1.
+  float meteorFireballChance;             // Per-streak probability of being a bright slow fireball [0..1]. Default 0.05.
+  float meteorFireballBrightness;         // Brightness multiplier for fireballs. Default 4.0.
+  float meteorColorVariation;             // Random per-streak hue variation [0..1]. Default 0.3.
+
+  float meteorMoonDimmingStrength;        // How aggressively bright moons dim faint meteors [0..2]. Default 1.0.
+  float padMeteor0;                       // 16-byte alignment
+  float padMeteor1;
+  float padMeteor2;
+
   // ----- Cloud parameters (fork: procedural FBM cloud layer at fixed altitude) -----
   vec3 cloudColor;          // Cloud base color (typically white)
   float cloudDensity;       // Overall opacity/density multiplier
@@ -370,4 +404,15 @@ struct AtmosphereArgs {
   uint  cloudWorleyOctaves;        // FBM octave count (clamped 1..4 in shader)
   float cloudAerialHazePerKm;      // Aerial-perspective HAZE on cloud radiance (1/km). Dims distant
                                    // cloud samples toward atmospheric color. Visual softness control.
+
+  // ----- Sunset ambient warm/cool blend (fork — 2026-05-21) -----
+  // At low sun elevations, lerp the per-sample ambient sky color between the
+  // sun-direction sky LUT sample (warm) and the anti-sun-horizon sky LUT
+  // sample (cool), driven by the D_sun voxel grid so shadowed cloud interiors
+  // read cool while sun-lit edges stay warm. Ramped off above rampHighSun so
+  // midday clouds are unaffected. Consumed by evalNubisCubedSample.
+  float cloudSunsetAmbientStrength;   // Master multiplier on cool blend (0 = feature off, 1 = baseline)
+  float cloudSunsetAmbientReachInvKm; // D_sun reach in 1/km — higher = clouds turn cool faster with shadow depth
+  float cloudSunsetAmbientRampHighSun;// sin(sun elevation) at which the effect smooth-fades to zero
+  float pad_cloudSunsetAmbient0;      // 16-byte alignment
 };

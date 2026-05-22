@@ -306,6 +306,10 @@ namespace {
     args.cloudVoxelGridSunDirty      = 0u;
     args.cloudVoxelGridAmbientDirty  = 0u;
     args.cloudVoxelGridFrameOffset   = 0.0f;
+    // Meteor activity changes per-frame from the wrapper but doesn't affect
+    // the sky / cloud LUTs (meteors render in the runtime-miss path), so
+    // normalize it out of the cache key.
+    args.meteorShowerActivity        = 0.0f;
   }
 } // anonymous namespace
 
@@ -386,8 +390,9 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
 
   // Sidereal sky rotation. Default axis (elevation 90, rotation 0) keeps the
   // pre-rotation behavior; non-default values come from rtx.conf or game
-  // plugin pushes. starRotation is the only field expected to change frame-
-  // to-frame, so it is the only one flagged NoSave.
+  // plugin pushes. starRotation is game-drivable per-frame but also persists
+  // when saved (last writer wins during a session; cold start uses the saved
+  // value until any plugin push lands).
   args.starRotation      = RtxOptions::starRotation();
   args.starAxisElevation = RtxOptions::starAxisElevation();
   args.starAxisRotation  = RtxOptions::starAxisRotation();
@@ -425,14 +430,39 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.padMoonNee2                     = 0.0f;
 
   // ----- Moon cloud-look + halo shape constants (fork, Phase 3 Task 2) -----
-  args.moonCloudDiffuseGain            = RtxOptions::moonCloudDiffuseGain();
-  args.moonCloudPhaseGain              = RtxOptions::moonCloudPhaseGain();
+  // moonSilverLiningIntensity / moonHaloGlowStrength are master multipliers
+  // applied here at args-population time so shaders see the pre-scaled value.
+  // Default 1.0 yields byte-identical behavior to pre-master-multiplier builds.
+  const float silverLining             = RtxOptions::moonSilverLiningIntensity();
+  const float haloGlow                 = RtxOptions::moonHaloGlowStrength();
+  args.moonCloudDiffuseGain            = RtxOptions::moonCloudDiffuseGain()  * silverLining;
+  args.moonCloudPhaseGain              = RtxOptions::moonCloudPhaseGain()    * silverLining;
   args.moonCloudAnisotropy             = RtxOptions::moonCloudAnisotropy();
-  args.moonHaloMagnitude               = RtxOptions::moonHaloMagnitude();
-  args.moonAmbientAirglow              = RtxOptions::moonAmbientAirglow();
+  args.moonHaloMagnitude               = RtxOptions::moonHaloMagnitude()     * haloGlow;
+  args.moonAmbientAirglow              = RtxOptions::moonAmbientAirglow()    * haloGlow;
   args.padCloudLook0                   = 0.0f;
   args.padCloudLook1                   = 0.0f;
   args.padCloudLook2                   = 0.0f;
+
+  // ----- Meteor / shooting star system (fork, 2026-05-21) -----
+  args.meteorBaseRate              = RtxOptions::meteorBaseRate();
+  args.meteorShowerActivity        = RtxOptions::meteorShowerActivity();
+  args.meteorShowerPeakRate        = RtxOptions::meteorShowerPeakRate();
+  args.meteorBrightness            = RtxOptions::meteorBrightness();
+  args.meteorColor                 = RtxOptions::meteorColor();
+  args.meteorTrailLength           = RtxOptions::meteorTrailLength();
+  args.meteorTrailWidth            = RtxOptions::meteorTrailWidth();
+  args.meteorRadiantElevation      = RtxOptions::meteorRadiantElevation();
+  args.meteorRadiantRotation       = RtxOptions::meteorRadiantRotation();
+  args.meteorRadiantSpread         = RtxOptions::meteorRadiantSpread();
+  args.meteorEnableRadiantBias     = RtxOptions::meteorEnableRadiantBias() ? 1.0f : 0.0f;
+  args.meteorFireballChance        = RtxOptions::meteorFireballChance();
+  args.meteorFireballBrightness    = RtxOptions::meteorFireballBrightness();
+  args.meteorColorVariation        = RtxOptions::meteorColorVariation();
+  args.meteorMoonDimmingStrength   = RtxOptions::meteorMoonDimmingStrength();
+  args.padMeteor0                  = 0.0f;
+  args.padMeteor1                  = 0.0f;
+  args.padMeteor2                  = 0.0f;
 
   // Cloud parameters
   {
@@ -514,6 +544,11 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.cloudMsSdfDepth      = RtxOptions::cloudMsSdfDepth();
     args.cloudRenderFrameIdx  = m_cloudRenderFrameIdx;
     args.pad_nubisCubed0      = 0.0f;
+
+    args.cloudSunsetAmbientStrength    = RtxOptions::cloudSunsetAmbientStrength();
+    args.cloudSunsetAmbientReachInvKm  = RtxOptions::cloudSunsetAmbientReachInvKm();
+    args.cloudSunsetAmbientRampHighSun = RtxOptions::cloudSunsetAmbientRampHighSun();
+    args.pad_cloudSunsetAmbient0       = 0.0f;
   }
 
   // Cloud render camera basis (fork — 2026-05-12, C4). Pushed from
