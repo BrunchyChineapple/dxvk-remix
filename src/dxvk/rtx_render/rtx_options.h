@@ -1362,11 +1362,12 @@ namespace dxvk {
                     "Sourced from tx_stars_*.dds and tx_birth_*.dds. Default on. NoSave because "
                     "the wrapper toggles this off in interiors to prevent bleed-through; "
                     "persistence would freeze whichever state was last seen on save.");
-    RTX_OPTION("rtx.atmosphere", float, constellationStarBrightness, 1.5f,
+    RTX_OPTION("rtx.atmosphere", float, constellationStarBrightness, 1.0f,
                "Brightness multiplier on the named constellation stars relative to the procedural "
                "star field. Bake stores per-star brightness in [0..1]; this is the global "
-               "post-bake gain. Default 1.5 makes named figures clearly readable above the "
-               "background.");
+               "post-bake gain. Default 1.0 = same scale as procedural stars (named stars look "
+               "like the brightest individual points in the field rather than overpowering it). "
+               "Raise above 1.0 for a clearer figure-stamp look.");
     RTX_OPTION("rtx.atmosphere", float, constellationEdgeBrightness, 0.0f,
                "Polyline edge brightness for the connect-the-dots overlay. 0 (default) draws "
                "stars only — the figures are implied by spatial layout. Set to ~0.05-0.15 to "
