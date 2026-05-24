@@ -28,6 +28,8 @@
 // existing atmosphere_common.slangh include only — the sky-only functions
 // here then never end up in their compiled SPIR-V.
 //
+
+#include "constellations.h"  // baked lookup table for evalConstellations
 // Cloud and atmosphere helpers used by both the sky path and the ground
 // shadow term (intersectSphere, cloudPlanetRadius, computeCloudHeightFraction,
 // sampleCloudDensityTextured, intersectCloudLayer, evalCloudGroundShadow,
@@ -96,6 +98,28 @@ vec3 hash33(vec3 p) {
   return vec3(float(q.x), float(q.y), float(q.z)) / 4294967296.0f;
 }
 
+// Apply the sky's sidereal rotation to a sample direction. Used by both the
+// procedural star field and the constellation overlay so the named figures
+// rotate with the rest of the night sky and don't drift relative to the
+// background stars.
+//
+// Default axis (elevation 90, azimuth 0) places the celestial pole at +Y
+// (zenith). Combined with starRotation = 0, the Rodrigues formula reduces
+// to the identity, so unrotated callers see the original direction.
+vec3 applySiderealRotation(vec3 dir, AtmosphereArgs args) {
+  const float kDegToRad = 3.14159265358979323846f / 180.0f;
+  float poleElev = args.starAxisElevation * kDegToRad;
+  float poleAzi  = args.starAxisRotation  * kDegToRad;
+  vec3 axis = vec3(cos(poleElev) * sin(poleAzi),
+                   sin(poleElev),
+                   cos(poleElev) * cos(poleAzi));
+
+  float rotRad = args.starRotation * kDegToRad;
+  float c = cos(rotRad);
+  float s = sin(rotRad);
+  return dir * c + cross(axis, dir) * s + axis * dot(axis, dir) * (1.0f - c);
+}
+
 // Generate star brightness for a given sky direction
 // Returns star color (white-blue-orange based on temperature) and brightness
 vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
@@ -107,25 +131,7 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   // for galactic-band placement, cube-face indexing, and twinkle phase. The
   // whole pattern (band, individual stars, color temperatures) rotates as
   // one rigid body, matching real-sky behavior.
-  //
-  // Default axis (elevation 90, azimuth 0) places the celestial pole at +Y
-  // (zenith). Combined with starRotation = 0, the Rodrigues formula below
-  // reduces to the identity, so unrotated callers see the original pattern
-  // unchanged.
-  {
-    const float kDegToRad = 3.14159265358979323846f / 180.0f;
-    float poleElev = args.starAxisElevation * kDegToRad;
-    float poleAzi  = args.starAxisRotation  * kDegToRad;
-    vec3 axis = vec3(cos(poleElev) * sin(poleAzi),
-                     sin(poleElev),
-                     cos(poleElev) * cos(poleAzi));
-
-    float rotRad = args.starRotation * kDegToRad;
-    float c = cos(rotRad);
-    float s = sin(rotRad);
-    // Rodrigues' rotation: v_rot = v*c + (k × v)*s + k*(k·v)*(1 - c)
-    dir = dir * c + cross(axis, dir) * s + axis * dot(axis, dir) * (1.0f - c);
-  }
+  dir = applySiderealRotation(dir, args);
 
   float theta = acos(clamp(dir.y, -1.0f, 1.0f));
   float phi = atan2(dir.z, dir.x);
@@ -373,6 +379,141 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   return totalStars * args.starBrightness + milkyWayGlow;
 }
 
+// ----------------------------------------------------------------------------
+// Constellation overlay (fork — 2026-05-24)
+//
+// Composites a baked lookup table of named-star points and polyline edges on
+// top of the procedural star field. Source: Morrowind's tx_stars_*.dds (3
+// Guardians) + tx_birth_*.dds (10 Charges + Serpent). Layout: Guardian-
+// triangle at central N/E/W, Charges clustered around their Guardian,
+// Serpent at mid-south. See patches/rtxdll/bake_constellations.py and
+// constellations.h for the table format.
+//
+// Per-constellation Y-up direction for star (cAz, cEl):
+//    az = degrees from North (CW), el = degrees above horizon
+//    dir = (cos(el)*sin(az), sin(el), cos(el)*cos(az))
+//
+// Each named star renders as a Gaussian point with PSF tied to
+// args.starPsfSharpness / args.constellationStarSize. Polyline edges (when
+// constellationEdgeBrightness > 0) draw as a Gaussian-weighted distance to
+// the great-circle arc between the two endpoint stars.
+//
+// Birthsign-month gating: the constellation whose birthsignMonth matches
+// args.constellationCurrentMonth (1..12) gets a brightness boost; others
+// stay at baseline. month=0 disables the highlight.
+// ----------------------------------------------------------------------------
+
+// Named-star color palette by constellation kind. Guardians are warm white
+// (matches the Warrior pink in tx_stars_warrior.dds without special-casing
+// per-Guardian). Charges are cool cyan. Wanderer is pink-tinged.
+static const vec3 kConstellationColorByKind[3] = {
+  vec3(1.00f, 0.95f, 0.85f),  // 0 Guardian — warm white
+  vec3(0.85f, 0.95f, 1.05f),  // 1 Charge   — cool cyan
+  vec3(1.05f, 0.85f, 0.95f),  // 2 Wanderer — pink-magenta
+};
+
+// Convert (azimuth°, elevation°) to a unit Y-up direction.
+vec3 azElToDir(float azDeg, float elDeg) {
+  const float kDegToRad = 3.14159265358979323846f / 180.0f;
+  float az = azDeg * kDegToRad;
+  float el = elDeg * kDegToRad;
+  float ce = cos(el);
+  return vec3(ce * sin(az), sin(el), ce * cos(az));
+}
+
+vec3 evalConstellations(vec3 viewDir, AtmosphereArgs args) {
+  if (args.constellationsEnabled < 0.5f) return vec3(0.0f);
+
+  // Sidereal rotation lockstep with the procedural star field. Without
+  // this the named figures would drift relative to the rest of the sky.
+  vec3 dir = applySiderealRotation(normalize(viewDir), args);
+
+  // PSF sharpness — scaled by the user's named-star size knob. Larger
+  // value = wider star (lower exponent). Use 1/(size*size) so doubling
+  // size halves the falloff exponent in a predictable way.
+  float sizeScale = max(args.constellationStarSize, 0.1f);
+  float starK = args.starPsfSharpness / (sizeScale * sizeScale);
+
+  // Edge PSF: width is independent of star size — chosen so polylines read
+  // as faint glow rather than fat ribbons. K_edge ~= 4500 gives ~0.2°
+  // FWHM on a unit sphere.
+  const float kEdgeK = 4500.0f;
+
+  // Current-month highlight: which (if any) constellation gets the boost.
+  // 0 means "no highlight"; 1..12 select by matching birthsignMonth.
+  int currentMonth = int(round(args.constellationCurrentMonth));
+
+  vec3 result = vec3(0.0f);
+
+  // Single loop over the table. CONSTELLATION_COUNT is small (13) and
+  // most of the per-pixel work is exp() falloffs that go to ~0 for any
+  // constellation far from the view direction. Don't force [unroll] —
+  // the compiler can keep this as a runtime loop and skip cheaply when
+  // dir is nowhere near a constellation's stars.
+  for (uint c = 0u; c < CONSTELLATION_COUNT; ++c) {
+    ConstellationMeta meta = kConstellationMeta[c];
+    if (meta.starCount == 0u) continue;
+
+    vec3 baseColor = kConstellationColorByKind[meta.kind];
+
+    // Per-constellation brightness factor.
+    float kindBoost = (meta.kind == 0u) ? args.constellationGuardianBoost : 1.0f;
+    float monthBoost = (currentMonth > 0 && uint(currentMonth) == meta.birthsignMonth)
+                        ? args.constellationMonthHighlight
+                        : 1.0f;
+    float perConst = args.constellationStarBrightness * kindBoost * monthBoost;
+
+    // Pre-compute star directions for this constellation so the edge pass
+    // can reuse them without re-decoding az/el. Cap to actual starCount.
+    vec3 starDirs[MAX_STARS_PER_CONSTELLATION];
+    for (uint i = 0u; i < meta.starCount; ++i) {
+      ConstellationStar s = kConstellationStars[c * MAX_STARS_PER_CONSTELLATION + i];
+      starDirs[i] = azElToDir(s.azimuth, s.elevation);
+    }
+
+    // Stars: Gaussian point sources.
+    for (uint i = 0u; i < meta.starCount; ++i) {
+      ConstellationStar s = kConstellationStars[c * MAX_STARS_PER_CONSTELLATION + i];
+      vec3 sd = starDirs[i];
+      // Cosine-similarity → squared chord distance on the unit sphere
+      // (cheap and monotonic with great-circle distance for small angles).
+      float cd = 1.0f - dot(dir, sd);
+      // Gaussian PSF; pre-scaled by intrinsic star brightness from the bake.
+      float spot = exp(-cd * cd * starK * 1000000.0f);
+      result += baseColor * (spot * s.brightness * perConst);
+    }
+
+    // Edges: distance from the view direction to the great-circle arc.
+    // Per-edge Gaussian falloff. Skip when edge brightness is zeroed (default).
+    if (args.constellationEdgeBrightness > 0.0f) {
+      float edgeIntensity = args.constellationEdgeBrightness * monthBoost * kindBoost;
+      for (uint e = 0u; e < meta.edgeCount; ++e) {
+        ConstellationEdge ed = kConstellationEdges[c * MAX_EDGES_PER_CONSTELLATION + e];
+        if (ed.i >= meta.starCount || ed.j >= meta.starCount) continue;
+        vec3 a = starDirs[ed.i];
+        vec3 b = starDirs[ed.j];
+
+        // Closest point on the segment a→b to dir, on the unit sphere.
+        // For short edges, linear interpolation in cartesian space is a
+        // good approximation; we project back to the unit sphere afterward.
+        vec3 ab = b - a;
+        float ab2 = max(dot(ab, ab), 1e-6f);
+        float t = clamp(dot(dir - a, ab) / ab2, 0.0f, 1.0f);
+        vec3 closest = normalize(a + ab * t);
+        float cd2 = 1.0f - dot(dir, closest);
+        float glow = exp(-cd2 * cd2 * kEdgeK);
+        // Don't draw glow at the endpoints — they're already covered by
+        // the bright star points and adding edge glow there makes them
+        // bloom unrealistically.
+        float endpointFade = 4.0f * t * (1.0f - t);  // peaks at t=0.5
+        result += baseColor * (glow * edgeIntensity * endpointFade);
+      }
+    }
+  }
+
+  return result;
+}
+
 // Compute night sky contribution split into two layers:
 //   - starsOut: discrete star field + shooting stars (HDR point-source content
 //     that needs steeper extinction through clouds, applied by the caller via
@@ -405,6 +546,13 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
 
   // Star field (includes galactic density band — no separate nebula overlay needed)
   vec3 stars = evalStarField(viewDir, args) * horizonExtinction;
+
+  // Lore-accurate constellation overlay (fork — 2026-05-24). Adds named-star
+  // points and (optional) polyline edges atop the procedural field. Uses the
+  // same horizonExtinction so figures fade with the rest of the sky near the
+  // horizon. Sidereal rotation is applied internally so the figures rotate
+  // in lockstep with evalStarField.
+  stars += evalConstellations(viewDir, args) * horizonExtinction;
 
   // ----- Meteor / shooting star system (fork, 2026-05-21) -----
   //

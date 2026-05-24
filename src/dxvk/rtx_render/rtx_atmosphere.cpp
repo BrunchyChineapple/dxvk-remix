@@ -310,6 +310,10 @@ namespace {
     // the sky / cloud LUTs (meteors render in the runtime-miss path), so
     // normalize it out of the cache key.
     args.meteorShowerActivity        = 0.0f;
+
+    // Constellation current-month is wrapper-driven and only affects the
+    // miss-path constellation overlay (atmosphere_sky.slangh), not the LUTs.
+    args.constellationCurrentMonth   = 0.0f;
   }
 } // anonymous namespace
 
@@ -463,6 +467,18 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.padMeteor0                  = 0.0f;
   args.padMeteor1                  = 0.0f;
   args.padMeteor2                  = 0.0f;
+
+  // ----- Lore-accurate constellations (fork — 2026-05-24) -----
+  // Static lookup table is compile-time-constant in the shader; here we just
+  // forward the user-facing controls + the wrapper-pushed currentMonth.
+  args.constellationsEnabled       = RtxOptions::constellationsEnabled() ? 1.0f : 0.0f;
+  args.constellationStarBrightness = RtxOptions::constellationStarBrightness();
+  args.constellationEdgeBrightness = RtxOptions::constellationEdgeBrightness();
+  args.constellationStarSize       = RtxOptions::constellationStarSize();
+  args.constellationCurrentMonth   = RtxOptions::constellationCurrentMonth();
+  args.constellationMonthHighlight = RtxOptions::constellationMonthHighlight();
+  args.constellationGuardianBoost  = RtxOptions::constellationGuardianBoost();
+  args.padConstellation0           = 0.0f;
 
   // Cloud parameters
   {

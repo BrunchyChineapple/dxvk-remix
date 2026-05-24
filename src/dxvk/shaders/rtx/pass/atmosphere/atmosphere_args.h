@@ -415,4 +415,25 @@ struct AtmosphereArgs {
   float cloudSunsetAmbientReachInvKm; // D_sun reach in 1/km — higher = clouds turn cool faster with shadow depth
   float cloudSunsetAmbientRampHighSun;// sin(sun elevation) at which the effect smooth-fades to zero
   float pad_cloudSunsetAmbient0;      // 16-byte alignment
+
+  // ----- Lore-accurate constellations (fork — 2026-05-24) -----
+  // Static lookup table baked from Morrowind's tx_stars_*.dds + tx_birth_*.dds
+  // textures by patches/rtxdll/bake_constellations.py and consumed via
+  // shaders/rtx/pass/atmosphere/constellations.h. The shader's evalConstellations
+  // composites named-star points + polyline edges atop the procedural star
+  // field. CPU just supplies the per-frame controls below; the table itself
+  // is compile-time-constant in the shader.
+  //
+  // currentBirthsignMonth is wrapper-driven (NoSave). 1..12 = Morrowind months
+  // for highlight gating; 0 = unknown / all months at baseline. The shader
+  // boosts brightness on the constellation whose birthsign matches.
+  float constellationsEnabled;          // Master toggle: 1 = render named figures, 0 = procedural-only
+  float constellationStarBrightness;    // Multiplier on named-star point brightness (default 1.5)
+  float constellationEdgeBrightness;    // Per-edge polyline glow brightness (default 0.0; 0 = no edge lines)
+  float constellationStarSize;          // PSF size multiplier for named stars vs procedural (default 1.4)
+
+  float constellationCurrentMonth;      // Wrapper-pushed current Morrowind month, 0..12 (NoSave)
+  float constellationMonthHighlight;    // Brightness boost for current-month constellation (default 1.6)
+  float constellationGuardianBoost;     // Extra brightness for the 3 Guardian constellations (default 1.2)
+  float padConstellation0;              // 16-byte alignment
 };
