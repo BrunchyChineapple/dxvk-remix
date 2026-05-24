@@ -421,6 +421,32 @@ vec3 azElToDir(float azDeg, float elDeg) {
   return vec3(ce * sin(az), sin(el), ce * cos(az));
 }
 
+// Per-star color temperature classes (mirror evalStarField). Picked from a
+// bake-deterministic hash so the same star always shows the same color.
+// Constellation kind tints the result so Guardians stay warm-white,
+// Charges cool-blue, Serpent pink-magenta — the named figures still read
+// as a coherent set without losing the per-star variation that makes them
+// look like real stars.
+vec3 constellationStarColor(uint constIdx, uint starIdx, vec3 kindTint) {
+  // Deterministic hash on (constellation, star, salt). Same star always
+  // gets the same temperature / class.
+  vec3 h = hash31(vec3(float(constIdx), float(starIdx), 17.0f));
+  float temp = h.x;
+
+  vec3 baseColor;
+  if (temp > 0.7f) {
+    baseColor = vec3(0.70f, 0.80f, 1.00f);   // Blue-white (O/B type)
+  } else if (temp > 0.3f) {
+    baseColor = vec3(1.00f, 1.00f, 0.95f);   // White-yellow (F/G type)
+  } else {
+    baseColor = vec3(1.00f, 0.85f, 0.70f);   // Orange (K type)
+  }
+
+  // Soft tint toward kind color (Guardian/Charge/Serpent) — 30% blend so
+  // the constellation reads as a set without all stars going monochrome.
+  return mix(baseColor, baseColor * kindTint, 0.3f);
+}
+
 vec3 evalConstellations(vec3 viewDir, AtmosphereArgs args) {
   if (args.constellationsEnabled < 0.5f) return vec3(0.0f);
 
@@ -428,16 +454,15 @@ vec3 evalConstellations(vec3 viewDir, AtmosphereArgs args) {
   // this the named figures would drift relative to the rest of the sky.
   vec3 dir = applySiderealRotation(normalize(viewDir), args);
 
-  // PSF sharpness — scaled by the user's named-star size knob. Larger
-  // value = wider star (lower exponent). Use 1/(size*size) so doubling
-  // size halves the falloff exponent in a predictable way.
+  // PSF tuning — see comments in the star loop below for full math.
+  // Tracks args.starPsfSharpness so a global "sharper / softer star"
+  // setting moves both procedural and named stars together.
   float sizeScale = max(args.constellationStarSize, 0.1f);
   float starK = args.starPsfSharpness / (sizeScale * sizeScale);
 
-  // Edge PSF: width is independent of star size — chosen so polylines read
-  // as faint glow rather than fat ribbons. K_edge ~= 4500 gives ~0.2°
-  // FWHM on a unit sphere (matched to the star formula's same-form K).
-  const float kEdgeK = 4500.0f;
+  // Edge PSF: independent of star size; chosen so polylines read as faint
+  // glow rather than fat ribbons. Same exp(-cd*K) form as stars.
+  const float kEdgeK = 6000.0f;
 
   // Current-month highlight: which (if any) constellation gets the boost.
   // 0 means "no highlight"; 1..12 select by matching birthsignMonth.
@@ -447,14 +472,12 @@ vec3 evalConstellations(vec3 viewDir, AtmosphereArgs args) {
 
   // Single loop over the table. CONSTELLATION_COUNT is small (13) and
   // most of the per-pixel work is exp() falloffs that go to ~0 for any
-  // constellation far from the view direction. Don't force [unroll] —
-  // the compiler can keep this as a runtime loop and skip cheaply when
-  // dir is nowhere near a constellation's stars.
+  // constellation far from the view direction.
   for (uint c = 0u; c < CONSTELLATION_COUNT; ++c) {
     ConstellationMeta meta = kConstellationMeta[c];
     if (meta.starCount == 0u) continue;
 
-    vec3 baseColor = kConstellationColorByKind[meta.kind];
+    vec3 kindTint = kConstellationColorByKind[meta.kind];
 
     // Per-constellation brightness factor.
     float kindBoost = (meta.kind == 0u) ? args.constellationGuardianBoost : 1.0f;
@@ -471,34 +494,51 @@ vec3 evalConstellations(vec3 viewDir, AtmosphereArgs args) {
       starDirs[i] = azElToDir(s.azimuth, s.elevation);
     }
 
-    // Stars: Gaussian point sources.
+    // Stars: per-star Gaussian point sources with temperature-class colors
+    // and twinkle.
     //
     // Math: cd = 1 - dot(dir, sd) ≈ θ²/2 for small angles. Using
-    // exp(-cd * starK * 5000) gives a Gaussian in θ with
-    // FWHM = sqrt(4*ln2 / (starK * 2500)) radians. At default
-    // starPsfSharpness=20 and constellationStarSize=1.4, starK ≈ 10.2 so
-    // FWHM ≈ sqrt(2.77 / 25500) ≈ 0.21° — comparable to the procedural
-    // star field (which uses the same exp(-cd*cd*K) form but with K=800
-    // tuned for cube-grid-cell space, ~13.5 arcmin/cell).
-    //
-    // Earlier version used (cd*cd) with K=1e6 which was supposed to be
-    // sharper but instead produced ~1.3° FWHM blobs that blurred into
-    // mush. Linear cd is the right shape for a star — square cd makes
-    // the falloff much wider in the visible-tail regime.
+    // exp(-cd * starK * 50000) gives a Gaussian with FWHM in θ of
+    // 2 * sqrt(ln(2) / (12.5 * starK)) radians. At default
+    // starPsfSharpness=20, constellationStarSize=1.4 → starK ≈ 10.2 →
+    // FWHM ≈ 0.2° — sharp enough to read as a point at 1080p/90° FOV
+    // (~2.4 pixels) but not subpixel. Earlier passes with K=1e6 (cd²
+    // form) gave ~1.3° blobs; K=5000 (linear form) gave ~0.6°. K=50000
+    // is the right magnitude for true point-source rendering.
     for (uint i = 0u; i < meta.starCount; ++i) {
       ConstellationStar s = kConstellationStars[c * MAX_STARS_PER_CONSTELLATION + i];
       vec3 sd = starDirs[i];
       float cd = 1.0f - dot(dir, sd);
-      float spot = exp(-cd * starK * 5000.0f);
-      result += baseColor * (spot * s.brightness * perConst);
+
+      // Gaussian PSF.
+      float spot = exp(-cd * starK * 50000.0f);
+      // Cheap early-out: if the spot is below visibility, skip the
+      // color/twinkle math entirely for this star. ~99% of stars are
+      // far from the view direction so this saves real work.
+      if (spot < 1e-5f) continue;
+
+      vec3 starColor = constellationStarColor(c, i, kindTint);
+
+      // Twinkle (mirrors evalStarField): per-star phase + frequency
+      // hashed deterministically; sin envelope dips to 0.7. Disabled
+      // when starTwinkleSpeed = 0.
+      float twinkle = 1.0f;
+      if (args.starTwinkleSpeed > 0.0f) {
+        vec3 hashSeed = vec3(float(c), float(i), 23.0f);
+        float twinklePhase = hash31(hashSeed).x * 6.283f;
+        float twinkleFreq  = 0.5f + hash31(hashSeed * 2.0f).x * 2.0f;
+        twinkle = 0.7f + 0.3f * sin(args.timeSeconds * twinkleFreq * args.starTwinkleSpeed + twinklePhase);
+      }
+
+      result += starColor * (spot * s.brightness * perConst * twinkle);
     }
 
     // Edges: distance from the view direction to the great-circle arc.
     // Per-edge Gaussian falloff. Skip when edge brightness is zeroed
-    // (default). Same exp(-cd * K) form as stars; cd2 here is the
-    // squared-chord-equivalent for the closest point on the segment.
+    // (default). Same exp(-cd*K) form as stars.
     if (args.constellationEdgeBrightness > 0.0f) {
       float edgeIntensity = args.constellationEdgeBrightness * monthBoost * kindBoost;
+      vec3 edgeColor = mix(vec3(1.0f), kindTint, 0.5f);
       for (uint e = 0u; e < meta.edgeCount; ++e) {
         ConstellationEdge ed = kConstellationEdges[c * MAX_EDGES_PER_CONSTELLATION + e];
         if (ed.i >= meta.starCount || ed.j >= meta.starCount) continue;
@@ -506,8 +546,8 @@ vec3 evalConstellations(vec3 viewDir, AtmosphereArgs args) {
         vec3 b = starDirs[ed.j];
 
         // Closest point on the segment a→b to dir, on the unit sphere.
-        // For short edges, linear interpolation in cartesian space is a
-        // good approximation; we project back to the unit sphere afterward.
+        // Linear interp in cartesian space is a good approximation for
+        // short edges; project back to unit sphere afterward.
         vec3 ab = b - a;
         float ab2 = max(dot(ab, ab), 1e-6f);
         float t = clamp(dot(dir - a, ab) / ab2, 0.0f, 1.0f);
@@ -515,10 +555,9 @@ vec3 evalConstellations(vec3 viewDir, AtmosphereArgs args) {
         float cd2 = 1.0f - dot(dir, closest);
         float glow = exp(-cd2 * kEdgeK);
         // Don't draw glow at the endpoints — they're already covered by
-        // the bright star points and adding edge glow there makes them
-        // bloom unrealistically.
+        // the bright star points.
         float endpointFade = 4.0f * t * (1.0f - t);  // peaks at t=0.5
-        result += baseColor * (glow * edgeIntensity * endpointFade);
+        result += edgeColor * (glow * edgeIntensity * endpointFade);
       }
     }
   }

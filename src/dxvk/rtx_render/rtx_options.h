@@ -1362,21 +1362,23 @@ namespace dxvk {
                     "Sourced from tx_stars_*.dds and tx_birth_*.dds. Default on. NoSave because "
                     "the wrapper toggles this off in interiors to prevent bleed-through; "
                     "persistence would freeze whichever state was last seen on save.");
-    RTX_OPTION("rtx.atmosphere", float, constellationStarBrightness, 1.0f,
+    RTX_OPTION("rtx.atmosphere", float, constellationStarBrightness, 1.2f,
                "Brightness multiplier on the named constellation stars relative to the procedural "
                "star field. Bake stores per-star brightness in [0..1]; this is the global "
-               "post-bake gain. Default 1.0 = same scale as procedural stars (named stars look "
-               "like the brightest individual points in the field rather than overpowering it). "
-               "Raise above 1.0 for a clearer figure-stamp look.");
+               "post-bake gain. Default 1.2 = slightly above the procedural field's peak so the "
+               "named stars stand out as the brightest individual points without flooding the "
+               "sky. Combined with the per-star color temperature variation, the result reads "
+               "as a real star pattern with named figures emphasized.");
     RTX_OPTION("rtx.atmosphere", float, constellationEdgeBrightness, 0.0f,
                "Polyline edge brightness for the connect-the-dots overlay. 0 (default) draws "
                "stars only — the figures are implied by spatial layout. Set to ~0.05-0.15 to "
                "show faint connecting lines. Useful for screenshots and birthsign-selection "
                "moments; less authentic for in-world night sky.");
-    RTX_OPTION("rtx.atmosphere", float, constellationStarSize, 1.4f,
-               "Size multiplier on the constellation-star PSF vs the procedural star PSF "
-               "(starPsfSharpness). 1.4 makes named stars ~1.4x wider FWHM than background "
-               "stars so they read as the brightest points in the sky. Range ~0.5-3.0.");
+    RTX_OPTION("rtx.atmosphere", float, constellationStarSize, 1.0f,
+               "Size multiplier on the constellation-star Gaussian PSF. PSF FWHM = "
+               "~0.2° at size=1.0 (roughly 2.4 pixels at 1080p/90° FOV — sharp pinpoint). "
+               "Range 0.5-3.0 is useful: lower = sharper; higher = softer halo. Stars below "
+               "size=0.5 risk subpixel flicker on camera motion.");
     RTX_OPTION("rtx.atmosphere", float, constellationGuardianBoost, 1.2f,
                "Brightness boost for the 3 Guardian constellations (Warrior / Mage / Thief). "
                "They sit at the central N/E/W cardinal points and dominate the night sky in "
