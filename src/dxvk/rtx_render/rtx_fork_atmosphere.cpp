@@ -649,9 +649,62 @@ namespace fork_hooks {
       }
     }
 
-    void renderMeteorsUI() {
+    void renderConstellationsUI() {
       constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
-      if (ImGui::TreeNode("Meteors & Showers")) {
+      if (ImGui::TreeNode("Constellations")) {
+        ImGui::TextDisabled("Lore-accurate Morrowind birthsign constellations.");
+        ImGui::TextDisabled("13 figures (3 Guardians + 10 Charges + Serpent),");
+        ImGui::TextDisabled("composited atop the procedural star field.");
+        ImGui::Separator();
+
+        RemixGui::Checkbox("Enabled", &RtxOptions::constellationsEnabledObject());
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Master toggle for the constellation overlay. The wrapper also drives this off in "
+            "true interior cells to prevent bleed-through.");
+
+        RemixGui::DragFloat("Star Brightness", &RtxOptions::constellationStarBrightnessObject(),
+                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier on the named constellation stars. 1.0 puts them at procedural-"
+            "star peak; raise for a more figure-stamp look. Per-star color temperature variation "
+            "is preserved at any setting.");
+
+        RemixGui::DragFloat("Star Size", &RtxOptions::constellationStarSizeObject(),
+                            0.05f, 0.3f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "PSF size multiplier. 1.0 = ~0.2 deg FWHM (~2.4 pixels at 1080p/90 deg FOV). "
+            "Lower = sharper pinpoint; higher = softer halo. Below 0.5 risks subpixel flicker.");
+
+        RemixGui::DragFloat("Edge Brightness", &RtxOptions::constellationEdgeBrightnessObject(),
+                            0.005f, 0.0f, 0.5f, "%.3f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Polyline glow brightness for the connect-the-dots overlay. 0 = stars only "
+            "(default; figures implied by spatial layout). 0.05-0.15 shows faint connecting lines.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Highlights");
+
+        RemixGui::DragFloat("Guardian Boost", &RtxOptions::constellationGuardianBoostObject(),
+                            0.05f, 1.0f, 3.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier for the 3 Guardian constellations (Warrior / Mage / Thief). "
+            "They sit at central N/E/W and dominate Morrowind canon.");
+
+        RemixGui::DragFloat("Birth-Month Highlight", &RtxOptions::constellationMonthHighlightObject(),
+                            0.05f, 1.0f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier on whichever constellation matches the current Morrowind "
+            "month. 1.0 = no highlight; 1.6 default boosts the player's birth-month figure "
+            "during its month. Wrapper pushes the current month every frame.");
+
+        const float currentMonth = RtxOptions::constellationCurrentMonth();
+        ImGui::Text("Current month (game-driven): %d", int(std::round(currentMonth)));
+
+        ImGui::TreePop();
+      }
+    }
+
+    void renderMeteorsUI() {
         ImGui::TextDisabled("Activity (game-driven; read-only at runtime)");
         // Read-only display of the current activity value driven by the wrapper
         const float currentActivity = RtxOptions::meteorShowerActivity();
@@ -973,6 +1026,7 @@ namespace fork_hooks {
         renderStarsUI();
         renderMilkyWayUI();
         renderStarAppearanceUI();
+        renderConstellationsUI();
         renderMeteorsUI();
 
         ImGui::TreePop();
