@@ -844,6 +844,58 @@ namespace fork_hooks {
         ImGui::TreePop();
       }
     }
+
+    // -------------------------------------------------------------------------
+    // renderBloodmoonUI
+    //
+    // Hircine's Great Hunt — when active, Secunda turns deep crimson and is
+    // referred to as the Bloodmoon. Tunable appearance + a debug toggle so
+    // we can trigger the event in-engine for testing without waiting for a
+    // wrapper-side scripted hook.
+    //
+    // bloodmoonActive is NoSave (wrapper-driven). The debug checkbox here
+    // writes into the same Derived layer the wrapper would, so it picks up
+    // exactly the same code path. Once an MWSE-Lua hook is wired (Bloodmoon
+    // main quest, hunt-event scripts), the debug checkbox lets us test the
+    // visual without scripting a quest event.
+    // -------------------------------------------------------------------------
+    void renderBloodmoonUI() {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+      if (ImGui::TreeNode("Bloodmoon (Hircine's Great Hunt)")) {
+        ImGui::TextDisabled("During Hircine's Great Hunt, Secunda turns crimson.");
+        ImGui::TextDisabled("Masser stays normal. Wrapper drives bloodmoonActive");
+        ImGui::TextDisabled("from quest state; debug toggle overrides it here.");
+        ImGui::Separator();
+
+        RemixGui::Checkbox("Trigger Bloodmoon (Debug)",
+                           &RtxOptions::bloodmoonActiveObject());
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Manual override for the Bloodmoon event. NoSave, so it doesn't persist past "
+            "shutdown. Wrapper writes to the same flag; whichever was written most recently "
+            "wins (the wrapper writes every frame, so its value will dominate when no debug "
+            "scripted state exists -- toggle this off to return to wrapper control).");
+
+        RemixGui::DragFloat("Tint Strength", &RtxOptions::bloodmoonStrengthObject(),
+                            0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Color blend amount. 0 = brightness boost only (no tint), 1 = full tint replacement. "
+            "Default 1.0.");
+
+        RemixGui::DragFloat("Glow Multiplier", &RtxOptions::bloodmoonGlowObject(),
+                            0.05f, 0.5f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier on participating moons during the event. 1.0 = no extra "
+            "glow. 1.4 default reads as the moon being 'lit' for the hunt.");
+
+        ImGui::ColorEdit3("Tint Color", &RtxOptions::bloodmoonTintObject(),
+                          ImGuiColorEditFlags_Float);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Color participating moons blend toward during a Bloodmoon event. "
+            "Default deep crimson (0.85, 0.10, 0.05).");
+
+        ImGui::TreePop();
+      }
+    }
   } // anonymous namespace
 
   void showAtmosphereUI() {
@@ -1038,6 +1090,7 @@ namespace fork_hooks {
       if (ImGui::TreeNode("Moons")) {
         renderMoonGlobalLightingUI();
         renderMoonCloudLookUI();
+        renderBloodmoonUI();
 
         for (int i = 0; i < static_cast<int>(MAX_MOONS); ++i) {
           renderMoonUI(i);

@@ -1394,6 +1394,33 @@ namespace dxvk {
                     "wrapper drives this every frame from the in-game calendar; persisting it "
                     "would freeze the highlight on the month at last save.");
 
+    // ----- Bloodmoon — Hircine's Great Hunt (fork — 2026-05-24) -----
+    // The Bloodmoon is the in-fiction phenomenon where Hircine hosts a Great
+    // Hunt on Nirn — Secunda turns deep crimson and is referred to as the
+    // Bloodmoon. Masser stays normal. Wrapper drives bloodmoonActive (NoSave)
+    // from MWSE-Lua hooks (Bloodmoon main quest, scripted events) or from
+    // the ImGui debug button below. The other fields are persistent
+    // appearance tunables.
+    RTX_OPTION_FLAG("rtx.atmosphere", bool, bloodmoonActive, false, RtxOptionFlags::NoSave,
+                    "Master toggle for the Bloodmoon event. When on, the Bloodmoon-affinity "
+                    "moons (Secunda, by default) tint toward bloodmoonTint by bloodmoonStrength "
+                    "and brighten by bloodmoonGlow. Wrapper drives this from the in-game "
+                    "calendar / quest state; persisting it via save would freeze the event "
+                    "across reloads, so NoSave. Use the ImGui Trigger Bloodmoon (Debug) "
+                    "checkbox under Sky Tuning > Atmosphere > Bloodmoon to test in-engine.");
+    RTX_OPTION("rtx.atmosphere", float, bloodmoonStrength, 1.0f,
+               "Tint blend amount [0..1] applied to participating moons during a Bloodmoon "
+               "event. 0 = no tint (active flag visible only via brightness boost), 1 = full "
+               "color replacement. Default 1.0.");
+    RTX_OPTION("rtx.atmosphere", float, bloodmoonGlow, 1.4f,
+               "Brightness multiplier on participating moons during a Bloodmoon event. 1.0 = "
+               "no extra glow (just tint), 1.4 default = noticeable luminosity bump that reads "
+               "as the moon being 'lit' for the hunt. Range ~0.5-3.0.");
+    RTX_OPTION("rtx.atmosphere", Vector3, bloodmoonTint, Vector3(0.85f, 0.10f, 0.05f),
+               "Surface color participating moons blend toward during a Bloodmoon event. "
+               "Default deep crimson (0.85, 0.10, 0.05). Lore reference: \"Secunda turns a "
+               "deep shade of red\".");
+
     // ----- Meteor / shooting star system (fork, 2026-05-21) -----
     // Replaces the old hardcoded "one streak every 4s" path in atmosphere_sky.slangh.
     // Streaks per second = meteorBaseRate + meteorShowerActivity * meteorShowerPeakRate.
@@ -1517,8 +1544,8 @@ namespace dxvk {
 #undef DECLARE_MOON_OPTIONS
 
     // ----- Weather preset declarations (fork, 2026-05-08) -----
-    // 348 RTX_OPTIONs: 12 presets x 29 fields under rtx.weather.preset.<name>.
-    // (Buckets: 19 cloud + 3 atmosphere + 3 sky/moon mood + 4 volumetric.)
+    // 324 RTX_OPTIONs: 12 presets x 27 fields under rtx.weather.preset.<name>.
+    // (Buckets: 17 cloud + 3 atmosphere + 3 sky/moon mood + 4 volumetric.)
     // Neutral defaults here; per-archetype tuning lands in a follow-up commit.
     // Getter form: RtxOptions::clear_cloudDensity(), etc.
     // See src/dxvk/rtx_render/rtx_fork_weather.h for macro definitions.
