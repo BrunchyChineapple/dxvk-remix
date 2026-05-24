@@ -225,7 +225,10 @@ struct AtmosphereArgs {
   float meteorColorVariation;             // Random per-streak hue variation [0..1]. Default 0.3.
 
   float meteorMoonDimmingStrength;        // How aggressively bright moons dim faint meteors [0..2]. Default 1.0.
-  float padMeteor0;                       // 16-byte alignment
+  float meteorsEnabled;                   // Master gate: 1=meteor system runs, 0=skip the whole meteor loop.
+                                          // Wrapper-driven (NoSave) — disabled in true interior cells so
+                                          // meteorBaseRate sporadics + meteorShowerActivity showers both stop.
+                                          // The user's persistent meteor settings stay untouched.
   float padMeteor1;
   float padMeteor2;
 

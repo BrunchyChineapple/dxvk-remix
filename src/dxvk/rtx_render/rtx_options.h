@@ -1406,6 +1406,13 @@ namespace dxvk {
                     "this up during in-game shower events based on the Morrowind calendar. 0 = "
                     "no shower active (only baseRate sporadics), 1 = peak shower. NoSave so per-"
                     "frame writes don't pollute user.conf.");
+    RTX_OPTION_FLAG("rtx.atmosphere", bool, meteorsEnabled, true, RtxOptionFlags::NoSave,
+                    "Master gate for the meteor / shooting-star system. When false, neither "
+                    "sporadic background streaks (meteorBaseRate) nor calendar-driven showers "
+                    "(meteorShowerActivity) render. NoSave because the wrapper toggles this off "
+                    "in true interior cells to prevent meteor streaks from leaking through "
+                    "ceiling cracks, and back on outdoors. Persistence would freeze whichever "
+                    "state was last seen on save.");
     RTX_OPTION("rtx.atmosphere", float, meteorShowerPeakRate, 5.0f,
                "Streaks per second at peak shower (when meteorShowerActivity = 1.0). Real "
                "shower ZHRs range from ~10 (minor) to ~100 (Geminids/Perseids); 5/sec = ~3000 "

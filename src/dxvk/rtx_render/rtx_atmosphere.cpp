@@ -310,6 +310,7 @@ namespace {
     // the sky / cloud LUTs (meteors render in the runtime-miss path), so
     // normalize it out of the cache key.
     args.meteorShowerActivity        = 0.0f;
+    args.meteorsEnabled              = 0.0f;
 
     // Constellation current-month is wrapper-driven and only affects the
     // miss-path constellation overlay (atmosphere_sky.slangh), not the LUTs.
@@ -464,7 +465,7 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.meteorFireballBrightness    = RtxOptions::meteorFireballBrightness();
   args.meteorColorVariation        = RtxOptions::meteorColorVariation();
   args.meteorMoonDimmingStrength   = RtxOptions::meteorMoonDimmingStrength();
-  args.padMeteor0                  = 0.0f;
+  args.meteorsEnabled              = RtxOptions::meteorsEnabled() ? 1.0f : 0.0f;
   args.padMeteor1                  = 0.0f;
   args.padMeteor2                  = 0.0f;
 

@@ -573,7 +573,7 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
   // Streaks living longer than kSlotDuration overlap, so high-rate showers
   // can show many streaks on screen at once. The lookback loop iterates
   // through enough past slots to cover the longest possible streak lifetime.
-  {
+  if (args.meteorsEnabled > 0.5f) {
     const int   kMaxStreaksPerSecond  = 8;
     const float kSlotsPerSecond       = float(kMaxStreaksPerSecond);
     const float kSlotDuration         = 1.0f / kSlotsPerSecond;        // 0.125 s
