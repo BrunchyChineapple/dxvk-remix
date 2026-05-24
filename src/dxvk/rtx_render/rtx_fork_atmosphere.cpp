@@ -705,6 +705,8 @@ namespace fork_hooks {
     }
 
     void renderMeteorsUI() {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+      if (ImGui::TreeNode("Meteors & Showers")) {
         ImGui::TextDisabled("Activity (game-driven; read-only at runtime)");
         // Read-only display of the current activity value driven by the wrapper
         const float currentActivity = RtxOptions::meteorShowerActivity();
