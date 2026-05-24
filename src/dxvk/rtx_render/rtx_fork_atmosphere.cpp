@@ -887,8 +887,8 @@ namespace fork_hooks {
             "Brightness multiplier on participating moons during the event. 1.0 = no extra "
             "glow. 1.4 default reads as the moon being 'lit' for the hunt.");
 
-        ImGui::ColorEdit3("Tint Color", &RtxOptions::bloodmoonTintObject(),
-                          ImGuiColorEditFlags_Float);
+        RemixGui::ColorEdit3("Tint Color", &RtxOptions::bloodmoonTintObject(),
+                             ImGuiColorEditFlags_Float);
         RemixGui::SetTooltipToLastWidgetOnHover(
             "Color participating moons blend toward during a Bloodmoon event. "
             "Default deep crimson (0.85, 0.10, 0.05).");
