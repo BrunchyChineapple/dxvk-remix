@@ -507,7 +507,8 @@ vec4 loadInput(inout RNG randomState, ivec2 threadId)
       // sky-miss composite (which still uses analytical clouds in C4).
       uint2 cloudRTDim;
       DebugViewCloudRenderRT.GetDimensions(cloudRTDim.x, cloudRTDim.y);
-      uint2 mappedCoord = (uint2)(((vec2(threadId) + vec2(0.5f)) / vec2(cb.debugViewResolution)) * vec2(cloudRTDim));
+      vec2 cloudUV = (vec2(threadId) + vec2(0.5f)) / vec2(cb.debugViewResolution);
+      ivec2 mappedCoord = ivec2(cloudUV * vec2(cloudRTDim));
       vec4 cloudSample = DebugViewCloudRenderRT.Load(int3(mappedCoord, 0));
       value = vec4(cloudSample.rgb, 1.0f);
     }

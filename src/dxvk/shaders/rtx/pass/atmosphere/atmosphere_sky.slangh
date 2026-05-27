@@ -1756,13 +1756,13 @@ vec3 evalSkyRadiance(
   // We sample with bilinear filter using the downscale-pixel screen UV so
   // the target-extent neighborhood gets lerp-resolved into a smooth alpha
   // edge before DLSS sees it. Replaces the previous integer Load() at
-  // matching downscale extent. cloudHistoryRes is the downscale resolution
+  // matching downscale extent. historyResolution is the downscale resolution
   // (same as cb.camera.resolution at the call site in geometry_resolver.slangh).
   vec4 cloudLayer;
   if (args.cloudRenderRTEnable != 0u && isPrimaryRay) {
     vec4 cloudRT;
-    if (all(cloudHistoryRes > uint2(0u, 0u))) {
-      vec2 cloudUV = (vec2(pixelCoord) + vec2(0.5f)) / vec2(cloudHistoryRes);
+    if (all(historyResolution > uint2(0u, 0u))) {
+      vec2 cloudUV = (vec2(pixelCoord) + vec2(0.5f)) / vec2(historyResolution);
       cloudRT = AtmosphereCloudRender.SampleLevel(AtmosphereSkyViewSampler, cloudUV, 0.0f);
     } else {
       // Fallback when the resolution param wasn't passed (PSR-miss path
