@@ -1297,11 +1297,17 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", Vector3, nightSkyColor, Vector3(0.15f, 0.2f, 0.4f),
                "Base color tint of the night-sky airglow.");
     // ----- Milky Way controls (fork) -----
-    RTX_OPTION_FLAG("rtx.atmosphere", bool, milkyWayEnabled, false, RtxOptionFlags::NoSave,
+    // Morrowind override: default flipped from upstream's false to true
+    // so users see the galactic band without having to opt in via the
+    // Remix UI on every game load. The wrapper drives this NoSave field
+    // (forced false in interiors, true in exteriors); the source-level
+    // true matches the exterior-return write so a fresh boot lands in
+    // the on state immediately.
+    RTX_OPTION_FLAG("rtx.atmosphere", bool, milkyWayEnabled, true, RtxOptionFlags::NoSave,
                     "Master toggle for the galactic-band Milky Way effects. Game-driven (forced "
                     "off in interiors). When disabled, the star field is uniformly distributed at "
-                    "the base density across the whole sky. Off by default -- stylized opt-in for "
-                    "users who want the band aesthetic.");
+                    "the base density across the whole sky. Default true for the Morrowind project; "
+                    "upstream defaults this off for a stylized opt-in.");
     RTX_OPTION("rtx.atmosphere", float, milkyWayDensityBoost, 0.3f,
                "Density threshold reduction inside the galactic band. Higher = more (and dimmer) "
                "stars visible only in the band region, producing the dense-band look.");
