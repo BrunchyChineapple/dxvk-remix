@@ -1750,9 +1750,25 @@ vec3 evalSkyRadiance(
   // temporal-smoothing / mix composite operations apply uniformly to either
   // source: both paths are accumulated as `radiance += stepRadiance * T_so_far`,
   // so the rgb-channel semantics match once the alpha convention is reconciled.
+  //
+  // Sampling (fork — 2026-05-26): cloud RT now allocated at full target
+  // (post-DLSS-output) extent, while this shader runs at downscale extent.
+  // We sample with bilinear filter using the downscale-pixel screen UV so
+  // the target-extent neighborhood gets lerp-resolved into a smooth alpha
+  // edge before DLSS sees it. Replaces the previous integer Load() at
+  // matching downscale extent. cloudHistoryRes is the downscale resolution
+  // (same as cb.camera.resolution at the call site in geometry_resolver.slangh).
   vec4 cloudLayer;
   if (args.cloudRenderRTEnable != 0u && isPrimaryRay) {
-    vec4 cloudRT = AtmosphereCloudRender.Load(int3(pixelCoord, 0));
+    vec4 cloudRT;
+    if (all(cloudHistoryRes > uint2(0u, 0u))) {
+      vec2 cloudUV = (vec2(pixelCoord) + vec2(0.5f)) / vec2(cloudHistoryRes);
+      cloudRT = AtmosphereCloudRender.SampleLevel(AtmosphereSkyViewSampler, cloudUV, 0.0f);
+    } else {
+      // Fallback when the resolution param wasn't passed (PSR-miss path
+      // doesn't read this branch, but be defensive).
+      cloudRT = AtmosphereCloudRender.Load(int3(pixelCoord, 0));
+    }
     cloudLayer = vec4(cloudRT.rgb, 1.0f - cloudRT.a);
   } else {
     cloudLayer = evalClouds(viewDirYUp, args, pixelCoord, frameIdx);

@@ -1893,16 +1893,18 @@ void geometryResolverVertex(
 #ifdef ATMOSPHERE_AVAILABLE
     else if (cb.skyMode == 1)
     {
-      // Primary view ray — enable cloud temporal smoothing. The motion vector
-      // for sky misses comes from calcMotionVectorForRayMiss (already used
-      // below to write PrimaryScreenSpaceMotionVector), and historyResolution
-      // is the downscaled render extent (where this raygen writes).
+      // Primary view ray — cloud temporal smoothing is gated by the new
+      // RTX_OPTION cloudTemporalSmoothingEnable (fork — 2026-05-26),
+      // surfaced via args.cloudTemporalSmoothingEnable. See args header
+      // for the off-by-default rationale.
       const vec2 cloudMotion = calcMotionVectorForRayMiss(geometryResolverState.pixelCoordinate);
       const uint2 cloudHistoryRes = cb.camera.resolution;
+      const bool smoothingOn =
+          (cb.atmosphereArgs.cloudTemporalSmoothingEnable != 0u);
       skyRadiance = evalSkyRadiance(ray.direction, cb.atmosphereArgs,
                                      geometryResolverState.pixelCoordinate, cb.frameIdx,
                                      cb.isZUp != 0,
-                                     /*enableCloudTemporalSmoothing=*/ true,
+                                     /*enableCloudTemporalSmoothing=*/ smoothingOn,
                                      cloudMotion,
                                      cloudHistoryRes,
                                      /*isPrimaryRay=*/ true);

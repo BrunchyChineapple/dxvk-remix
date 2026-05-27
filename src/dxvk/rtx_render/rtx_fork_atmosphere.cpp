@@ -151,11 +151,19 @@ namespace fork_hooks {
           ctx.m_atmosphere->setCloudShadowCameraPosition(cameraPosYUpKm);
         }
 
-        // Allocate the cloud render RT at the downscale extent (the resolution
-        // the geometry resolver raygen writes to and DLSS sees as its input).
-        const VkExtent3D downscaledExtent3D = ctx.getResourceManager().getDownscaleDimensions();
-        const VkExtent2D downscaleExtent = { downscaledExtent3D.width, downscaledExtent3D.height };
-        ctx.m_atmosphere->ensureCloudRenderRT(&ctx, downscaleExtent);
+        // Allocate the cloud render RT at the FULL TARGET extent (post-DLSS
+        // output resolution) instead of the downscale extent. DLSS Quality
+        // input is ~67% scale per axis, which means a 1-pixel-wide cloud
+        // alpha edge in downscaled space landed mid-pixel in target space
+        // and DLSS reconstruction couldn't recover a clean edge transition.
+        // Rendering the cloud RT at target extent gives the consumer
+        // (atmosphere_sky.slangh sky-miss branch) a bilinear-filtered tap
+        // that resolves to a smooth edge before DLSS sees it. Cost: cloud
+        // march does (1 / scale)^2 more pixel work (~2.25x at Quality);
+        // cloud march is a small fraction of total RT cost so this is fine.
+        const VkExtent3D targetExtent3D = ctx.getResourceManager().getTargetDimensions();
+        const VkExtent2D cloudRenderExtent = { targetExtent3D.width, targetExtent3D.height };
+        ctx.m_atmosphere->ensureCloudRenderRT(&ctx, cloudRenderExtent);
       }
 
       ctx.m_atmosphere->computeLuts(&ctx);

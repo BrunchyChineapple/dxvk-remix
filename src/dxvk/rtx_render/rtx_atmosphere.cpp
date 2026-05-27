@@ -649,9 +649,12 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   // Drives the primary-ray-only branch in evalSkyRadiance that swaps
   // analytical evalClouds for the prerendered AtmosphereCloudRender RT.
   // Default false until visual confirmation; flipped to true in C7.
+  // cloudTemporalSmoothingEnable (fork — 2026-05-26) repurposes the former
+  // pad_c5_0 slot to gate the cloud history reproject + blend; off by
+  // default for this project (see args header for rationale).
   {
     args.cloudRenderRTEnable = RtxOptions::cloudRenderRTEnable() ? 1u : 0u;
-    args.pad_c5_0 = 0u;
+    args.cloudTemporalSmoothingEnable = RtxOptions::cloudTemporalSmoothingEnable() ? 1u : 0u;
     args.pad_c5_1 = 0u;
     args.pad_c5_2 = 0u;
   }

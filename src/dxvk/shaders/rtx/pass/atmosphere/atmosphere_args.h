@@ -351,7 +351,16 @@ struct AtmosphereArgs {
   // this gate — the cloud RT is at primary-ray pixel coords, sampling it for
   // a different ray direction at the same pixel would return the wrong cloud.
   uint  cloudRenderRTEnable;       // 0 or 1
-  uint  pad_c5_0;                  // 16-byte alignment
+  // Cloud temporal smoothing master gate (fork — 2026-05-26). Repurposes the
+  // former pad_c5_0 slot — same byte position, byte-identical CB layout.
+  // When 0, the cloud history reproject + alpha-blend in evalSkyRadiance is
+  // skipped and the raw current-frame cloud value is used directly. Off by
+  // default for the Morrowind project because the smoother produces visible
+  // tearing/seams on camera turn at the higher cloud-RT resolution we
+  // adopted in the same sweep, and the DLSS-perceived flatness it was added
+  // to fight is no longer an issue once the cloud RT renders at full
+  // target extent.
+  uint  cloudTemporalSmoothingEnable;
   uint  pad_c5_1;
   uint  pad_c5_2;
 

@@ -1838,6 +1838,20 @@ namespace dxvk {
                "(2026-05-13) -- in-game validation confirmed Nubis Cubed lighting "
                "produces the expected perceptual wins across day/sunset/night.");
 
+    // Cloud temporal smoothing master gate (fork — 2026-05-26). The screen-
+    // space cloud history reproject + alpha-blend in evalSkyRadiance was
+    // originally added to fight DLSS-perceived flatness when the cloud RT
+    // ran at downscale extent. After flipping the cloud RT to full target
+    // extent (same sweep), the smoother became the dominant source of the
+    // visible tearing/seams when the camera turns: history reprojection at
+    // full-res shows the lattice pattern of stale samples bleeding into
+    // fresh ones. Off by default for the Morrowind project; flip back on
+    // if a future build needs the smoother for a specific reason.
+    RTX_OPTION("rtx.atmosphere", bool, cloudTemporalSmoothingEnable, false,
+               "Enable per-pixel cloud history reproject + temporal blend at "
+               "primary sky-miss. Off by default; see header comment in "
+               "atmosphere_args.h for rationale.");
+
     // Voxel-grid cloud-on-terrain shadows at NEE entry points (fork — 2026-05-12, C6).
     // When true, sampleAtmosphereSunLight / sampleAtmosphereSunLightVolume apply
     // a multiplicative ratio correction that replaces the legacy

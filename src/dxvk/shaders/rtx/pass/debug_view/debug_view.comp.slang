@@ -492,18 +492,23 @@ vec4 loadInput(inout RNG randomState, ivec2 threadId)
     {
       // Fork diagnostic. Visualizes the Nubis Cubed cloud render RT
       // produced by cloud_render.comp.slang (C4 of the 2026-05-12
-      // workstream). The RT is at downscale extent; map pixel UV directly
-      // to the texture via Load. Premultiplied radiance is shown as-is;
-      // alpha (cloud transmittance) is ignored for the debug case — what
-      // matters here is the per-pixel cloud color from the Nubis Cubed
-      // lighting equations (top-bright / bottom-dark cumulus gradient,
-      // silver lining at backlit edges, less-flat shadow side).
+      // workstream). The RT is at full target extent (fork — 2026-05-26);
+      // the debug view dispatch is at downscale extent, so we map the
+      // downscale pixel coord to a normalized UV and bilinear-sample the
+      // larger RT. Premultiplied radiance is shown as-is; alpha (cloud
+      // transmittance) is ignored for the debug case — what matters here
+      // is the per-pixel cloud color from the Nubis Cubed lighting
+      // equations (top-bright / bottom-dark cumulus gradient, silver
+      // lining at backlit edges, less-flat shadow side).
       //
       // Compare against the live sky (debug view off) to A/B this against
       // the existing analytical evalClouds rendering. The cloud-render RT
       // value is the same scene as the live sky's cloud layer minus the
       // sky-miss composite (which still uses analytical clouds in C4).
-      vec4 cloudSample = DebugViewCloudRenderRT.Load(int3(threadId, 0));
+      uint2 cloudRTDim;
+      DebugViewCloudRenderRT.GetDimensions(cloudRTDim.x, cloudRTDim.y);
+      uint2 mappedCoord = (uint2)(((vec2(threadId) + vec2(0.5f)) / vec2(cb.debugViewResolution)) * vec2(cloudRTDim));
+      vec4 cloudSample = DebugViewCloudRenderRT.Load(int3(mappedCoord, 0));
       value = vec4(cloudSample.rgb, 1.0f);
     }
     break;
