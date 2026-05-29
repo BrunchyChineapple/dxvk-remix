@@ -151,11 +151,19 @@ namespace fork_hooks {
           ctx.m_atmosphere->setCloudShadowCameraPosition(cameraPosYUpKm);
         }
 
-        // Allocate the cloud render RT at the downscale extent (the resolution
-        // the geometry resolver raygen writes to and DLSS sees as its input).
-        const VkExtent3D downscaledExtent3D = ctx.getResourceManager().getDownscaleDimensions();
-        const VkExtent2D downscaleExtent = { downscaledExtent3D.width, downscaledExtent3D.height };
-        ctx.m_atmosphere->ensureCloudRenderRT(&ctx, downscaleExtent);
+        // Allocate the cloud render RT at the FULL TARGET extent (post-DLSS
+        // output resolution) instead of the downscale extent. DLSS Quality
+        // input is ~67% scale per axis, which means a 1-pixel-wide cloud
+        // alpha edge in downscaled space landed mid-pixel in target space
+        // and DLSS reconstruction couldn't recover a clean edge transition.
+        // Rendering the cloud RT at target extent gives the consumer
+        // (atmosphere_sky.slangh sky-miss branch) a bilinear-filtered tap
+        // that resolves to a smooth edge before DLSS sees it. Cost: cloud
+        // march does (1 / scale)^2 more pixel work (~2.25x at Quality);
+        // cloud march is a small fraction of total RT cost so this is fine.
+        const VkExtent3D targetExtent3D = ctx.getResourceManager().getTargetDimensions();
+        const VkExtent2D cloudRenderExtent = { targetExtent3D.width, targetExtent3D.height };
+        ctx.m_atmosphere->ensureCloudRenderRT(&ctx, cloudRenderExtent);
       }
 
       ctx.m_atmosphere->computeLuts(&ctx);
@@ -649,6 +657,61 @@ namespace fork_hooks {
       }
     }
 
+    void renderConstellationsUI() {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+      if (ImGui::TreeNode("Constellations")) {
+        ImGui::TextDisabled("Lore-accurate Morrowind birthsign constellations.");
+        ImGui::TextDisabled("13 figures (3 Guardians + 10 Charges + Serpent),");
+        ImGui::TextDisabled("composited atop the procedural star field.");
+        ImGui::Separator();
+
+        RemixGui::Checkbox("Enabled", &RtxOptions::constellationsEnabledObject());
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Master toggle for the constellation overlay. The wrapper also drives this off in "
+            "true interior cells to prevent bleed-through.");
+
+        RemixGui::DragFloat("Star Brightness", &RtxOptions::constellationStarBrightnessObject(),
+                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier on the named constellation stars. 1.0 puts them at procedural-"
+            "star peak; raise for a more figure-stamp look. Per-star color temperature variation "
+            "is preserved at any setting.");
+
+        RemixGui::DragFloat("Star Size", &RtxOptions::constellationStarSizeObject(),
+                            0.05f, 0.3f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "PSF size multiplier. 1.0 = ~0.2 deg FWHM (~2.4 pixels at 1080p/90 deg FOV). "
+            "Lower = sharper pinpoint; higher = softer halo. Below 0.5 risks subpixel flicker.");
+
+        RemixGui::DragFloat("Edge Brightness", &RtxOptions::constellationEdgeBrightnessObject(),
+                            0.005f, 0.0f, 0.5f, "%.3f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Polyline glow brightness for the connect-the-dots overlay. 0 = stars only "
+            "(default; figures implied by spatial layout). 0.05-0.15 shows faint connecting lines.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Highlights");
+
+        RemixGui::DragFloat("Guardian Boost", &RtxOptions::constellationGuardianBoostObject(),
+                            0.05f, 1.0f, 3.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier for the 3 Guardian constellations (Warrior / Mage / Thief). "
+            "They sit at central N/E/W and dominate Morrowind canon.");
+
+        RemixGui::DragFloat("Birth-Month Highlight", &RtxOptions::constellationMonthHighlightObject(),
+                            0.05f, 1.0f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier on whichever constellation matches the current Morrowind "
+            "month. 1.0 = no highlight; 1.6 default boosts the player's birth-month figure "
+            "during its month. Wrapper pushes the current month every frame.");
+
+        const float currentMonth = RtxOptions::constellationCurrentMonth();
+        ImGui::Text("Current month (game-driven): %d", int(std::round(currentMonth)));
+
+        ImGui::TreePop();
+      }
+    }
+
     void renderMeteorsUI() {
       constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
       if (ImGui::TreeNode("Meteors & Showers")) {
@@ -786,6 +849,58 @@ namespace fork_hooks {
             "Brightness of the disk halo + ambient airglow around the moon. Master multiplier. "
             "0 = no halo / airglow. 1 = default. Power users can .conf-tune moonHaloMagnitude / "
             "moonAmbientAirglow for ratio.");
+        ImGui::TreePop();
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // renderBloodmoonUI
+    //
+    // Hircine's Great Hunt — when active, Secunda turns deep crimson and is
+    // referred to as the Bloodmoon. Tunable appearance + a debug toggle so
+    // we can trigger the event in-engine for testing without waiting for a
+    // wrapper-side scripted hook.
+    //
+    // bloodmoonActive is NoSave (wrapper-driven). The debug checkbox here
+    // writes into the same Derived layer the wrapper would, so it picks up
+    // exactly the same code path. Once an MWSE-Lua hook is wired (Bloodmoon
+    // main quest, hunt-event scripts), the debug checkbox lets us test the
+    // visual without scripting a quest event.
+    // -------------------------------------------------------------------------
+    void renderBloodmoonUI() {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+      if (ImGui::TreeNode("Bloodmoon (Hircine's Great Hunt)")) {
+        ImGui::TextDisabled("During Hircine's Great Hunt, Secunda turns crimson.");
+        ImGui::TextDisabled("Masser stays normal. Wrapper drives bloodmoonActive");
+        ImGui::TextDisabled("from quest state; debug toggle overrides it here.");
+        ImGui::Separator();
+
+        RemixGui::Checkbox("Trigger Bloodmoon (Debug)",
+                           &RtxOptions::bloodmoonActiveObject());
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Manual override for the Bloodmoon event. NoSave, so it doesn't persist past "
+            "shutdown. Wrapper writes to the same flag; whichever was written most recently "
+            "wins (the wrapper writes every frame, so its value will dominate when no debug "
+            "scripted state exists -- toggle this off to return to wrapper control).");
+
+        RemixGui::DragFloat("Tint Strength", &RtxOptions::bloodmoonStrengthObject(),
+                            0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Color blend amount. 0 = brightness boost only (no tint), 1 = full tint replacement. "
+            "Default 1.0.");
+
+        RemixGui::DragFloat("Glow Multiplier", &RtxOptions::bloodmoonGlowObject(),
+                            0.05f, 0.5f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier on participating moons during the event. 1.0 = no extra "
+            "glow. 1.4 default reads as the moon being 'lit' for the hunt.");
+
+        RemixGui::ColorEdit3("Tint Color", &RtxOptions::bloodmoonTintObject(),
+                             ImGuiColorEditFlags_Float);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Color participating moons blend toward during a Bloodmoon event. "
+            "Default deep crimson (0.85, 0.10, 0.05).");
+
         ImGui::TreePop();
       }
     }
@@ -973,6 +1088,7 @@ namespace fork_hooks {
         renderStarsUI();
         renderMilkyWayUI();
         renderStarAppearanceUI();
+        renderConstellationsUI();
         renderMeteorsUI();
 
         ImGui::TreePop();
@@ -982,6 +1098,7 @@ namespace fork_hooks {
       if (ImGui::TreeNode("Moons")) {
         renderMoonGlobalLightingUI();
         renderMoonCloudLookUI();
+        renderBloodmoonUI();
 
         for (int i = 0; i < static_cast<int>(MAX_MOONS); ++i) {
           renderMoonUI(i);

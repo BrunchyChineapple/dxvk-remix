@@ -28,6 +28,8 @@
 // existing atmosphere_common.slangh include only — the sky-only functions
 // here then never end up in their compiled SPIR-V.
 //
+
+#include "constellations.h"  // baked lookup table for evalConstellations
 // Cloud and atmosphere helpers used by both the sky path and the ground
 // shadow term (intersectSphere, cloudPlanetRadius, computeCloudHeightFraction,
 // sampleCloudDensityTextured, intersectCloudLayer, evalCloudGroundShadow,
@@ -96,6 +98,28 @@ vec3 hash33(vec3 p) {
   return vec3(float(q.x), float(q.y), float(q.z)) / 4294967296.0f;
 }
 
+// Apply the sky's sidereal rotation to a sample direction. Used by both the
+// procedural star field and the constellation overlay so the named figures
+// rotate with the rest of the night sky and don't drift relative to the
+// background stars.
+//
+// Default axis (elevation 90, azimuth 0) places the celestial pole at +Y
+// (zenith). Combined with starRotation = 0, the Rodrigues formula reduces
+// to the identity, so unrotated callers see the original direction.
+vec3 applySiderealRotation(vec3 dir, AtmosphereArgs args) {
+  const float kDegToRad = 3.14159265358979323846f / 180.0f;
+  float poleElev = args.starAxisElevation * kDegToRad;
+  float poleAzi  = args.starAxisRotation  * kDegToRad;
+  vec3 axis = vec3(cos(poleElev) * sin(poleAzi),
+                   sin(poleElev),
+                   cos(poleElev) * cos(poleAzi));
+
+  float rotRad = args.starRotation * kDegToRad;
+  float c = cos(rotRad);
+  float s = sin(rotRad);
+  return dir * c + cross(axis, dir) * s + axis * dot(axis, dir) * (1.0f - c);
+}
+
 // Generate star brightness for a given sky direction
 // Returns star color (white-blue-orange based on temperature) and brightness
 vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
@@ -107,25 +131,7 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   // for galactic-band placement, cube-face indexing, and twinkle phase. The
   // whole pattern (band, individual stars, color temperatures) rotates as
   // one rigid body, matching real-sky behavior.
-  //
-  // Default axis (elevation 90, azimuth 0) places the celestial pole at +Y
-  // (zenith). Combined with starRotation = 0, the Rodrigues formula below
-  // reduces to the identity, so unrotated callers see the original pattern
-  // unchanged.
-  {
-    const float kDegToRad = 3.14159265358979323846f / 180.0f;
-    float poleElev = args.starAxisElevation * kDegToRad;
-    float poleAzi  = args.starAxisRotation  * kDegToRad;
-    vec3 axis = vec3(cos(poleElev) * sin(poleAzi),
-                     sin(poleElev),
-                     cos(poleElev) * cos(poleAzi));
-
-    float rotRad = args.starRotation * kDegToRad;
-    float c = cos(rotRad);
-    float s = sin(rotRad);
-    // Rodrigues' rotation: v_rot = v*c + (k × v)*s + k*(k·v)*(1 - c)
-    dir = dir * c + cross(axis, dir) * s + axis * dot(axis, dir) * (1.0f - c);
-  }
+  dir = applySiderealRotation(dir, args);
 
   float theta = acos(clamp(dir.y, -1.0f, 1.0f));
   float phi = atan2(dir.z, dir.x);
@@ -373,6 +379,192 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   return totalStars * args.starBrightness + milkyWayGlow;
 }
 
+// ----------------------------------------------------------------------------
+// Constellation overlay (fork — 2026-05-24)
+//
+// Composites a baked lookup table of named-star points and polyline edges on
+// top of the procedural star field. Source: Morrowind's tx_stars_*.dds (3
+// Guardians) + tx_birth_*.dds (10 Charges + Serpent). Layout: Guardian-
+// triangle at central N/E/W, Charges clustered around their Guardian,
+// Serpent at mid-south. See patches/rtxdll/bake_constellations.py and
+// constellations.h for the table format.
+//
+// Per-constellation Y-up direction for star (cAz, cEl):
+//    az = degrees from North (CW), el = degrees above horizon
+//    dir = (cos(el)*sin(az), sin(el), cos(el)*cos(az))
+//
+// Each named star renders as a Gaussian point with PSF tied to
+// args.starPsfSharpness / args.constellationStarSize. Polyline edges (when
+// constellationEdgeBrightness > 0) draw as a Gaussian-weighted distance to
+// the great-circle arc between the two endpoint stars.
+//
+// Birthsign-month gating: the constellation whose birthsignMonth matches
+// args.constellationCurrentMonth (1..12) gets a brightness boost; others
+// stay at baseline. month=0 disables the highlight.
+// ----------------------------------------------------------------------------
+
+// Named-star color palette by constellation kind. Guardians are warm white
+// (matches the Warrior pink in tx_stars_warrior.dds without special-casing
+// per-Guardian). Charges are cool cyan. Wanderer is pink-tinged.
+static const vec3 kConstellationColorByKind[3] = {
+  vec3(1.00f, 0.95f, 0.85f),  // 0 Guardian — warm white
+  vec3(0.85f, 0.95f, 1.05f),  // 1 Charge   — cool cyan
+  vec3(1.05f, 0.85f, 0.95f),  // 2 Wanderer — pink-magenta
+};
+
+// Convert (azimuth°, elevation°) to a unit Y-up direction.
+vec3 azElToDir(float azDeg, float elDeg) {
+  const float kDegToRad = 3.14159265358979323846f / 180.0f;
+  float az = azDeg * kDegToRad;
+  float el = elDeg * kDegToRad;
+  float ce = cos(el);
+  return vec3(ce * sin(az), sin(el), ce * cos(az));
+}
+
+// Per-star color temperature classes (mirror evalStarField). Picked from a
+// bake-deterministic hash so the same star always shows the same color.
+// Constellation kind tints the result so Guardians stay warm-white,
+// Charges cool-blue, Serpent pink-magenta — the named figures still read
+// as a coherent set without losing the per-star variation that makes them
+// look like real stars.
+vec3 constellationStarColor(uint constIdx, uint starIdx, vec3 kindTint) {
+  // Deterministic hash on (constellation, star, salt). Same star always
+  // gets the same temperature / class.
+  vec3 h = hash31(vec3(float(constIdx), float(starIdx), 17.0f));
+  float temp = h.x;
+
+  vec3 baseColor;
+  if (temp > 0.7f) {
+    baseColor = vec3(0.70f, 0.80f, 1.00f);   // Blue-white (O/B type)
+  } else if (temp > 0.3f) {
+    baseColor = vec3(1.00f, 1.00f, 0.95f);   // White-yellow (F/G type)
+  } else {
+    baseColor = vec3(1.00f, 0.85f, 0.70f);   // Orange (K type)
+  }
+
+  // Soft tint toward kind color (Guardian/Charge/Serpent) — 30% blend so
+  // the constellation reads as a set without all stars going monochrome.
+  return mix(baseColor, baseColor * kindTint, 0.3f);
+}
+
+vec3 evalConstellations(vec3 viewDir, AtmosphereArgs args) {
+  if (args.constellationsEnabled < 0.5f) return vec3(0.0f);
+
+  // Sidereal rotation lockstep with the procedural star field. Without
+  // this the named figures would drift relative to the rest of the sky.
+  vec3 dir = applySiderealRotation(normalize(viewDir), args);
+
+  // PSF tuning — see comments in the star loop below for full math.
+  // Tracks args.starPsfSharpness so a global "sharper / softer star"
+  // setting moves both procedural and named stars together.
+  float sizeScale = max(args.constellationStarSize, 0.1f);
+  float starK = args.starPsfSharpness / (sizeScale * sizeScale);
+
+  // Edge PSF: independent of star size; chosen so polylines read as faint
+  // glow rather than fat ribbons. Same exp(-cd*K) form as stars.
+  const float kEdgeK = 6000.0f;
+
+  // Current-month highlight: which (if any) constellation gets the boost.
+  // 0 means "no highlight"; 1..12 select by matching birthsignMonth.
+  int currentMonth = int(round(args.constellationCurrentMonth));
+
+  vec3 result = vec3(0.0f);
+
+  // Single loop over the table. CONSTELLATION_COUNT is small (13) and
+  // most of the per-pixel work is exp() falloffs that go to ~0 for any
+  // constellation far from the view direction.
+  for (uint c = 0u; c < CONSTELLATION_COUNT; ++c) {
+    ConstellationMeta meta = kConstellationMeta[c];
+    if (meta.starCount == 0u) continue;
+
+    vec3 kindTint = kConstellationColorByKind[meta.kind];
+
+    // Per-constellation brightness factor.
+    float kindBoost = (meta.kind == 0u) ? args.constellationGuardianBoost : 1.0f;
+    float monthBoost = (currentMonth > 0 && uint(currentMonth) == meta.birthsignMonth)
+                        ? args.constellationMonthHighlight
+                        : 1.0f;
+    float perConst = args.constellationStarBrightness * kindBoost * monthBoost;
+
+    // Pre-compute star directions for this constellation so the edge pass
+    // can reuse them without re-decoding az/el. Cap to actual starCount.
+    vec3 starDirs[MAX_STARS_PER_CONSTELLATION];
+    for (uint i = 0u; i < meta.starCount; ++i) {
+      ConstellationStar s = kConstellationStars[c * MAX_STARS_PER_CONSTELLATION + i];
+      starDirs[i] = azElToDir(s.azimuth, s.elevation);
+    }
+
+    // Stars: per-star Gaussian point sources with temperature-class colors
+    // and twinkle.
+    //
+    // Math: cd = 1 - dot(dir, sd) ≈ θ²/2 for small angles. Using
+    // exp(-cd * starK * 50000) gives a Gaussian with FWHM in θ of
+    // 2 * sqrt(ln(2) / (12.5 * starK)) radians. At default
+    // starPsfSharpness=20, constellationStarSize=1.4 → starK ≈ 10.2 →
+    // FWHM ≈ 0.2° — sharp enough to read as a point at 1080p/90° FOV
+    // (~2.4 pixels) but not subpixel. Earlier passes with K=1e6 (cd²
+    // form) gave ~1.3° blobs; K=5000 (linear form) gave ~0.6°. K=50000
+    // is the right magnitude for true point-source rendering.
+    for (uint i = 0u; i < meta.starCount; ++i) {
+      ConstellationStar s = kConstellationStars[c * MAX_STARS_PER_CONSTELLATION + i];
+      vec3 sd = starDirs[i];
+      float cd = 1.0f - dot(dir, sd);
+
+      // Gaussian PSF.
+      float spot = exp(-cd * starK * 50000.0f);
+      // Cheap early-out: if the spot is below visibility, skip the
+      // color/twinkle math entirely for this star. ~99% of stars are
+      // far from the view direction so this saves real work.
+      if (spot < 1e-5f) continue;
+
+      vec3 starColor = constellationStarColor(c, i, kindTint);
+
+      // Twinkle (mirrors evalStarField): per-star phase + frequency
+      // hashed deterministically; sin envelope dips to 0.7. Disabled
+      // when starTwinkleSpeed = 0.
+      float twinkle = 1.0f;
+      if (args.starTwinkleSpeed > 0.0f) {
+        vec3 hashSeed = vec3(float(c), float(i), 23.0f);
+        float twinklePhase = hash31(hashSeed).x * 6.283f;
+        float twinkleFreq  = 0.5f + hash31(hashSeed * 2.0f).x * 2.0f;
+        twinkle = 0.7f + 0.3f * sin(args.timeSeconds * twinkleFreq * args.starTwinkleSpeed + twinklePhase);
+      }
+
+      result += starColor * (spot * s.brightness * perConst * twinkle);
+    }
+
+    // Edges: distance from the view direction to the great-circle arc.
+    // Per-edge Gaussian falloff. Skip when edge brightness is zeroed
+    // (default). Same exp(-cd*K) form as stars.
+    if (args.constellationEdgeBrightness > 0.0f) {
+      float edgeIntensity = args.constellationEdgeBrightness * monthBoost * kindBoost;
+      vec3 edgeColor = mix(vec3(1.0f), kindTint, 0.5f);
+      for (uint e = 0u; e < meta.edgeCount; ++e) {
+        ConstellationEdge ed = kConstellationEdges[c * MAX_EDGES_PER_CONSTELLATION + e];
+        if (ed.i >= meta.starCount || ed.j >= meta.starCount) continue;
+        vec3 a = starDirs[ed.i];
+        vec3 b = starDirs[ed.j];
+
+        // Closest point on the segment a→b to dir, on the unit sphere.
+        // Linear interp in cartesian space is a good approximation for
+        // short edges; project back to unit sphere afterward.
+        vec3 ab = b - a;
+        float ab2 = max(dot(ab, ab), 1e-6f);
+        float t = clamp(dot(dir - a, ab) / ab2, 0.0f, 1.0f);
+        vec3 closest = normalize(a + ab * t);
+        float cd2 = 1.0f - dot(dir, closest);
+        float glow = exp(-cd2 * kEdgeK);
+        // Don't draw glow at the endpoints — they're already covered by
+        // the bright star points.
+        float endpointFade = 4.0f * t * (1.0f - t);  // peaks at t=0.5
+        result += edgeColor * (glow * edgeIntensity * endpointFade);
+      }
+    }
+  }
+
+  return result;
+}
+
 // Compute night sky contribution split into two layers:
 //   - starsOut: discrete star field + shooting stars (HDR point-source content
 //     that needs steeper extinction through clouds, applied by the caller via
@@ -406,6 +598,13 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
   // Star field (includes galactic density band — no separate nebula overlay needed)
   vec3 stars = evalStarField(viewDir, args) * horizonExtinction;
 
+  // Lore-accurate constellation overlay (fork — 2026-05-24). Adds named-star
+  // points and (optional) polyline edges atop the procedural field. Uses the
+  // same horizonExtinction so figures fade with the rest of the sky near the
+  // horizon. Sidereal rotation is applied internally so the figures rotate
+  // in lockstep with evalStarField.
+  stars += evalConstellations(viewDir, args) * horizonExtinction;
+
   // ----- Meteor / shooting star system (fork, 2026-05-21) -----
   //
   // Slot system:
@@ -425,7 +624,7 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
   // Streaks living longer than kSlotDuration overlap, so high-rate showers
   // can show many streaks on screen at once. The lookback loop iterates
   // through enough past slots to cover the longest possible streak lifetime.
-  {
+  if (args.meteorsEnabled > 0.5f) {
     const int   kMaxStreaksPerSecond  = 8;
     const float kSlotsPerSecond       = float(kMaxStreaksPerSecond);
     const float kSlotDuration         = 1.0f / kSlotsPerSecond;        // 0.125 s
@@ -450,6 +649,10 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
     float moonSkyBrightness = 0.0f;
     [unroll] for (int mi = 0; mi < MAX_MOONS; ++mi) {
       MoonParams m = args.moons[mi];
+      // Bloodmoon brightens participating moons, which legitimately makes
+      // meteors harder to see — apply the same transform here so the
+      // dimming model stays consistent.
+      applyBloodmoonToMoon(m, args);
       if (m.enabled > 0.5f && m.direction.y > 0.0f) {
         float phaseFull = 1.0f - 2.0f * abs(m.phase - 0.5f);
         // direction.y is already sin(elevation), so it doubles as our zenith weight.
@@ -764,6 +967,23 @@ void computeVolcanicSurfaceDetail(float diskX, float diskY, MoonParams m,
   );
 }
 
+// Apply Bloodmoon tint + glow to a MoonParams copy in-place. Returns true
+// if the moon participates in the active event. Safe to call when
+// args.bloodmoonActive is 0 (returns false, leaves m unchanged).
+//
+// Used by all moon paths (disk render, cloud-moon NEE, ambient airglow,
+// halo glow) so the tint is consistent across direct illumination,
+// silver-lining, and atmosphere coupling. Otherwise the disk would turn
+// red but the cloud body underneath would still light up moonlight-blue.
+bool applyBloodmoonToMoon(inout MoonParams m, AtmosphereArgs args) {
+  float blend = args.bloodmoonActive * args.bloodmoonStrength * m.bloodmoonAffinity;
+  if (blend <= 0.0f) return false;
+  blend = saturate(blend);
+  m.color = mix(m.color, args.bloodmoonTint, blend);
+  m.brightness *= mix(1.0f, args.bloodmoonGlow, m.bloodmoonAffinity);
+  return true;
+}
+
 // Render moon disk for moonIdx in args.moons[]. Returns radiance contribution
 // for this pixel and writes diskCoverage in [0,1] indicating disk opacity at
 // this view direction. Caller composites moons over the night sky using
@@ -815,6 +1035,17 @@ vec3 evalMoonDisk(vec3 viewDir, uint moonIdx, AtmosphereArgs args, out float dis
   // Surface shading dispatched by style preset
   float surfaceDetail = 1.0f;
   vec3 surfaceColor = m.color;
+
+  // Bloodmoon — Hircine's Great Hunt (fork — 2026-05-24).
+  // Helper mutates m.color and m.brightness in place when the master
+  // toggle is active and this moon participates (affinity > 0). Default
+  // mapping: only Secunda (moon 0) participates. The mutated m is then
+  // consumed by the surface-detail shaders and the sharedFactor lighting
+  // math below — so the disk surface, limb darkening, and atmospheric
+  // transmittance all read the tinted base.
+  if (applyBloodmoonToMoon(m, args)) {
+    surfaceColor = m.color;
+  }
   switch (m.surfaceStyle) {
   case 0u:
     computeRockySurfaceDetail(diskX, diskY, m, surfaceDetail, surfaceColor);
@@ -993,13 +1224,16 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args, uint2 pixelCoord, uint frameI
   uint msOctaveCount = clamp(args.cloudMultiScatterOctaves, 1u, 4u);
   float baseSigma = 2.0f * args.cloudDensity;  // direct-extinction coefficient (matches shadow march)
 
-  // Atmospheric transmittance to the sun. Purely a function of sun direction
-  // (the simplified ground-level model has no altitude/position dependence),
-  // so hoisted out of the march loop. Calling getAtmosphericTransmittanceForDir
-  // directly rather than getTransmittanceToSun avoids the cloud-ground-shadow
-  // term — clouds shouldn't be self-shadowed by the cloud layer when their
-  // own per-sample sun-shadow march already accounts for occlusion.
-  vec3 airTrans = getAtmosphericTransmittanceForDir(sunDir, args);
+  // Atmospheric transmittance to the sun via the precomputed LUT.
+  // The LUT encodes full Rayleigh + Mie + ozone extinction and returns 0 when
+  // the sun is below the planet horizon — this produces physically correct
+  // warm orange/red cloud color at sunset instead of the analytically-computed
+  // (Mie-less, ozone-scaled) grey. Altitude 0.0 is a valid ground-level
+  // approximation for cloud-slab shading. sunDir.y = cos(sun zenith angle).
+  // Called directly (not via getTransmittanceToSun) to avoid applying the
+  // analytical cloud-ground-shadow term; per-sample shadow march handles it.
+  vec3 airTrans = sampleTransmittanceLut(AtmosphereTransmittanceLut, AtmosphereSkyViewSampler,
+                                         0.0f, sunDir.y, args);
 
   // Pre-compute warm tint (constant per ray). lowSunFactor peaks near the
   // horizon and fades on both sides — the below-horizon smoothstep gate
@@ -1060,6 +1294,10 @@ vec4 evalClouds(vec3 viewDir, AtmosphereArgs args, uint2 pixelCoord, uint frameI
       for (uint mi = 0u; mi < MAX_MOONS; ++mi) {
         MoonParams m = args.moons[mi];
         if (m.enabled < 0.5f) continue;
+        // Bloodmoon tint + glow applies uniformly across cloud-moon NEE,
+        // ambient airglow, and silver-lining shape so participating moons
+        // light clouds in their tinted color (not blue).
+        applyBloodmoonToMoon(m, args);
         vec3 moonDir = normalize(m.direction);
         float moonDot = max(dot(moonDir, vec3(0.0f, 1.0f, 0.0f)), 0.0f);
         // phaseGlow: smooth 0..1 raised-cosine oscillation peaking at full moon
@@ -1451,6 +1689,9 @@ vec3 evalSkyRadiance(
     for (uint gi = 0u; gi < MAX_MOONS; ++gi) {
       MoonParams m = args.moons[gi];
       if (m.enabled < 0.5f) continue;
+      // Bloodmoon: tint and brightness boost apply to the halo glow too,
+      // so participating moons cast a warm crimson aureole around the disk.
+      applyBloodmoonToMoon(m, args);
       vec3 moonDir = normalize(m.direction);
       float cosAngle = dot(viewDirYUp, moonDir);
       float angularDist = acos(clamp(cosAngle, -1.0f, 1.0f));
@@ -1509,9 +1750,25 @@ vec3 evalSkyRadiance(
   // temporal-smoothing / mix composite operations apply uniformly to either
   // source: both paths are accumulated as `radiance += stepRadiance * T_so_far`,
   // so the rgb-channel semantics match once the alpha convention is reconciled.
+  //
+  // Sampling (fork — 2026-05-26): cloud RT now allocated at full target
+  // (post-DLSS-output) extent, while this shader runs at downscale extent.
+  // We sample with bilinear filter using the downscale-pixel screen UV so
+  // the target-extent neighborhood gets lerp-resolved into a smooth alpha
+  // edge before DLSS sees it. Replaces the previous integer Load() at
+  // matching downscale extent. historyResolution is the downscale resolution
+  // (same as cb.camera.resolution at the call site in geometry_resolver.slangh).
   vec4 cloudLayer;
   if (args.cloudRenderRTEnable != 0u && isPrimaryRay) {
-    vec4 cloudRT = AtmosphereCloudRender.Load(int3(pixelCoord, 0));
+    vec4 cloudRT;
+    if (all(historyResolution > uint2(0u, 0u))) {
+      vec2 cloudUV = (vec2(pixelCoord) + vec2(0.5f)) / vec2(historyResolution);
+      cloudRT = AtmosphereCloudRender.SampleLevel(AtmosphereSkyViewSampler, cloudUV, 0.0f);
+    } else {
+      // Fallback when the resolution param wasn't passed (PSR-miss path
+      // doesn't read this branch, but be defensive).
+      cloudRT = AtmosphereCloudRender.Load(int3(pixelCoord, 0));
+    }
     cloudLayer = vec4(cloudRT.rgb, 1.0f - cloudRT.a);
   } else {
     cloudLayer = evalClouds(viewDirYUp, args, pixelCoord, frameIdx);

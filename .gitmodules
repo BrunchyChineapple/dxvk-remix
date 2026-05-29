@@ -25,7 +25,7 @@
 	url = https://github.com/KhronosGroup/Vulkan-Headers
 [submodule "submodules/rtxdi"]
 	path = submodules/rtxdi
-	url = https://github.com/RemixProjGroup/RTXDI
+	url = https://github.com/BrunchyChineapple/RTXDI
 	branch = remix
 [submodule "submodules/rtxcr"]
 	path = submodules/rtxcr

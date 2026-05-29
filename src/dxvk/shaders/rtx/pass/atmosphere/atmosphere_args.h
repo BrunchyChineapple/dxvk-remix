@@ -46,6 +46,17 @@ struct MoonParams {
   float surfaceNoiseScale; // Multiplier on UV scale fed into surface noise
   float darkSideBrightness;// Fraction of lit radiance applied on dark side
   float roughnessAmount;   // Multiplier on micro-detail amplitude
+
+  // Bloodmoon (Hircine's Great Hunt event, fork — 2026-05-24).
+  // bloodmoonAffinity selects which moon transforms; for Morrowind canon
+  // Secunda is the Bloodmoon (affinity=1.0) and Masser stays normal
+  // (affinity=0.0). The shader blends surfaceColor toward
+  // args.bloodmoonTint by (affinity * args.bloodmoonStrength) when the
+  // master `args.bloodmoonActive` is on.
+  float bloodmoonAffinity; // [0,1] how much THIS moon participates in a Bloodmoon
+  float padBloodmoon0;     // 16-byte alignment
+  float padBloodmoon1;
+  float padBloodmoon2;
 };
 
 // Atmosphere parameters for Hillaire physically-based atmospheric scattering
@@ -225,7 +236,10 @@ struct AtmosphereArgs {
   float meteorColorVariation;             // Random per-streak hue variation [0..1]. Default 0.3.
 
   float meteorMoonDimmingStrength;        // How aggressively bright moons dim faint meteors [0..2]. Default 1.0.
-  float padMeteor0;                       // 16-byte alignment
+  float meteorsEnabled;                   // Master gate: 1=meteor system runs, 0=skip the whole meteor loop.
+                                          // Wrapper-driven (NoSave) — disabled in true interior cells so
+                                          // meteorBaseRate sporadics + meteorShowerActivity showers both stop.
+                                          // The user's persistent meteor settings stay untouched.
   float padMeteor1;
   float padMeteor2;
 
@@ -337,7 +351,16 @@ struct AtmosphereArgs {
   // this gate — the cloud RT is at primary-ray pixel coords, sampling it for
   // a different ray direction at the same pixel would return the wrong cloud.
   uint  cloudRenderRTEnable;       // 0 or 1
-  uint  pad_c5_0;                  // 16-byte alignment
+  // Cloud temporal smoothing master gate (fork — 2026-05-26). Repurposes the
+  // former pad_c5_0 slot — same byte position, byte-identical CB layout.
+  // When 0, the cloud history reproject + alpha-blend in evalSkyRadiance is
+  // skipped and the raw current-frame cloud value is used directly. Off by
+  // default for the Morrowind project because the smoother produces visible
+  // tearing/seams on camera turn at the higher cloud-RT resolution we
+  // adopted in the same sweep, and the DLSS-perceived flatness it was added
+  // to fight is no longer an issue once the cloud RT renders at full
+  // target extent.
+  uint  cloudTemporalSmoothingEnable;
   uint  pad_c5_1;
   uint  pad_c5_2;
 
@@ -415,4 +438,44 @@ struct AtmosphereArgs {
   float cloudSunsetAmbientReachInvKm; // D_sun reach in 1/km — higher = clouds turn cool faster with shadow depth
   float cloudSunsetAmbientRampHighSun;// sin(sun elevation) at which the effect smooth-fades to zero
   float pad_cloudSunsetAmbient0;      // 16-byte alignment
+
+  // ----- Lore-accurate constellations (fork — 2026-05-24) -----
+  // Static lookup table baked from Morrowind's tx_stars_*.dds + tx_birth_*.dds
+  // textures by patches/rtxdll/bake_constellations.py and consumed via
+  // shaders/rtx/pass/atmosphere/constellations.h. The shader's evalConstellations
+  // composites named-star points + polyline edges atop the procedural star
+  // field. CPU just supplies the per-frame controls below; the table itself
+  // is compile-time-constant in the shader.
+  //
+  // currentBirthsignMonth is wrapper-driven (NoSave). 1..12 = Morrowind months
+  // for highlight gating; 0 = unknown / all months at baseline. The shader
+  // boosts brightness on the constellation whose birthsign matches.
+  float constellationsEnabled;          // Master toggle: 1 = render named figures, 0 = procedural-only
+  float constellationStarBrightness;    // Multiplier on named-star point brightness (default 1.5)
+  float constellationEdgeBrightness;    // Per-edge polyline glow brightness (default 0.0; 0 = no edge lines)
+  float constellationStarSize;          // PSF size multiplier for named stars vs procedural (default 1.4)
+
+  float constellationCurrentMonth;      // Wrapper-pushed current Morrowind month, 0..12 (NoSave)
+  float constellationMonthHighlight;    // Brightness boost for current-month constellation (default 1.6)
+  float constellationGuardianBoost;     // Extra brightness for the 3 Guardian constellations (default 1.2)
+  float padConstellation0;              // 16-byte alignment
+
+  // ----- Bloodmoon — Hircine's Great Hunt (fork — 2026-05-24) -----
+  // When Hircine hosts a Great Hunt, Secunda turns deep red and becomes the
+  // Bloodmoon. Masser stays normal. Per-moon `bloodmoonAffinity` (above in
+  // MoonParams) selects which moon participates; the master fields here
+  // control whether the event is active and what tint/strength to apply.
+  //
+  // bloodmoonActive is wrapper-driven (NoSave) so the wrapper can fire it
+  // from MWSE-Lua hooks (Bloodmoon main quest stages, manual debug
+  // trigger from ImGui, etc.) without polluting user.conf. The shader
+  // blends each moon's surfaceColor toward bloodmoonTint by
+  // (affinity * bloodmoonStrength) every frame when active. Strength
+  // ramps to provide a visible transition rather than a hard cut.
+  float bloodmoonActive;     // 0 = normal, 1 = Bloodmoon event active. NoSave.
+  float bloodmoonStrength;   // [0..1] tint blend amount applied to participating moons. Default 1.0.
+  float bloodmoonGlow;       // Extra brightness multiplier on participating moons during event. Default 1.4.
+  float padBloodmoon0;
+  vec3  bloodmoonTint;       // Surface tint color participating moons blend toward. Default deep crimson.
+  float padBloodmoon1;
 };

@@ -477,7 +477,7 @@
 #define DECLARE_WEATHER_PRESET(N) WEATHER_PRESET_VALUES_##N(WEATHER_PRESET_BIND_##N)
 
 // ---------------------------------------------------------------------------
-// Umbrella macro. Invoke inside RtxOptions struct body to declare all 348
+// Umbrella macro. Invoke inside RtxOptions struct body to declare all 324
 // RTX_OPTIONs (12 presets x 27 fields).
 // ---------------------------------------------------------------------------
 #define DECLARE_ALL_WEATHER_PRESETS()   \
