@@ -562,11 +562,22 @@ namespace dxvk {
 
       VkSemaphore backbufferWaitSemaphore = m_backbufferPresentSemaphores[present.acquiredImageIndex]->handle();
       VkSemaphore backbufferSignalSemaphore = m_backbufferAcquireSemaphores[present.acquiredImageIndex]->handle();
-      
+
       commandList->addWaitSemaphore(backbufferWaitSemaphore);
 
       if (present.frameInterpolation.valid()) {
         ScopedCpuProfileZoneN("DLFG queue: interpolate");
+
+        // If the frame generation multiplier changed, the swapchain image count no longer matches.
+        // Return VK_ERROR_OUT_OF_DATE_KHR to force recreation. Checking here on the present thread
+        // (rather than on the CS thread) ensures no command list waits/signals or presents get
+        // submitted against the old swapchain semaphores.
+        const uint32_t neededSwapchainImages = present.frameInterpolation.interpolatedFrameCount + 1;
+        if (neededSwapchainImages > m_info.imageCount) {
+          m_lastPresentStatus = VK_ERROR_OUT_OF_DATE_KHR;
+          commandList->reset();
+          continue;
+        }
 
         PacerJob pacer;
 
