@@ -3478,6 +3478,38 @@ void ProcessDeviceCommandQueue() {
         break;
       }
 
+      case RemixApi_RequestVramCompaction:
+      {
+        if (remixapi::g_remix.RequestVramCompaction) {
+          remixapi::g_remix.RequestVramCompaction();
+        } else {
+          Logger::err("[RemixApi_RequestVramCompaction] function pointer is null in g_remix.");
+        }
+        break;
+      }
+
+      case RemixApi_GetVramStats:
+      {
+        // remixapi_VramStats is a flat POD; fill it server-side and ship the raw
+        // bytes back over a single Bridge_Response (mirrors GetGameValue). On a
+        // null pointer or failure, send only the error code (no stats payload),
+        // matching the client's success-gated read.
+        remixapi_VramStats stats = {};
+        remixapi_ErrorCode result = REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+        if (remixapi::g_remix.GetVramStats) {
+          result = remixapi::g_remix.GetVramStats(&stats);
+        } else {
+          Logger::err("[RemixApi_GetVramStats] GetVramStats function pointer is null in g_remix.");
+        }
+
+        ServerMessage c(Commands::Bridge_Response, currentUID);
+        c.send_data(static_cast<uint32_t>(result));
+        if (result == REMIXAPI_ERROR_CODE_SUCCESS) {
+          c.send_data(static_cast<uint32_t>(sizeof(remixapi_VramStats)), &stats);
+        }
+        break;
+      }
+
       default:
         break;
       }

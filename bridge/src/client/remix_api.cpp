@@ -596,6 +596,11 @@ extern "C" {
       interf.UpdateLightDefinition        = remixapi_UpdateLightDefinition;
       interf.SetGameValue                 = remixapi_SetGameValue;
       interf.GetGameValue                 = remixapi_GetGameValue;
+      // VRAM telemetry + compaction (fork hooks). GetVramStats backs MegaGeo's
+      // adaptive-LOD VRAM signal; RequestVramCompaction releases retained
+      // chunks at bulk scene-turnover. Both forwarded over the bridge.
+      interf.GetVramStats                 = remixapi_GetVramStats;
+      interf.RequestVramCompaction        = remixapi_RequestVramCompaction;
       // interf.dxvk_GetExternalSwapchain = remixapi_dxvk_GetExternalSwapchain;
       // interf.dxvk_GetVkImage = remixapi_dxvk_GetVkImage;
       // interf.dxvk_CopyRenderingOutput = remixapi_dxvk_CopyRenderingOutput;
@@ -744,6 +749,55 @@ extern "C" {
       const uint32_t value_size = DeviceBridge::get_data(&value_ptr);
       (void) value_size;
       memcpy(out_buffer, value_ptr, actual);
+    }
+    DeviceBridge::pop_front();
+    return result;
+  }
+
+  // Force the DXVK allocator to release retained empty chunks back to the
+  // driver on the next render-thread tick. Fire-and-forget — no payload, no
+  // response wait (matches AutoInstancePersistentLights). The renderer sets an
+  // atomic flag; nothing to read back.
+  DLLEXPORT remixapi_ErrorCode __stdcall remixapi_RequestVramCompaction(void) {
+    ASSERT_REMIXAPI_PFN_TYPE(remixapi_RequestVramCompaction);
+    {
+      ClientMessage c(Commands::RemixApi_RequestVramCompaction);
+    }
+    return REMIXAPI_ERROR_CODE_SUCCESS;
+  }
+
+  // Request the per-category VRAM snapshot. remixapi_VramStats is a flat POD
+  // (10x uint64 + 1x uint32, no pointers), so the server fills one and ships
+  // the raw bytes back over a single Bridge_Response, mirroring GetGameValue's
+  // request/response round-trip. MegaGeo's adaptive-LOD controller polls this
+  // (usedAccelerationStructureBytes) to decide back-off; without it the LOD
+  // path runs degraded (no VRAM signal).
+  DLLEXPORT remixapi_ErrorCode __stdcall remixapi_GetVramStats(
+    remixapi_VramStats* out_stats) {
+    ASSERT_REMIXAPI_PFN_TYPE(remixapi_GetVramStats);
+    if (out_stats == nullptr) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+
+    UID currentUID = 0;
+    {
+      ClientMessage c(Commands::RemixApi_GetVramStats);
+      currentUID = c.get_uid();
+    }
+    WAIT_FOR_SERVER_RESPONSE("remixapi_GetVramStats", REMIXAPI_ERROR_CODE_GENERAL_FAILURE, currentUID);
+    const remixapi_ErrorCode result = static_cast<remixapi_ErrorCode>(DeviceBridge::get_data());
+    if (result == REMIXAPI_ERROR_CODE_SUCCESS) {
+      void* stats_ptr = nullptr;
+      const uint32_t stats_size = DeviceBridge::get_data(&stats_ptr);
+      // Guard against a truncated/short payload before copying into the caller's
+      // struct; on a size mismatch surface failure rather than read past the
+      // received bytes.
+      if (stats_ptr != nullptr && stats_size == sizeof(remixapi_VramStats)) {
+        memcpy(out_stats, stats_ptr, sizeof(remixapi_VramStats));
+      } else {
+        DeviceBridge::pop_front();
+        return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+      }
     }
     DeviceBridge::pop_front();
     return result;

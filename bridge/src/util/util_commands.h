@@ -55,6 +55,8 @@ namespace Commands {
     RemixApi_CreateLightBatched,
     RemixApi_UpdateLightDefinition,
     RemixApi_AutoInstancePersistentLights,
+    RemixApi_GetVramStats,
+    RemixApi_RequestVramCompaction,
 
     Bridge_SharedHeap_AddSeg,
     Bridge_SharedHeap_Alloc,
@@ -499,6 +501,8 @@ namespace Commands {
     case RemixApi_CreateLightBatched: return "RemixApi_CreateLightBatched";
     case RemixApi_UpdateLightDefinition: return "RemixApi_UpdateLightDefinition";
     case RemixApi_AutoInstancePersistentLights: return "RemixApi_AutoInstancePersistentLights";
+    case RemixApi_GetVramStats: return "RemixApi_GetVramStats";
+    case RemixApi_RequestVramCompaction: return "RemixApi_RequestVramCompaction";
 
     case Bridge_SharedHeap_AddSeg: return "SharedHeap_AddSeg";
     case Bridge_SharedHeap_Alloc: return "SharedHeap_Alloc";
