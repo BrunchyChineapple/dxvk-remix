@@ -3167,6 +3167,218 @@ void ProcessDeviceCommandQueue() {
         break;
       }
 
+      case RemixApi_CreateLightBatched:
+      {
+        // Identical wire format to RemixApi_CreateLight (serialize::LightInfo +
+        // the *_EXT extension chain); only the renderer verb differs. The
+        // renderer's CreateLightBatched defers light registration to the next
+        // render-thread flush.
+        struct LightExtensions {
+          serialize::LightInfoSphere sphere;
+          serialize::LightInfoRect rect;
+          serialize::LightInfoDisk disk;
+          serialize::LightInfoCylinder cylinder;
+          serialize::LightInfoDistant distant;
+          serialize::LightInfoDome dome;
+          serialize::LightInfoUSD usd;
+        } exts;
+        memset(&exts, 0, sizeof(LightExtensions));
+
+        const auto lightSType = remixapi::pullSType();
+        assert(lightSType == REMIXAPI_STRUCT_TYPE_LIGHT_INFO);
+        serialize::LightInfo lightInfo;
+        deserializeFromQueue(lightInfo);
+        lightInfo.pNext = nullptr;
+
+        bool bLightExtExists = remixapi::pullBool();
+        auto* pInfoProto = &getInfoProto(lightInfo);
+        while(bLightExtExists) {
+          const auto extSType = remixapi::pullSType();
+          switch (extSType) {
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_SPHERE_EXT:
+            {
+              assert(!exts.sphere.pNext);
+              deserializeFromQueue(exts.sphere);
+              pInfoProto->pNext = &(exts.sphere);
+              pInfoProto = &getInfoProto(exts.sphere);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_RECT_EXT:
+            {
+              assert(!exts.rect.pNext);
+              deserializeFromQueue(exts.rect);
+              pInfoProto->pNext = &(exts.rect);
+              pInfoProto = &getInfoProto(exts.rect);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DISK_EXT:
+            {
+              assert(!exts.disk.pNext);
+              deserializeFromQueue(exts.disk);
+              pInfoProto->pNext = &(exts.disk);
+              pInfoProto = &getInfoProto(exts.disk);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_CYLINDER_EXT:
+            {
+              assert(!exts.cylinder.pNext);
+              deserializeFromQueue(exts.cylinder);
+              pInfoProto->pNext = &(exts.cylinder);
+              pInfoProto = &getInfoProto(exts.cylinder);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DISTANT_EXT:
+            {
+              assert(!exts.distant.pNext);
+              deserializeFromQueue(exts.distant);
+              pInfoProto->pNext = &(exts.distant);
+              pInfoProto = &getInfoProto(exts.distant);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DOME_EXT:
+            {
+              assert(!exts.dome.pNext);
+              deserializeFromQueue(exts.dome);
+              pInfoProto->pNext = &(exts.dome);
+              pInfoProto = &getInfoProto(exts.dome);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_USD_EXT:
+            {
+              assert(!exts.usd.pNext);
+              deserializeFromQueue(exts.usd);
+              pInfoProto->pNext = &(exts.usd);
+              pInfoProto = &getInfoProto(exts.usd);
+              break;
+            }
+            default:
+            {
+              Logger::warn("[RemixApi_CreateLightBatched] Unknown sType. Skipping.");
+              break;
+            }
+          }
+          bLightExtExists = remixapi::pullBool();
+        }
+
+        auto bridgeHandle = DeviceBridge::get_data();
+        remixapi_LightHandle lightHandle = nullptr;
+        if(remixapi::g_remix.CreateLightBatched(&lightInfo, &lightHandle) == REMIXAPI_ERROR_CODE_SUCCESS) {
+          LightHandle handle(bridgeHandle, lightHandle);
+        } else {
+          Logger::err("[RemixApi_CreateLightBatched] Remix API call failed!");
+        }
+
+        break;
+      }
+
+      case RemixApi_UpdateLightDefinition:
+      {
+        // Same LightInfo + extension-chain wire format as CreateLight, followed
+        // by the existing bridge light handle (sent last by the client). Resolve
+        // the handle to the renderer's light and queue a definition update.
+        struct LightExtensions {
+          serialize::LightInfoSphere sphere;
+          serialize::LightInfoRect rect;
+          serialize::LightInfoDisk disk;
+          serialize::LightInfoCylinder cylinder;
+          serialize::LightInfoDistant distant;
+          serialize::LightInfoDome dome;
+          serialize::LightInfoUSD usd;
+        } exts;
+        memset(&exts, 0, sizeof(LightExtensions));
+
+        const auto lightSType = remixapi::pullSType();
+        assert(lightSType == REMIXAPI_STRUCT_TYPE_LIGHT_INFO);
+        serialize::LightInfo lightInfo;
+        deserializeFromQueue(lightInfo);
+        lightInfo.pNext = nullptr;
+
+        bool bLightExtExists = remixapi::pullBool();
+        auto* pInfoProto = &getInfoProto(lightInfo);
+        while(bLightExtExists) {
+          const auto extSType = remixapi::pullSType();
+          switch (extSType) {
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_SPHERE_EXT:
+            {
+              assert(!exts.sphere.pNext);
+              deserializeFromQueue(exts.sphere);
+              pInfoProto->pNext = &(exts.sphere);
+              pInfoProto = &getInfoProto(exts.sphere);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_RECT_EXT:
+            {
+              assert(!exts.rect.pNext);
+              deserializeFromQueue(exts.rect);
+              pInfoProto->pNext = &(exts.rect);
+              pInfoProto = &getInfoProto(exts.rect);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DISK_EXT:
+            {
+              assert(!exts.disk.pNext);
+              deserializeFromQueue(exts.disk);
+              pInfoProto->pNext = &(exts.disk);
+              pInfoProto = &getInfoProto(exts.disk);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_CYLINDER_EXT:
+            {
+              assert(!exts.cylinder.pNext);
+              deserializeFromQueue(exts.cylinder);
+              pInfoProto->pNext = &(exts.cylinder);
+              pInfoProto = &getInfoProto(exts.cylinder);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DISTANT_EXT:
+            {
+              assert(!exts.distant.pNext);
+              deserializeFromQueue(exts.distant);
+              pInfoProto->pNext = &(exts.distant);
+              pInfoProto = &getInfoProto(exts.distant);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DOME_EXT:
+            {
+              assert(!exts.dome.pNext);
+              deserializeFromQueue(exts.dome);
+              pInfoProto->pNext = &(exts.dome);
+              pInfoProto = &getInfoProto(exts.dome);
+              break;
+            }
+            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_USD_EXT:
+            {
+              assert(!exts.usd.pNext);
+              deserializeFromQueue(exts.usd);
+              pInfoProto->pNext = &(exts.usd);
+              pInfoProto = &getInfoProto(exts.usd);
+              break;
+            }
+            default:
+            {
+              Logger::warn("[RemixApi_UpdateLightDefinition] Unknown sType. Skipping.");
+              break;
+            }
+          }
+          bLightExtExists = remixapi::pullBool();
+        }
+
+        LightHandle handle(DeviceBridge::get_data());
+        if(handle.isValid()) {
+          remixapi::g_remix.UpdateLightDefinition(handle, &lightInfo);
+        } else {
+          Logger::err("[RemixApi_UpdateLightDefinition] Invalid light handle!");
+        }
+
+        break;
+      }
+
+      case RemixApi_AutoInstancePersistentLights:
+      {
+        remixapi::g_remix.AutoInstancePersistentLights();
+        break;
+      }
+
       case RemixApi_SetConfigVariable:
       {
         void* var_ptr = nullptr;

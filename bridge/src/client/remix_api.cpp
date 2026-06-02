@@ -297,6 +297,75 @@ remixapi_ErrorCode REMIXAPI_CALL remixapi_DrawInstance(const remixapi_InstanceIn
   return REMIXAPI_ERROR_CODE_SUCCESS;
 }
 
+// Walks the remixapi_LightInfo pNext extension chain and marshals each known
+// *_EXT block to the server, mirroring the inline walk in remixapi_CreateLight.
+// Shared by CreateLightBatched and UpdateLightDefinition so the three light
+// entry points stay byte-identical on the wire. Emits the trailing Bool::False
+// stop sentinel the server's pullBool() loop expects.
+static void sendLightInfoExtensions(ClientMessage& c, const remixapi_LightInfo* info) {
+  const void* infoItr = info;
+  while (auto* const pNext = getPNext(infoItr)) {
+    infoItr = pNext;
+    switch (getSType(infoItr)) {
+      case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_SPHERE_EXT:
+      {
+        auto* pSphere = static_cast<const remixapi_LightInfoSphereEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::LightInfoSphere>(c, *pSphere);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_RECT_EXT:
+      {
+        auto* pRect = static_cast<const remixapi_LightInfoRectEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::LightInfoRect>(c, *pRect);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DISK_EXT:
+      {
+        auto* pDisk = static_cast<const remixapi_LightInfoDiskEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::LightInfoDisk>(c, *pDisk);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_CYLINDER_EXT:
+      {
+        auto* pCylinder = static_cast<const remixapi_LightInfoCylinderEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::LightInfoCylinder>(c, *pCylinder);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DISTANT_EXT:
+      {
+        auto* pDistant = static_cast<const remixapi_LightInfoDistantEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::LightInfoDistant>(c, *pDistant);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DOME_EXT:
+      {
+        auto* pDome = static_cast<const remixapi_LightInfoDomeEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::LightInfoDome>(c, *pDome);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_USD_EXT:
+      {
+        auto* pUSD = static_cast<const remixapi_LightInfoUSDEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::LightInfoUSD>(c, *pUSD);
+        break;
+      }
+      default:
+      {
+        Logger::warn("[sendLightInfoExtensions] Unknown sType. Skipping.");
+        break;
+      }
+    }
+  }
+  send(c, Bool::False);
+}
+
 remixapi_ErrorCode REMIXAPI_CALL remixapi_CreateLight(
   const remixapi_LightInfo* info,
   remixapi_LightHandle*     out_handle) {
@@ -376,6 +445,32 @@ remixapi_ErrorCode REMIXAPI_CALL remixapi_CreateLight(
       }
     }
     send(c, Bool::False);
+    sendHandle(c, newHandle);
+  }
+
+  *out_handle = newHandle;
+
+  return REMIXAPI_ERROR_CODE_SUCCESS;
+}
+
+remixapi_ErrorCode REMIXAPI_CALL remixapi_CreateLightBatched(
+  const remixapi_LightInfo* info,
+  remixapi_LightHandle*     out_handle) {
+
+  ASSERT_REMIXAPI_PFN_TYPE(remixapi_CreateLightBatched);
+  assert(info->sType == REMIXAPI_STRUCT_TYPE_LIGHT_INFO);
+
+  // Identical wire format to remixapi_CreateLight (same serialize::LightInfo
+  // payload + the shared pNext extension walk); only the server-side verb
+  // differs. The renderer's CreateLightBatched defers light registration to the
+  // next render-thread flush, so a 32-bit client can submit lights outside a
+  // frame boundary exactly as the 64-bit path does.
+  LightHandle newHandle;
+  {
+    ClientMessage c(Commands::RemixApi_CreateLightBatched);
+
+    serializeAndSend<serialize::LightInfo>(c, *info);
+    sendLightInfoExtensions(c, info);
     sendHandle(c, newHandle);
   }
 
@@ -482,19 +577,19 @@ extern "C" {
       // interf.SetupCamera = remixapi_SetupCamera;
       interf.DrawInstance = remixapi_DrawInstance;
       interf.CreateLight = remixapi_CreateLight;
+      interf.CreateLightBatched = remixapi_CreateLightBatched;
       interf.DestroyLight = remixapi_DestroyLight;
       interf.DrawLightInstance = remixapi_DrawLightInstance;
       interf.SetConfigVariable = remixapi_SetConfigVariable;
       interf.dxvk_CreateD3D9 = remixapi_dxvk_CreateD3D9;
       interf.dxvk_RegisterD3D9Device = remixapi_dxvk_RegisterD3D9Device;
       // Fork-added Remix API entry points. dxvk-remix's d3d9.dll implements
-      // these for real (rtx_remix_api.cpp:2244+ / 2357+ / 2409+ / 2413+), but
-      // they are not yet plumbed through the bridge IPC channel. Without a
-      // populated function pointer here the slots are NULL and 32-bit clients
-      // crash the moment they call interf.GetUIState() / SetUIState() /
-      // AutoInstancePersistentLights() / UpdateLightDefinition(). The stubs
-      // below return safe defaults so the bridge stays alive; full IPC
-      // forwarding is a follow-up task tracked separately.
+      // these for real (rtx_remix_api.cpp:2244+ / 2357+ / 2409+ / 2413+).
+      // GetUIState / SetUIState remain client-side stubs (UI state is not
+      // meaningful across the bridge yet); AutoInstancePersistentLights and
+      // UpdateLightDefinition are now fully forwarded over IPC (see their
+      // marshallers below) so 32-bit clients can flush persistent lights and
+      // update analytical lights created via CreateLight / CreateLightBatched.
       interf.GetUIState                   = remixapi_GetUIState;
       interf.SetUIState                   = remixapi_SetUIState;
       interf.AutoInstancePersistentLights = remixapi_AutoInstancePersistentLights;
@@ -558,28 +653,38 @@ extern "C" {
   }
 
   DLLEXPORT remixapi_ErrorCode __stdcall remixapi_AutoInstancePersistentLights(void) {
-    static bool warned = false;
-    if (!warned) {
-      Logger::warn("[remixapi_AutoInstancePersistentLights] Bridge stub: no-op. "
-                   "Persistent-light auto-instancing is not yet plumbed through the bridge.");
-      warned = true;
+    ASSERT_REMIXAPI_PFN_TYPE(remixapi_AutoInstancePersistentLights);
+    // No payload — a bare command that asks the server to flush/auto-instance
+    // any persistent API lights for the frame. Fire-and-forget, matching the
+    // non-waiting light commands (CreateLight / DrawLightInstance).
+    {
+      ClientMessage c(Commands::RemixApi_AutoInstancePersistentLights);
     }
-    return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+    return REMIXAPI_ERROR_CODE_SUCCESS;
   }
 
   DLLEXPORT remixapi_ErrorCode __stdcall remixapi_UpdateLightDefinition(
     remixapi_LightHandle      handle,
     const remixapi_LightInfo* info) {
-    (void) handle;
-    (void) info;
-    static bool warned = false;
-    if (!warned) {
-      Logger::warn("[remixapi_UpdateLightDefinition] Bridge stub: no-op. "
-                   "Light-definition updates are not yet plumbed through the bridge — "
-                   "lights created via CreateLight cannot be updated from 32-bit clients yet.");
-      warned = true;
+    ASSERT_REMIXAPI_PFN_TYPE(remixapi_UpdateLightDefinition);
+    if (info == nullptr || info->sType != REMIXAPI_STRUCT_TYPE_LIGHT_INFO) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
     }
-    return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+    LightHandle lightHandle(handle);
+    if (!lightHandle.isValid()) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+    // Same LightInfo + extension-chain wire format as CreateLight, with the
+    // existing light handle appended so the server can resolve and update it.
+    // The renderer queues the update and applies it safely on a later frame, so
+    // this is fire-and-forget (no server response wait), matching DrawLightInstance.
+    {
+      ClientMessage c(Commands::RemixApi_UpdateLightDefinition);
+      serializeAndSend<serialize::LightInfo>(c, *info);
+      sendLightInfoExtensions(c, info);
+      sendHandle(c, lightHandle);
+    }
+    return REMIXAPI_ERROR_CODE_SUCCESS;
   }
 
   DLLEXPORT remixapi_ErrorCode __stdcall remixapi_SetGameValue(

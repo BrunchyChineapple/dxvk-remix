@@ -52,6 +52,9 @@ namespace Commands {
     RemixApi_RegisterDevice,
     RemixApi_SetGameValue,
     RemixApi_GetGameValue,
+    RemixApi_CreateLightBatched,
+    RemixApi_UpdateLightDefinition,
+    RemixApi_AutoInstancePersistentLights,
 
     Bridge_SharedHeap_AddSeg,
     Bridge_SharedHeap_Alloc,
@@ -493,6 +496,9 @@ namespace Commands {
     case RemixApi_RegisterDevice: return "RemixApi_RegisterDevice";
     case RemixApi_SetGameValue: return "RemixApi_SetGameValue";
     case RemixApi_GetGameValue: return "RemixApi_GetGameValue";
+    case RemixApi_CreateLightBatched: return "RemixApi_CreateLightBatched";
+    case RemixApi_UpdateLightDefinition: return "RemixApi_UpdateLightDefinition";
+    case RemixApi_AutoInstancePersistentLights: return "RemixApi_AutoInstancePersistentLights";
 
     case Bridge_SharedHeap_AddSeg: return "SharedHeap_AddSeg";
     case Bridge_SharedHeap_Alloc: return "SharedHeap_Alloc";
