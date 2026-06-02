@@ -41,6 +41,7 @@ namespace Commands {
     RemixApi_CreateMaterial,
     RemixApi_DestroyMaterial,
     RemixApi_CreateMesh,
+    RemixApi_CreateMeshBatched,
     RemixApi_DestroyMesh,
     RemixApi_DrawInstance,
     RemixApi_CreateLight,
@@ -481,6 +482,7 @@ namespace Commands {
     case RemixApi_CreateMaterial: return "RemixApi_CreateMaterial";
     case RemixApi_DestroyMaterial: return "RemixApi_DestroyMaterial";
     case RemixApi_CreateMesh: return "RemixApi_CreateMesh";
+    case RemixApi_CreateMeshBatched: return "RemixApi_CreateMeshBatched";
     case RemixApi_DestroyMesh: return "RemixApi_DestroyMesh";
     case RemixApi_DrawInstance: return "RemixApi_DrawInstance";
     case RemixApi_CreateLight: return "RemixApi_CreateLight";

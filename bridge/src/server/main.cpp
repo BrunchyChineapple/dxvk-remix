@@ -2918,6 +2918,37 @@ void ProcessDeviceCommandQueue() {
         break;
       }
 
+      case RemixApi_CreateMeshBatched:
+      {
+        // Identical wire format to RemixApi_CreateMesh (same serialize::MeshInfo
+        // payload + per-surface material-handle remap); only the renderer verb
+        // differs. The renderer's CreateMeshBatched deep-copies meshInfo and
+        // defers DXVK buffer allocation / asset-replacer registration to the next
+        // render-thread flush, so the deserialized info and its owned surface
+        // arrays only need to outlive this call exactly as for CreateMesh.
+        const auto meshInfoSType = remixapi::pullSType();
+        assert(meshInfoSType == REMIXAPI_STRUCT_TYPE_MESH_INFO);
+        serialize::MeshInfo meshInfo;
+        deserializeFromQueue(meshInfo);
+        meshInfo.pNext = nullptr;
+
+        for(size_t iSurf = 0; iSurf < meshInfo.surfaces_count; ++iSurf) {
+          auto& surf = const_cast<remixapi_MeshInfoSurfaceTriangles&>(meshInfo.surfaces_values[iSurf]);
+          MaterialHandle matHandle(surf.material);
+          surf.material = matHandle;
+        }
+
+        auto bridgeHandle = DeviceBridge::get_data();
+        remixapi_MeshHandle remixApiHandle = nullptr;
+        if(remixapi::g_remix.CreateMeshBatched(&meshInfo, &remixApiHandle) == REMIXAPI_ERROR_CODE_SUCCESS) {
+          MeshHandle handle(bridgeHandle, remixApiHandle);
+        } else {
+          Logger::err("[RemixApi_CreateMeshBatched] Remix API call failed!");
+        }
+
+        break;
+      }
+
       case RemixApi_DestroyMesh:
       {
         MeshHandle handle(DeviceBridge::get_data());

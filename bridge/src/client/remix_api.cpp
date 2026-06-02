@@ -192,6 +192,42 @@ remixapi_ErrorCode REMIXAPI_CALL remixapi_CreateMesh(
   return REMIXAPI_ERROR_CODE_SUCCESS;
 }
 
+remixapi_ErrorCode REMIXAPI_CALL remixapi_CreateMeshBatched(
+  const remixapi_MeshInfo* info,
+  remixapi_MeshHandle*     out_handle) {
+
+  ASSERT_REMIXAPI_PFN_TYPE(remixapi_CreateMeshBatched);
+  assert(info->sType == REMIXAPI_STRUCT_TYPE_MESH_INFO);
+
+  // Batched mesh creation marshals the identical remixapi_MeshInfo payload as
+  // remixapi_CreateMesh; the only difference is the server-side verb it invokes
+  // (the renderer defers DXVK buffer allocation / asset-replacer registration to
+  // the next render-thread flush). Mirror CreateMesh exactly so the wire format
+  // stays in lockstep with the existing, proven path.
+  MeshHandle newHandle;
+  {
+    ClientMessage c(Commands::RemixApi_CreateMeshBatched);
+
+    serializeAndSend<serialize::MeshInfo>(c, *info);
+
+    const void* infoItr = info;
+    while (auto* const pNext = getPNext(infoItr)) {
+      switch (getSType(pNext)) {
+        default:
+        {
+          Logger::warn("[remixapi_CreateMeshBatched] Unknown sType. Skipping.");
+          break;
+        }
+      }
+    }
+    sendHandle(c, newHandle);
+  }
+
+  *out_handle = newHandle;
+
+  return REMIXAPI_ERROR_CODE_SUCCESS;
+}
+
 remixapi_ErrorCode REMIXAPI_CALL remixapi_DestroyMesh(remixapi_MeshHandle handle) {
   ASSERT_REMIXAPI_PFN_TYPE(remixapi_DestroyMesh);
   MeshHandle meshHandle(handle);
@@ -441,6 +477,7 @@ extern "C" {
       interf.CreateMaterial = remixapi_CreateMaterial;
       interf.DestroyMaterial = remixapi_DestroyMaterial;
       interf.CreateMesh = remixapi_CreateMesh;
+      interf.CreateMeshBatched = remixapi_CreateMeshBatched;
       interf.DestroyMesh = remixapi_DestroyMesh;
       // interf.SetupCamera = remixapi_SetupCamera;
       interf.DrawInstance = remixapi_DrawInstance;
