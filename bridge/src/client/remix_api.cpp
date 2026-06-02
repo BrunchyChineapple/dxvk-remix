@@ -545,6 +545,15 @@ constexpr bool strings_equal(char const * a, char const * b) {
 
 extern "C" {
 
+  // Forward declarations: these two are defined later in this file (after
+  // remixapi_InitializeLibrary) but are referenced in the interface-assignment
+  // block below. Unlike the light/GameValue entry points, remix_c.h declares
+  // only PFN typedefs for these (no free-function prototype), so without these
+  // forward decls the interface assignment hits a use-before-declaration error
+  // (C2065). Linkage/convention must match the definitions exactly.
+  DLLEXPORT remixapi_ErrorCode __stdcall remixapi_GetVramStats(remixapi_VramStats* out_stats);
+  DLLEXPORT remixapi_ErrorCode __stdcall remixapi_RequestVramCompaction(void);
+
   DLLEXPORT remixapi_ErrorCode __stdcall remixapi_InitializeLibrary(
     const remixapi_InitializeLibraryInfo* info,
     remixapi_Interface*                   out_result) {
