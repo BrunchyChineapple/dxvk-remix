@@ -564,6 +564,54 @@ void InstanceInfo::_dtor() {
 }
 
 
+//////////////////
+// CameraInfo   //
+//////////////////
+// Static POD: sType + type(enum) + two float[4][4] arrays. pNext excluded
+// (nulled on deserialize). The parameterized-EXT path leaves view/projection
+// zero and the server rebuilds the projection from the EXT, but they still
+// serialize as fixed-size members here.
+#define CameraInfoVars sType, \
+                       type, \
+                       view, \
+                       projection
+uint32_t CameraInfo::_calcSize() const {
+  return fold_helper::calcSize(CameraInfoVars);
+}
+void CameraInfo::_serialize(void*& pSerialize) const {
+  fold_helper::serialize(pSerialize, CameraInfoVars);
+}
+void CameraInfo::_deserialize(void*& pDeserialize) {
+  pNext = nullptr;
+  fold_helper::deserialize(pDeserialize, CameraInfoVars);
+}
+void CameraInfo::_dtor() {
+}
+
+
+#define CameraInfoParameterizedVars sType, \
+                                    position, \
+                                    forward, \
+                                    up, \
+                                    right, \
+                                    fovYInDegrees, \
+                                    aspect, \
+                                    nearPlane, \
+                                    farPlane
+uint32_t CameraInfoParameterized::_calcSize() const {
+  return fold_helper::calcSize(CameraInfoParameterizedVars);
+}
+void CameraInfoParameterized::_serialize(void*& pSerialize) const {
+  fold_helper::serialize(pSerialize, CameraInfoParameterizedVars);
+}
+void CameraInfoParameterized::_deserialize(void*& pDeserialize) {
+  pNext = nullptr;
+  fold_helper::deserialize(pDeserialize, CameraInfoParameterizedVars);
+}
+void CameraInfoParameterized::_dtor() {
+}
+
+
 #define InstanceInfoObjectPickingVars objectPickingValue
 uint32_t InstanceInfoObjectPicking::_calcSize() const {
   return fold_helper::calcSize(InstanceInfoObjectPickingVars);

@@ -162,6 +162,10 @@ using LightInfoDistant = bridge_util::Serializable<remixapi_LightInfoDistantEXT,
 using LightInfoDome = bridge_util::Serializable<remixapi_LightInfoDomeEXT,false>;
 using LightInfoUSD = bridge_util::Serializable<remixapi_LightInfoUSDEXT,false>;
 
+// Camera Info
+using CameraInfo = bridge_util::Serializable<remixapi_CameraInfo,true>;
+using CameraInfoParameterized = bridge_util::Serializable<remixapi_CameraInfoParameterizedEXT,true>;
+
 }
 
 }

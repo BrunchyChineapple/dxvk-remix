@@ -297,6 +297,38 @@ remixapi_ErrorCode REMIXAPI_CALL remixapi_DrawInstance(const remixapi_InstanceIn
   return REMIXAPI_ERROR_CODE_SUCCESS;
 }
 
+remixapi_ErrorCode REMIXAPI_CALL remixapi_SetupCamera(const remixapi_CameraInfo* info) {
+  ASSERT_REMIXAPI_PFN_TYPE(remixapi_SetupCamera);
+  {
+    ClientMessage c(Commands::RemixApi_SetupCamera);
+
+    serializeAndSend<serialize::CameraInfo>(c, *info);
+
+    // pNext chain: the parameterized-EXT camera (position/basis/fov/near/far).
+    // Same true/false continuation protocol as DrawInstance.
+    const void* infoItr = info;
+    while (auto* const pNext = getPNext(infoItr)) {
+      infoItr = pNext;
+      switch (getSType(pNext)) {
+        case REMIXAPI_STRUCT_TYPE_CAMERA_INFO_PARAMETERIZED_EXT:
+        {
+          auto* pParam = static_cast<const remixapi_CameraInfoParameterizedEXT* const>(infoItr);
+          send(c, Bool::True);
+          serializeAndSend<serialize::CameraInfoParameterized>(c, *pParam);
+          break;
+        }
+        default:
+        {
+          Logger::warn("[remixapi_SetupCamera] Unknown sType. Skipping.");
+          break;
+        }
+      }
+    }
+    send(c, Bool::False);
+  }
+  return REMIXAPI_ERROR_CODE_SUCCESS;
+}
+
 // Walks the remixapi_LightInfo pNext extension chain and marshals each known
 // *_EXT block to the server, mirroring the inline walk in remixapi_CreateLight.
 // Shared by CreateLightBatched and UpdateLightDefinition so the three light
@@ -583,7 +615,7 @@ extern "C" {
       interf.CreateMesh = remixapi_CreateMesh;
       interf.CreateMeshBatched = remixapi_CreateMeshBatched;
       interf.DestroyMesh = remixapi_DestroyMesh;
-      // interf.SetupCamera = remixapi_SetupCamera;
+      interf.SetupCamera = remixapi_SetupCamera;
       interf.DrawInstance = remixapi_DrawInstance;
       interf.CreateLight = remixapi_CreateLight;
       interf.CreateLightBatched = remixapi_CreateLightBatched;

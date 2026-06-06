@@ -3041,6 +3041,47 @@ void ProcessDeviceCommandQueue() {
         break;
       }
 
+      case RemixApi_SetupCamera:
+      {
+        // Parameterized-EXT camera (the only camera pNext the wrapper sends).
+        serialize::CameraInfoParameterized paramExt;
+        memset(&paramExt, 0, sizeof(paramExt));
+
+        const auto camSType = remixapi::pullSType();
+        assert(camSType == REMIXAPI_STRUCT_TYPE_CAMERA_INFO);
+        serialize::CameraInfo camInfo;
+        deserializeFromQueue(camInfo);
+        camInfo.pNext = nullptr;
+
+        bool bExtExists = remixapi::pullBool();
+        auto* pInfoProto = &getInfoProto(camInfo);
+        while (bExtExists) {
+          const auto extSType = remixapi::pullSType();
+          switch (extSType) {
+            case REMIXAPI_STRUCT_TYPE_CAMERA_INFO_PARAMETERIZED_EXT:
+            {
+              assert(!paramExt.pNext);
+              deserializeFromQueue(paramExt);
+              pInfoProto->pNext = &paramExt;
+              pInfoProto = &getInfoProto(paramExt);
+              break;
+            }
+            default:
+            {
+              Logger::warn("[RemixApi_SetupCamera] Unknown sType. Skipping.");
+              break;
+            }
+          }
+          bExtExists = remixapi::pullBool();
+        }
+
+        if(remixapi::g_remix.SetupCamera(&camInfo) != REMIXAPI_ERROR_CODE_SUCCESS) {
+          Logger::err("[RemixApi_SetupCamera] Remix API call failed!");
+        }
+
+        break;
+      }
+
       case RemixApi_CreateLight:
       {
         // Rather than allocate deserialized struct extensions on the heap,
