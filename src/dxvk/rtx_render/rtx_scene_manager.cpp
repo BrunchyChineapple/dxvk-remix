@@ -2114,8 +2114,9 @@ namespace dxvk {
       XXH64_hash_t textureHash = 0;
 
       const MaterialData* material = m_pReplacer->accessExternalMaterial(submeshes[i].externalMaterial);
+      MaterialData mergedExternalMaterial = LegacyMaterialData().as<OpaqueMaterialData>();  // storage for a merged toolkit override; lives through this iteration
       if (material != nullptr) {
-        fork_hooks::externalDrawMaterialReplacement(*m_pReplacer, material);
+        fork_hooks::externalDrawMaterialReplacement(*m_pReplacer, material, mergedExternalMaterial);
 
         state.drawCall.materialData.setHashOverride(material->getHash());
 

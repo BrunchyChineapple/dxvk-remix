@@ -42,15 +42,21 @@ namespace fork_hooks {
   // ---------------------------------------------------------------------------
   // externalDrawMaterialReplacement
   //
-  // Checks for a USD material replacement via getReplacementMaterial() and
-  // updates the caller's material pointer in-place if one is found.
+  // Checks for a USD material replacement via getReplacementMaterial(). If one
+  // exists, mirror the legacy draw path (determineMaterialData): start from the
+  // toolkit override, then merge the ORIGINAL external material's resolved
+  // textures/params back for any field the override did not set. Without this,
+  // editing a single scalar (e.g. roughness) in the toolkit drops the captured-
+  // texture albedo bound via the "0x<hash>" pseudo-path and the mesh renders flat
+  // gray. The merged result lives in the caller-owned mergeStorage.
   // ---------------------------------------------------------------------------
   void externalDrawMaterialReplacement(
-      AssetReplacer& replacer, const MaterialData*& material) {
-    // Check for material replacement (matches the D3D9 draw path behavior).
+      AssetReplacer& replacer, const MaterialData*& material, MaterialData& mergeStorage) {
     MaterialData* pReplacementMaterial = replacer.getReplacementMaterial(material->getHash());
     if (pReplacementMaterial != nullptr) {
-      material = pReplacementMaterial;
+      mergeStorage = *pReplacementMaterial;             // toolkit override (edited fields)
+      mergeStorage.mergeExternalMaterial(*material);    // keep original albedo/textures for the rest
+      material = &mergeStorage;
     }
   }
 

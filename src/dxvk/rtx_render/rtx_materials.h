@@ -1976,6 +1976,21 @@ struct MaterialData {
     }, m_data);
   }
 
+  // Merge another (external / API-created) MaterialData's resolved textures and
+  // parameters into this one for every field this material did not explicitly set
+  // (non-dirty). Mirrors mergeLegacyMaterial but sources from a MaterialData rather
+  // than a LegacyMaterialData. Used so a toolkit material override of an API material
+  // (which only carries the edited fields) keeps the original's resolved albedo /
+  // textures instead of falling back to the default (gray) albedo. If the override
+  // and original are different material variants, nothing is merged.
+  void mergeExternalMaterial(const MaterialData& original) {
+    std::visit([&](auto& mat) {
+      using T = std::decay_t<decltype(mat)>;
+      if (const T* origInner = std::get_if<T>(&original.m_data)) {
+        mat.merge(*origInner);
+      }
+    }, m_data);
+  }
 #define POPULATE_SAMPLER_INFO(info, material) \
   info.magFilter = \
     lss::Mdl::Filter::mdlToVk(material.getFilterMode()); \
