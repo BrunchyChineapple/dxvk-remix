@@ -2166,9 +2166,11 @@ namespace dxvk {
           trackTexture(om.getHeightTexture(),        pinIdx, true, false);
         }
 
-        // WHITE DIAG: log the lookup result + merged-albedo residency trajectory, throttled to one
-        // line per unique vanilla-albedo hash (plus one more line whenever its empty-state flips, so
-        // we can see whether the replaced texture ever becomes resident). env DXVK_WHITE_DEBUG=1.
+        // WHITE DIAG: log the lookup result + merged-albedo residency TRAJECTORY. Throttled per
+        // unique vanilla-albedo hash: logs on first sight, whenever the empty-state flips, and
+        // (while still empty) at most once per ~600 frames so a persistently-white asset keeps
+        // reporting "still empty" — that distinguishes "never loads" (residency race) from
+        // "loads but still white" (downstream surface-material cache). env DXVK_WHITE_DEBUG=1.
         if (s_whiteDbg) {
           const bool replFound = (material == &mergedExternalMaterial);
           bool mergedManaged = false, mergedEmpty = true;
@@ -2179,23 +2181,27 @@ namespace dxvk {
             mergedEmpty = a.isImageEmpty();
             mergedAlbedoHash = a.getImageHash();
           }
+          struct DbgRec { uint32_t lastFrame; uint8_t lastEmpty; };
           static std::mutex s_dbgMutex;
-          static std::unordered_map<XXH64_hash_t, uint8_t> s_dbgState; // bit0=seen, bit1=lastEmpty
+          static std::unordered_map<XXH64_hash_t, DbgRec> s_dbgState;
           std::lock_guard<std::mutex> lk(s_dbgMutex);
-          const XXH64_hash_t key = (dbgApiAlbedoHash != 0) ? dbgApiAlbedoHash : mergedAlbedoHash;
+          const uint32_t frame = m_device->getCurrentFrameId();
           const uint8_t curEmpty = mergedEmpty ? 1u : 0u;
+          const XXH64_hash_t key = (dbgApiAlbedoHash != 0) ? dbgApiAlbedoHash : mergedAlbedoHash;
           auto it = s_dbgState.find(key);
           const bool first = (it == s_dbgState.end());
-          const bool flipped = !first && (((it->second >> 1) & 1u) != curEmpty);
-          if ((first || flipped) && s_dbgState.size() < 8192) {
+          const bool flipped = !first && (it->second.lastEmpty != curEmpty);
+          const bool restill = !first && curEmpty == 1u && (frame - it->second.lastFrame) >= 600u;
+          if ((first || flipped || restill) && s_dbgState.size() < 8192) {
             Logger::warn(str::format(
-              "[whitedbg] apiTex=0x", std::hex, dbgApiAlbedoHash, std::dec,
+              "[whitedbg] f=", std::dec, frame,
+              " apiTex=0x", std::hex, dbgApiAlbedoHash, std::dec,
               " apiValid=", (int) dbgApiValid, " apiEmpty=", (int) dbgApiEmpty,
               " apiMgd=", (int) dbgApiManaged,
               " | replFound=", (int) replFound,
               " mergedTex=0x", std::hex, mergedAlbedoHash, std::dec,
               " mergedMgd=", (int) mergedManaged, " mergedEmpty=", (int) mergedEmpty));
-            s_dbgState[key] = (uint8_t) (0x1u | (curEmpty << 1));
+            s_dbgState[key] = DbgRec { frame, curEmpty };
           }
         }
 
