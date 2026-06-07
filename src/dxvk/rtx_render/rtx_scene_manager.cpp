@@ -2092,6 +2092,19 @@ namespace dxvk {
     ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(externalKey, allowCrossTopologyMatching);
 
     if (std::vector<AssetReplacement>* pReplacements = fork_hooks::externalDrawMeshReplacement(*m_pReplacer, meshHash)) {
+      // WHITE DIAG: this external mesh matched a USD MESH replacement and renders through this
+      // early-return branch, so it NEVER reaches the per-submesh material/[whitedbg] logging
+      // below. Log it (throttled per meshHash) so a white asset taking the mesh-replacement
+      // path is still visible in the trace instead of producing a silent blank.
+      {
+        static std::mutex s_meshReplDbgMutex;
+        static std::unordered_map<XXH64_hash_t, uint8_t> s_meshReplDbgSeen;
+        std::lock_guard<std::mutex> lk(s_meshReplDbgMutex);
+        if (s_meshReplDbgSeen.size() < 8192 && s_meshReplDbgSeen.emplace(meshHash, 1u).second) {
+          Logger::warn(str::format("[whitedbg] MESH-REPL path meshHash=0x", std::hex, meshHash, std::dec,
+            " replacements=", pReplacements->size()));
+        }
+      }
       // Copy the DrawCallState so we don't mutate the caller's state. Point geometryData
       // at submeshes[0] as the replacement geometry template, clear externalMaterial so
       // the USD replacement material takes precedence, and use a neutral default material
@@ -2134,7 +2147,12 @@ namespace dxvk {
         // WHITE DIAG (env DXVK_WHITE_DEBUG=1): capture the API material's albedo state BEFORE the
         // replacement merge so we can log the vanilla lookup hash + whether the "0x<hash>" capture
         // actually resolved. Throttled per unique hash below. Remove once white-on-replaced is solved.
-        static const bool s_whiteDbg = (env::getEnvVar("DXVK_WHITE_DEBUG") == "1");
+        // NOTE: the env-var gate (DXVK_WHITE_DEBUG) was never reaching the process that
+        // runs d3d9.dll (NvRemixBridge.exe), so the diagnostic produced ZERO lines no matter
+        // what. Made unconditional for this throwaway diagnostic build — logging below is
+        // throttled per-hash (cap 8192 + 600-frame re-log) so overhead is negligible.
+        // REMOVE this whole [whitedbg] instrumentation once white-on-replaced is solved.
+        static const bool s_whiteDbg = true;
         XXH64_hash_t dbgApiAlbedoHash = 0;
         bool dbgApiValid = false, dbgApiEmpty = true, dbgApiManaged = false;
         if (s_whiteDbg && material->getType() == MaterialDataType::Opaque) {
