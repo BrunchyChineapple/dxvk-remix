@@ -2132,6 +2132,25 @@ namespace dxvk {
       if (material != nullptr) {
         fork_hooks::externalDrawMaterialReplacement(*m_pReplacer, material, mergedExternalMaterial);
 
+        // FORK FIX (white-still): when a toolkit replacement was merged in, its albedo/PBR textures
+        // are deferred, DEMOTABLE ManagedTextures. A drawn external static hits the persistent
+        // surface-material cache (so createSurfaceMaterial skips trackTexture) and is excluded from
+        // the keepInstanceAlive refresh (frameLastSeen == currentFrame), so nothing refreshes their
+        // m_frameLastUsed; under VRAM pressure they demote to 0 mips -> empty albedo -> WHITE. Pin
+        // them resident + non-demotable now (async=false), exactly like the sky/terrain replacement
+        // path (rtx_context.cpp). Un-replaced statics use a non-managed pinned view and are immune,
+        // so only do this when a replacement was actually applied (material repointed to the merge).
+        if (material == &mergedExternalMaterial && mergedExternalMaterial.getType() == MaterialDataType::Opaque) {
+          auto& om = mergedExternalMaterial.getOpaqueMaterialData();
+          uint32_t pinIdx = 0;
+          trackTexture(om.getAlbedoOpacityTexture(), pinIdx, true, false);
+          trackTexture(om.getRoughnessTexture(),     pinIdx, true, false);
+          trackTexture(om.getMetallicTexture(),      pinIdx, true, false);
+          trackTexture(om.getNormalTexture(),        pinIdx, true, false);
+          trackTexture(om.getEmissiveColorTexture(), pinIdx, true, false);
+          trackTexture(om.getHeightTexture(),        pinIdx, true, false);
+        }
+
         state.drawCall.materialData.setHashOverride(material->getHash());
 
         fork_hooks::externalDrawTextureCategories(material, state.drawCall, textureHash);
