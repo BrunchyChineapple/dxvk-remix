@@ -2102,6 +2102,20 @@ namespace dxvk {
 
       MaterialData renderMaterialData = LegacyMaterialData().as<OpaqueMaterialData>();
       drawReplacements(ctx, &replacementDrawCall, pReplacements, renderMaterialData, replacementInstance);
+
+      // Mirror the legacy replacement bookkeeping from submitDrawState (~L658-660).
+      // The early return below skips the shared post-loop bookkeeping at the bottom
+      // of this function, so without this the ReplacementInstance's frameLastSeen is
+      // never advanced past its default (0). DrawCallTracker::garbageCollectReplacementInstances
+      // then sees `frameLastSeen + numFramesToKeepInstances <= currentFrame` (true from
+      // frame 4 onward) AND isStable == false (frameLastSeen 0 is not > frameCreated),
+      // so it destroys the RI every frame and marks the replacement RtInstances for GC
+      // before the TLAS is built — making matched external-draw replacements invisible.
+      // (geometryBoundingBox/objectToWorld are already set inside drawReplacements via
+      // recalculateBoundingBox, so only the GC-bookkeeping fields need setting here.)
+      replacementInstance->frameLastSeen = m_device->getCurrentFrameId();
+      replacementInstance->categoryFlags = replacementDrawCall.getCategoryFlags().raw();
+      replacementInstance->isSkinned = replacementDrawCall.getSkinningState().numBones > 0;
       return;
     }
 
