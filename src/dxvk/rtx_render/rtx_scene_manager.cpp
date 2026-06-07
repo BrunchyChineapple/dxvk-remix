@@ -21,6 +21,7 @@
 */
 #include <mutex>
 #include <vector>
+#include <unordered_map>
 
 #include "rtx_asset_replacer.h"
 #include "rtx_fork_hooks.h"
@@ -2130,6 +2131,20 @@ namespace dxvk {
       const MaterialData* material = m_pReplacer->accessExternalMaterial(submeshes[i].externalMaterial);
       MaterialData mergedExternalMaterial = LegacyMaterialData().as<OpaqueMaterialData>();  // storage for a merged toolkit override; lives through this iteration
       if (material != nullptr) {
+        // WHITE DIAG (env DXVK_WHITE_DEBUG=1): capture the API material's albedo state BEFORE the
+        // replacement merge so we can log the vanilla lookup hash + whether the "0x<hash>" capture
+        // actually resolved. Throttled per unique hash below. Remove once white-on-replaced is solved.
+        static const bool s_whiteDbg = (env::getEnvVar("DXVK_WHITE_DEBUG") == "1");
+        XXH64_hash_t dbgApiAlbedoHash = 0;
+        bool dbgApiValid = false, dbgApiEmpty = true, dbgApiManaged = false;
+        if (s_whiteDbg && material->getType() == MaterialDataType::Opaque) {
+          const auto& a = material->getOpaqueMaterialData().getAlbedoOpacityTexture();
+          dbgApiValid = a.isValid();
+          dbgApiEmpty = a.isImageEmpty();
+          dbgApiManaged = a.getManagedTexture() != nullptr;
+          dbgApiAlbedoHash = a.getImageHash();
+        }
+
         fork_hooks::externalDrawMaterialReplacement(*m_pReplacer, material, mergedExternalMaterial);
 
         // FORK FIX (white-still): when a toolkit replacement was merged in, its albedo/PBR textures
@@ -2149,6 +2164,39 @@ namespace dxvk {
           trackTexture(om.getNormalTexture(),        pinIdx, true, false);
           trackTexture(om.getEmissiveColorTexture(), pinIdx, true, false);
           trackTexture(om.getHeightTexture(),        pinIdx, true, false);
+        }
+
+        // WHITE DIAG: log the lookup result + merged-albedo residency trajectory, throttled to one
+        // line per unique vanilla-albedo hash (plus one more line whenever its empty-state flips, so
+        // we can see whether the replaced texture ever becomes resident). env DXVK_WHITE_DEBUG=1.
+        if (s_whiteDbg) {
+          const bool replFound = (material == &mergedExternalMaterial);
+          bool mergedManaged = false, mergedEmpty = true;
+          XXH64_hash_t mergedAlbedoHash = 0;
+          if (material->getType() == MaterialDataType::Opaque) {
+            const auto& a = material->getOpaqueMaterialData().getAlbedoOpacityTexture();
+            mergedManaged = a.getManagedTexture() != nullptr;
+            mergedEmpty = a.isImageEmpty();
+            mergedAlbedoHash = a.getImageHash();
+          }
+          static std::mutex s_dbgMutex;
+          static std::unordered_map<XXH64_hash_t, uint8_t> s_dbgState; // bit0=seen, bit1=lastEmpty
+          std::lock_guard<std::mutex> lk(s_dbgMutex);
+          const XXH64_hash_t key = (dbgApiAlbedoHash != 0) ? dbgApiAlbedoHash : mergedAlbedoHash;
+          const uint8_t curEmpty = mergedEmpty ? 1u : 0u;
+          auto it = s_dbgState.find(key);
+          const bool first = (it == s_dbgState.end());
+          const bool flipped = !first && (((it->second >> 1) & 1u) != curEmpty);
+          if ((first || flipped) && s_dbgState.size() < 8192) {
+            Logger::warn(str::format(
+              "[whitedbg] apiTex=0x", std::hex, dbgApiAlbedoHash, std::dec,
+              " apiValid=", (int) dbgApiValid, " apiEmpty=", (int) dbgApiEmpty,
+              " apiMgd=", (int) dbgApiManaged,
+              " | replFound=", (int) replFound,
+              " mergedTex=0x", std::hex, mergedAlbedoHash, std::dec,
+              " mergedMgd=", (int) mergedManaged, " mergedEmpty=", (int) mergedEmpty));
+            s_dbgState[key] = (uint8_t) (0x1u | (curEmpty << 1));
+          }
         }
 
         state.drawCall.materialData.setHashOverride(material->getHash());
