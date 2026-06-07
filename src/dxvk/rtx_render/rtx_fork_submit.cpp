@@ -52,10 +52,25 @@ namespace fork_hooks {
   // ---------------------------------------------------------------------------
   void externalDrawMaterialReplacement(
       AssetReplacer& replacer, const MaterialData*& material, MaterialData& mergeStorage) {
-    MaterialData* pReplacementMaterial = replacer.getReplacementMaterial(material->getHash());
+    // Key the replacement lookup on the captured ALBEDO TEXTURE image hash — the same value
+    // the legacy path uses (LegacyMaterialData::getHash() == colorTexture image hash) and the
+    // same value the toolkit authors replacements under (the "mat_<texhash>" prim). NOTE:
+    // material->getHash() is the COMPUTED opaque hash (a fold of every texture hash + every
+    // material constant), which never equals the bare texture hash, so it never matched a
+    // toolkit replacement on this path — replaced/edited statics fell back to white. This is
+    // the same hash externalDrawTextureCategories extracts below.
+    XXH64_hash_t lookupHash = material->getHash();   // fallback for non-opaque materials
+    if (material->getType() == MaterialDataType::Opaque) {
+      const auto& opaqueMat = material->getOpaqueMaterialData();
+      if (opaqueMat.getAlbedoOpacityTexture().isValid()) {
+        lookupHash = opaqueMat.getAlbedoOpacityTexture().getImageHash();
+      }
+    }
+
+    MaterialData* pReplacementMaterial = replacer.getReplacementMaterial(lookupHash);
     if (pReplacementMaterial != nullptr) {
-      mergeStorage = *pReplacementMaterial;             // toolkit override (edited fields)
-      mergeStorage.mergeExternalMaterial(*material);    // keep original albedo/textures for the rest
+      mergeStorage = *pReplacementMaterial;             // toolkit override (edited fields; replaced albedo is dirty -> wins)
+      mergeStorage.mergeExternalMaterial(*material);    // keep original albedo/textures for the non-dirty rest
       material = &mergeStorage;
     }
   }
