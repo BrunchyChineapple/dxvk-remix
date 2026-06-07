@@ -496,6 +496,17 @@ namespace fork_hooks {
     }
 
     *out_hash = image->getHash();
+
+    // Fork: pin this texture into the legacy-texture registry NOW, while it is proven resident
+    // (we just resolved its image). The wrapper calls dxvk_GetTextureHash at material-create time
+    // for every batched external static, so this guarantees the texture is registered before the
+    // material's "0x<hash>" albedo is finalized — independent of whether the FFP draw path
+    // happened to register it that frame. This eliminates the streaming-residency race that left
+    // some batched external statics white (their texture streamed in after the lone warm-up FFP
+    // frame, so registration was missed). Idempotent (dedup by hash). srgb=false matches the FFP
+    // registration path for this engine (Morrowind does not set D3DSAMP_SRGBTEXTURE).
+    registerLegacyTextureForExternalRef(image->getHash(), TextureRef(commonTexture->GetSampleView(false)));
+
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
 
