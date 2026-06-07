@@ -58,6 +58,7 @@ namespace Commands {
     RemixApi_GetVramStats,
     RemixApi_RequestVramCompaction,
     RemixApi_SetupCamera,
+    RemixApi_dxvk_GetTextureHash,
 
     Bridge_SharedHeap_AddSeg,
     Bridge_SharedHeap_Alloc,
@@ -492,6 +493,7 @@ namespace Commands {
     case RemixApi_DestroyMesh: return "RemixApi_DestroyMesh";
     case RemixApi_DrawInstance: return "RemixApi_DrawInstance";
     case RemixApi_SetupCamera: return "RemixApi_SetupCamera";
+    case RemixApi_dxvk_GetTextureHash: return "RemixApi_dxvk_GetTextureHash";
     case RemixApi_CreateLight: return "RemixApi_CreateLight";
     case RemixApi_DestroyLight: return "RemixApi_DestroyLight";
     case RemixApi_DrawLightInstance: return "DrawLightInstance";

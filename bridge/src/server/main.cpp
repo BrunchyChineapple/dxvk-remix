@@ -3082,6 +3082,39 @@ void ProcessDeviceCommandQueue() {
         break;
       }
 
+      case RemixApi_dxvk_GetTextureHash:
+      {
+        // Resolve the client texture id to the server-side D3D9 texture and ask
+        // the real Remix for its image hash. Synchronous: respond with the
+        // errorcode and (on success) the uint64 hash as two 32-bit words
+        // (lo, hi), matching the client's reassembly.
+        PULL_HND(textureHandle);
+
+        remixapi_ErrorCode result = REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+        uint64_t hash = 0;
+
+        const auto resIt = gpD3DResources.find(textureHandle);
+        if (resIt != gpD3DResources.end() && resIt->second != nullptr) {
+          IDirect3DTexture9* const pTexture = (IDirect3DTexture9*) resIt->second;
+          if (remixapi::g_remix.dxvk_GetTextureHash) {
+            result = remixapi::g_remix.dxvk_GetTextureHash(pTexture, &hash);
+          } else {
+            Logger::err("[RemixApi_dxvk_GetTextureHash] dxvk_GetTextureHash function pointer is null in g_remix.");
+          }
+        } else {
+          Logger::err("[RemixApi_dxvk_GetTextureHash] Unknown texture handle.");
+          result = REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+        }
+
+        ServerMessage c(Commands::Bridge_Response, currentUID);
+        c.send_data(static_cast<uint32_t>(result));
+        if (result == REMIXAPI_ERROR_CODE_SUCCESS) {
+          c.send_data(static_cast<uint32_t>(hash & 0xFFFFFFFFull));
+          c.send_data(static_cast<uint32_t>((hash >> 32) & 0xFFFFFFFFull));
+        }
+        break;
+      }
+
       case RemixApi_CreateLight:
       {
         // Rather than allocate deserialized struct extensions on the heap,

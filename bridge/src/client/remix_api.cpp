@@ -24,6 +24,7 @@
 #include "util_bridgecommand.h"
 #include "util_devicecommand.h"
 #include "util_remixapi.h"
+#include "d3d9_texture.h"   // Direct3DTexture9_LSS (client texture proxy -> getId) for dxvk_GetTextureHash
 
 using namespace remixapi::util;
 
@@ -329,6 +330,47 @@ remixapi_ErrorCode REMIXAPI_CALL remixapi_SetupCamera(const remixapi_CameraInfo*
   return REMIXAPI_ERROR_CODE_SUCCESS;
 }
 
+// Synchronous round-trip: resolve a client D3D9 texture to its image hash on
+// the server (the same XXH64 image hash Remix uses for replacement matching and
+// the "0x<hash>" albedo pseudo-path). The 32-bit client has no DxvkImage, so
+// the real dxvk_GetTextureHash must run server-side. Mirrors GetGameValue's
+// request/Bridge_Response pattern. The uint64 hash crosses the 32-bit data
+// channel as two words (lo, hi). Called once per unique texture by the wrapper
+// (cached), so the blocking round-trip is not a per-frame cost.
+remixapi_ErrorCode REMIXAPI_CALL remixapi_dxvk_GetTextureHash(
+  IDirect3DTexture9* texture,
+  uint64_t*          out_hash) {
+  ASSERT_REMIXAPI_PFN_TYPE(remixapi_dxvk_GetTextureHash);
+  if (texture == nullptr || out_hash == nullptr) {
+    return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+  }
+
+  // Client texture proxy -> bridge id (keys gpD3DResources server-side). Same
+  // idiom as SetStreamSource / SetIndices.
+  auto* const pLssTexture = bridge_cast<Direct3DTexture9_LSS*>(texture);
+  const UID texId = (pLssTexture) ? (UID) pLssTexture->getId() : 0;
+  if (texId == 0) {
+    return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+  }
+
+  UID currentUID = 0;
+  {
+    ClientMessage c(Commands::RemixApi_dxvk_GetTextureHash);
+    currentUID = c.get_uid();
+    c.send_data((uint32_t) texId);
+  }
+  WAIT_FOR_SERVER_RESPONSE("remixapi_dxvk_GetTextureHash", REMIXAPI_ERROR_CODE_GENERAL_FAILURE, currentUID);
+
+  const remixapi_ErrorCode result = static_cast<remixapi_ErrorCode>(DeviceBridge::get_data());
+  if (result == REMIXAPI_ERROR_CODE_SUCCESS) {
+    const uint32_t lo = DeviceBridge::get_data();
+    const uint32_t hi = DeviceBridge::get_data();
+    *out_hash = (static_cast<uint64_t>(hi) << 32) | static_cast<uint64_t>(lo);
+  }
+  DeviceBridge::pop_front();
+  return result;
+}
+
 // Walks the remixapi_LightInfo pNext extension chain and marshals each known
 // *_EXT block to the server, mirroring the inline walk in remixapi_CreateLight.
 // Shared by CreateLightBatched and UpdateLightDefinition so the three light
@@ -624,6 +666,10 @@ extern "C" {
       interf.SetConfigVariable = remixapi_SetConfigVariable;
       interf.dxvk_CreateD3D9 = remixapi_dxvk_CreateD3D9;
       interf.dxvk_RegisterD3D9Device = remixapi_dxvk_RegisterD3D9Device;
+      // Texture-hash lookup over the bridge: lets external API materials bind a
+      // captured vanilla texture by its image hash (Morrowind distant-statics
+      // batching, Tier 1 materials). Forwarded synchronously to the server.
+      interf.dxvk_GetTextureHash = remixapi_dxvk_GetTextureHash;
       // Fork-added Remix API entry points. dxvk-remix's d3d9.dll implements
       // these for real (rtx_remix_api.cpp:2244+ / 2357+ / 2409+ / 2413+).
       // GetUIState / SetUIState remain client-side stubs (UI state is not
