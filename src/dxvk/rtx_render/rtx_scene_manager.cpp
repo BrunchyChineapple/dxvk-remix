@@ -2141,6 +2141,7 @@ namespace dxvk {
 
       XXH64_hash_t textureHash = 0;
       XXH64_hash_t dbgApiAlbedoHashOuter = 0;  // WHITE DIAG: carry the vanilla albedo hash past the material block to the post-processDrawCallState index log
+      uint32_t dbgMergedTrackIdx = 0xFFFFFFFFu;  // WHITE DIAG: current-frame texture-table index of the merged albedo (from the pin's trackTexture)
 
       const MaterialData* material = m_pReplacer->accessExternalMaterial(submeshes[i].externalMaterial);
       MaterialData mergedExternalMaterial = LegacyMaterialData().as<OpaqueMaterialData>();  // storage for a merged toolkit override; lives through this iteration
@@ -2179,6 +2180,7 @@ namespace dxvk {
           auto& om = mergedExternalMaterial.getOpaqueMaterialData();
           uint32_t pinIdx = 0;
           trackTexture(om.getAlbedoOpacityTexture(), pinIdx, true, false);
+          dbgMergedTrackIdx = pinIdx;  // WHITE DIAG: current-frame track index of the merged albedo
           trackTexture(om.getRoughnessTexture(),     pinIdx, true, false);
           trackTexture(om.getMetallicTexture(),      pinIdx, true, false);
           trackTexture(om.getNormalTexture(),        pinIdx, true, false);
@@ -2253,17 +2255,20 @@ namespace dxvk {
         // rest of the [whitedbg] instrumentation once white-on-replaced is solved.
         {
           static std::mutex s_idxDbgMutex;
-          static std::unordered_map<XXH64_hash_t, uint32_t> s_idxDbgState;  // vanilla albedo hash -> last logged baked index
+          static std::unordered_map<XXH64_hash_t, uint64_t> s_idxDbgState;  // vanilla albedo hash -> last logged (bakedIdx<<32 | curTrackIdx)
           const uint32_t bakedAlbedoIdx = instance->getAlbedoOpacityTextureIndex();
           const XXH64_hash_t k = dbgApiAlbedoHashOuter;
+          const uint64_t combined = (uint64_t(bakedAlbedoIdx) << 32) | uint64_t(dbgMergedTrackIdx);
           std::lock_guard<std::mutex> lk(s_idxDbgMutex);
           auto it = s_idxDbgState.find(k);
-          if (k != 0 && (it == s_idxDbgState.end() || it->second != bakedAlbedoIdx) && s_idxDbgState.size() < 8192) {
+          if (k != 0 && (it == s_idxDbgState.end() || it->second != combined) && s_idxDbgState.size() < 8192) {
             Logger::warn(str::format(
               "[whiteidx] apiTex=0x", std::hex, k, std::dec,
               " bakedAlbedoIdx=", bakedAlbedoIdx,
+              " curTrackIdx=", dbgMergedTrackIdx,
+              " match=", (int) (bakedAlbedoIdx == dbgMergedTrackIdx),
               " invalid=", (int) (bakedAlbedoIdx == kSurfaceMaterialInvalidTextureIndex)));
-            s_idxDbgState[k] = bakedAlbedoIdx;
+            s_idxDbgState[k] = combined;
           }
         }
         if (replacementInstance->root.getUntyped() == nullptr) {
