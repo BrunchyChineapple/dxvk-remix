@@ -82,8 +82,11 @@ extern "C" {
 #include <atomic>
 #include <cstdint>
 #include <cstring>                        // memcpy
+#include <deque>                          // FIFO eviction for legacy-texture registry
+#include <mutex>                          // guards the legacy-texture registry
 #include <optional>
 #include <string>
+#include <unordered_map>                  // legacy-texture registry (hash -> TextureRef)
 
 namespace dxvk {
 namespace {
@@ -128,6 +131,38 @@ namespace {
   PFN_remixapi_BridgeCallback    s_endCallback    { nullptr };
   PFN_remixapi_BridgeCallback    s_presentCallback { nullptr };
 
+  // -------------------------------------------------------------------------
+  // Legacy-texture registry (fork) — bridges captured vanilla D3D9 textures to
+  // external API materials.
+  //
+  // Vanilla game-bound textures live per-drawcall in LegacyMaterialData and are
+  // NOT inserted into the RtxTextureManager table that textureHashPathLookup
+  // primarily scans (that table holds remixapi_CreateTexture uploads + USD
+  // replacement/managed textures only). So an external API material whose
+  // albedoTexture is "0x<hash>" of a vanilla texture would never resolve and
+  // render flat albedoConstant. This registry maps a legacy texture's image
+  // hash -> its TextureRef, populated from the D3D9 draw path
+  // (registerLegacyTextureForExternalRef), and consulted by
+  // textureHashPathLookup as a fallback.
+  //
+  // THREADING: both the writer (per-draw EmitCs lambda from d3d9_rtx.cpp) and
+  // the reader (textureHashPathLookup, invoked from the material-finalize
+  // EmitCs lambda in rtx_remix_api.cpp) run on the DXVK CS thread. The mutex is
+  // belt-and-suspenders against any future off-thread caller; contention is
+  // effectively nil.
+  //
+  // LIFETIME: holding the TextureRef pins the underlying DxvkImage in VRAM, so
+  // the registry is FIFO-capped. A distant static's texture is drawn (and thus
+  // re-offered here) every frame it is visible, and its API material is created
+  // the first frame it is submitted — i.e. the same frame it is registered — so
+  // a cap far larger than one frame's distinct-texture count guarantees the
+  // entry is present at lookup time even though older entries get evicted.
+  // -------------------------------------------------------------------------
+  constexpr size_t            kLegacyTexRegistryCap = 8192;
+  std::mutex                  s_legacyTexMutex;
+  std::unordered_map<XXH64_hash_t, TextureRef> s_legacyTexByHash;
+  std::deque<XXH64_hash_t>    s_legacyTexFifo;
+
 } // anonymous namespace
 
 namespace fork_hooks {
@@ -169,11 +204,50 @@ namespace fork_hooks {
           return true;
         }
       }
+
+      // Fork fallback: vanilla game-bound textures are not in the TextureManager
+      // table (see s_legacyTexByHash docs). Consult the legacy-texture registry
+      // so external API materials can reference captured vanilla textures by
+      // image hash too. Runs on the CS thread, same as the writer.
+      {
+        std::lock_guard<std::mutex> lock(s_legacyTexMutex);
+        auto it = s_legacyTexByHash.find(hash);
+        if (it != s_legacyTexByHash.end() && it->second.isValid()) {
+          outRef = it->second;
+          return true;
+        }
+      }
     } catch (...) {
       // stoull threw — fall through and return false so the caller can try
       // the normal asset-path resolver instead.
     }
     return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // registerLegacyTextureForExternalRef
+  //
+  // Records a legacy (game-bound) texture's image hash -> TextureRef so the
+  // "0x<hex>" albedoTexture pseudo-path can resolve captured vanilla textures
+  // (textureHashPathLookup fallback). Deduped by hash; FIFO-capped to bound the
+  // VRAM pinned by the held TextureRefs. See the s_legacyTexByHash docs above
+  // for the threading/lifetime rationale.
+  // ---------------------------------------------------------------------------
+  void registerLegacyTextureForExternalRef(XXH64_hash_t hash, const TextureRef& ref) {
+    if (hash == 0 || !ref.isValid() || ref.isImageEmpty()) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(s_legacyTexMutex);
+    if (s_legacyTexByHash.find(hash) != s_legacyTexByHash.end()) {
+      return;  // already registered; it is drawn (and re-offered) every visible frame
+    }
+    if (s_legacyTexFifo.size() >= kLegacyTexRegistryCap) {
+      const XXH64_hash_t evict = s_legacyTexFifo.front();
+      s_legacyTexFifo.pop_front();
+      s_legacyTexByHash.erase(evict);
+    }
+    s_legacyTexByHash.emplace(hash, ref);
+    s_legacyTexFifo.push_back(hash);
   }
 
   // ---------------------------------------------------------------------------

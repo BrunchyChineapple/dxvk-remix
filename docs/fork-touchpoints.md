@@ -616,6 +616,11 @@ initializer list and can't be lifted into a separate TU.
 
 - **Hook** at `convert::toRtMaterialFinalized::preloadTexture` lambda (inside the `MaterialDataType::Opaque` / `Translucent` / `Portal` texture preload path) → `fork_hooks::textureHashPathLookup` in `rtx_fork_api_entry.cpp` (migrated 2026-04-18, migration #7a).
   *Adds a "0x..." hex-path shortcut inside the upstream texture-path resolver so API-uploaded textures can be referenced by hash string in material JSON without creating a real file path. Hook returns true and writes the resolved `TextureRef` when the path parses as hex and matches a registered texture; caller returns immediately. Falls through to the normal AssetDataManager lookup otherwise.*
+  *2026-06-06: extended with a fallback to the legacy-texture registry (below) so a "0x<hash>" path also resolves captured VANILLA game-bound textures, not only `remixapi_CreateTexture` uploads.*
+
+- **Hook** at `D3D9Rtx::processTextures` per-draw EmitCs lambda (`d3d9_rtx.cpp`, alongside the existing `trackReplacementMaterialHash` call) → `fork_hooks::registerLegacyTextureForExternalRef` in `rtx_fork_api_entry.cpp` (added 2026-06-06).
+  *Records a legacy (game-bound) D3D9 texture's image hash -> `TextureRef` in a CS-thread-local, FIFO-capped registry (`s_legacyTexByHash`). Bridges captured vanilla textures — which live per-drawcall in `LegacyMaterialData` and are absent from the `RtxTextureManager` table — to external API materials, so batched distant statics referencing `albedoTexture = "0x<hash>"` render the real vanilla texture instead of flat `albedoConstant`. Consumed by the `textureHashPathLookup` fallback. Motivation: Morrowind distant-statics batching (Tier 1 materials).*
+
 
 - **Hook** at `(anonymous namespace)` `remixapi_AddTextureHash` / `remixapi_RemoveTextureHash` → `fork_hooks::mutateTextureHashOption` in `rtx_fork_api_entry.cpp` (migrated 2026-04-18, migration #7a).
   *Looks up an `RtxOption<fast_unordered_set>` by full option name and adds or removes a hash via the user config layer. Call sites acquire `s_mutex` then delegate to the hook (which internally takes the RtxOption update mutex — lock order documented alongside `s_mutex`). The call-site signature replaced the local `TextureHashMutation` enum with a plain `bool add` parameter.*

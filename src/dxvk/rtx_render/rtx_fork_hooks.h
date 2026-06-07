@@ -297,6 +297,22 @@ namespace dxvk {
       const std::filesystem::path& path,
       TextureRef& outRef);
 
+    // Registers a legacy (game-bound) texture so external API materials can
+    // reference the captured vanilla texture by its image hash via the
+    // "0x<hex>" albedoTexture pseudo-path. Vanilla D3D9 textures live per
+    // drawcall in LegacyMaterialData and are NOT in the TextureManager table
+    // that textureHashPathLookup primarily scans, so without this they would
+    // never resolve (the material would fall back to albedoConstant). Called
+    // from the D3D9 draw path (d3d9_rtx.cpp) inside the per-draw EmitCs lambda,
+    // so it runs on the CS thread alongside the lookup. Insertion is deduped by
+    // hash and the registry is FIFO-capped to bound VRAM retention. A no-op for
+    // an empty/invalid ref or a zero hash.
+    // No private-member access — uses only public TextureRef accessors.
+    // Implementation in rtx_fork_api_entry.cpp.
+    void registerLegacyTextureForExternalRef(
+      XXH64_hash_t hash,
+      const TextureRef& ref);
+
     // Looks up an RtxOption<fast_unordered_set> by full option name and adds
     // (add == true) or removes (add == false) the parsed hash in the user
     // config layer. Used by remixapi_AddTextureHash / remixapi_RemoveTextureHash

@@ -14,6 +14,7 @@
 #include "d3d9_rtx_utils.h"
 #include "d3d9_texture.h"
 #include "../dxvk/rtx_render/rtx_terrain_baker.h"
+#include "../dxvk/rtx_render/rtx_fork_hooks.h"  // fork_hooks::registerLegacyTextureForExternalRef
 
 #include <cassert>
 #include <cstring>
@@ -1108,8 +1109,15 @@ namespace dxvk {
       // Flag smooth normals category at the d3d9 layer
       m_activeDrawCallState.setCategory(InstanceCategories::SmoothNormals, lookupHash(RtxOptions::smoothNormalsTextures(), textureHash));
       if (textureHash != kEmptyHash) {
-        m_parent->EmitCs([textureHash](DxvkContext* ctx) {
+        // fork: also register the captured legacy (game-bound) texture by image
+        // hash so external API materials (batched distant statics) can bind the
+        // real vanilla texture via the "0x<hash>" albedoTexture pseudo-path.
+        // Captured by value so the TextureRef (and its DxvkImage) stays alive
+        // until the CS-thread lambda runs.
+        const TextureRef legacyColorTexture = m_activeDrawCallState.materialData.getColorTexture();
+        m_parent->EmitCs([textureHash, legacyColorTexture](DxvkContext* ctx) {
           static_cast<RtxContext*>(ctx)->getSceneManager().trackReplacementMaterialHash(textureHash);
+          fork_hooks::registerLegacyTextureForExternalRef(textureHash, legacyColorTexture);
         });
       }
       
