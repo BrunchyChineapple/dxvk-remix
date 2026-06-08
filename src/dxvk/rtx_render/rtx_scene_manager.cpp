@@ -2271,6 +2271,49 @@ namespace dxvk {
             s_idxDbgState[k] = combined;
           }
         }
+        // [whiteres] STEADY-STATE residency trajectory. The §40 warm-up result proved the white is
+        // TIME-DELAYED (renders fine, then white later) = a SUSTAIN failure, NOT a startup race; and
+        // neverDowngradeTextures=True did not help, so it is likely NOT simple mip-demotion. This logs
+        // every ~120 frames UNCONDITIONALLY (not flip/change-gated like [whiteidx], so it captures the
+        // white STEADY STATE) for the known white 4K wall textures, reading the merged albedo's
+        // ManagedTexture directly. Splits the remaining hypotheses:
+        //   - state flips kVidMem->other / mip[begin..end) shrinks  => demotion/eviction
+        //   - frameLastUsed not tracking cur                         => the per-frame pin isn't refreshing THIS texture
+        //   - all resident + match=1 yet white in-game               => resident-but-unbound (GPU descriptor / surface encoding)
+        // Remove with the rest of the white diagnostics once solved.
+        {
+          const XXH64_hash_t k = dbgApiAlbedoHashOuter;
+          const bool target = (k == 0xBC3FA28BF04FB18Dull || k == 0x02C4AD62308AAC11ull);
+          if (target && material->getType() == MaterialDataType::Opaque) {
+            static std::mutex s_resMutex;
+            static std::unordered_map<XXH64_hash_t, uint32_t> s_resLastFrame;
+            const uint32_t frame = m_device->getCurrentFrameId();
+            std::lock_guard<std::mutex> lk(s_resMutex);
+            auto it = s_resLastFrame.find(k);
+            if (it == s_resLastFrame.end() || (frame - it->second) >= 120u) {
+              s_resLastFrame[k] = frame;
+              const auto& a = material->getOpaqueMaterialData().getAlbedoOpacityTexture();
+              const Rc<ManagedTexture>& mt = a.getManagedTexture();
+              const uint32_t bakedAlbedoIdx = instance->getAlbedoOpacityTextureIndex();
+              if (mt != nullptr) {
+                Logger::warn(str::format(
+                  "[whiteres] f=", std::dec, frame, " apiTex=0x", std::hex, k, std::dec,
+                  " state=", (int) mt->m_state.load(),
+                  " mip[", mt->m_currentMip_begin, "..", mt->m_currentMip_end, ")",
+                  " canDemote=", (int) mt->m_canDemote,
+                  " frameLastUsed=", std::dec, mt->m_frameLastUsed, " cur=", frame,
+                  " viewNull=", (int) a.isImageEmpty(),
+                  " bakedIdx=", bakedAlbedoIdx, " curTrackIdx=", dbgMergedTrackIdx,
+                  " match=", (int) (bakedAlbedoIdx == dbgMergedTrackIdx)));
+              } else {
+                Logger::warn(str::format(
+                  "[whiteres] f=", std::dec, frame, " apiTex=0x", std::hex, k, std::dec,
+                  " NO-MANAGED-TEX viewNull=", (int) a.isImageEmpty(),
+                  " bakedIdx=", bakedAlbedoIdx, " curTrackIdx=", dbgMergedTrackIdx));
+              }
+            }
+          }
+        }
         if (replacementInstance->root.getUntyped() == nullptr) {
           replacementInstance->setup(PrimInstance(instance, PrimInstance::Type::Instance), submeshes.size(), nullptr);
         }
