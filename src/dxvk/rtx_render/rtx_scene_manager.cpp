@@ -1291,37 +1291,6 @@ namespace dxvk {
       trackTexture(opaqueMaterialData.getHeightTexture(), heightTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
       trackTexture(opaqueMaterialData.getEmissiveColorTexture(), emissiveColorTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
 
-      // [whitesurf] PATH A: log the albedo binding the SHADER actually reads — i.e. what gets baked
-      // into the GPU surface material here (createSurfaceMaterial). [whiteres] proved the INSTANCE
-      // side is correct (idx 103, resident); this measures the SURFACE-MATERIAL side. For a managed
-      // (replacement) albedo, log the encoded albedoOpacityTextureIndex (valid vs 0xFFFF=invalid), the
-      // albedoConstant (with the wrapper's RED probe, a constant-fallback shows red here), and
-      // hasTexcoords (if false, trackTexture won't bind the albedo -> invalid index -> white). If this
-      // index is INVALID while [whiteres] shows 103 -> surface material has no texture -> shader uses
-      // constant -> white (the divergence). If VALID 103 -> white is downstream (descriptor/sampler).
-      // Throttled per merged-albedo hash, ~120 frames, cap 1024. Remove with the rest of the white diag.
-      {
-        const auto& dbgSurfAlbedo = opaqueMaterialData.getAlbedoOpacityTexture();
-        if (dbgSurfAlbedo.getManagedTexture() != nullptr) {
-          const XXH64_hash_t dbgSurfHash = dbgSurfAlbedo.getImageHash();
-          static std::mutex s_surfMutex;
-          static std::unordered_map<XXH64_hash_t, uint32_t> s_surfLast;
-          const uint32_t dbgSurfFrame = m_device->getCurrentFrameId();
-          std::lock_guard<std::mutex> lk(s_surfMutex);
-          auto it = s_surfLast.find(dbgSurfHash);
-          const bool fresh = (it == s_surfLast.end());
-          if ((fresh && s_surfLast.size() < 1024u) || (!fresh && (dbgSurfFrame - it->second) >= 120u)) {
-            s_surfLast[dbgSurfHash] = dbgSurfFrame;
-            Logger::warn(str::format(
-              "[whitesurf] f=", std::dec, dbgSurfFrame, " mergedAlbedoHash=0x", std::hex, dbgSurfHash, std::dec,
-              " albedoIdx=", albedoOpacityTextureIndex,
-              " invalid=", (int) (albedoOpacityTextureIndex == kSurfaceMaterialInvalidTextureIndex),
-              " albedoConst=(", albedoOpacityConstant.x, ",", albedoOpacityConstant.y, ",", albedoOpacityConstant.z, ")",
-              " hasTexcoords=", (int) hasTexcoords));
-          }
-        }
-      }
-
       emissiveIntensity = opaqueMaterialData.getEmissiveIntensity() * RtxOptions::emissiveIntensity();
       emissiveColorConstant = opaqueMaterialData.getEmissiveColorConstant();
       enableEmissive = opaqueMaterialData.getEnableEmission();
@@ -2123,19 +2092,6 @@ namespace dxvk {
     ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(externalKey, allowCrossTopologyMatching);
 
     if (std::vector<AssetReplacement>* pReplacements = fork_hooks::externalDrawMeshReplacement(*m_pReplacer, meshHash)) {
-      // WHITE DIAG: this external mesh matched a USD MESH replacement and renders through this
-      // early-return branch, so it NEVER reaches the per-submesh material/[whitedbg] logging
-      // below. Log it (throttled per meshHash) so a white asset taking the mesh-replacement
-      // path is still visible in the trace instead of producing a silent blank.
-      {
-        static std::mutex s_meshReplDbgMutex;
-        static std::unordered_map<XXH64_hash_t, uint8_t> s_meshReplDbgSeen;
-        std::lock_guard<std::mutex> lk(s_meshReplDbgMutex);
-        if (s_meshReplDbgSeen.size() < 8192 && s_meshReplDbgSeen.emplace(meshHash, 1u).second) {
-          Logger::warn(str::format("[whitedbg] MESH-REPL path meshHash=0x", std::hex, meshHash, std::dec,
-            " replacements=", pReplacements->size()));
-        }
-      }
       // Copy the DrawCallState so we don't mutate the caller's state. Point geometryData
       // at submeshes[0] as the replacement geometry template, clear externalMaterial so
       // the USD replacement material takes precedence, and use a neutral default material
@@ -2171,32 +2127,10 @@ namespace dxvk {
       state.drawCall.geometryData.cullMode = state.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
 
       XXH64_hash_t textureHash = 0;
-      XXH64_hash_t dbgApiAlbedoHashOuter = 0;  // WHITE DIAG: carry the vanilla albedo hash past the material block to the post-processDrawCallState index log
-      uint32_t dbgMergedTrackIdx = 0xFFFFFFFFu;  // WHITE DIAG: current-frame texture-table index of the merged albedo (from the pin's trackTexture)
 
       const MaterialData* material = m_pReplacer->accessExternalMaterial(submeshes[i].externalMaterial);
       MaterialData mergedExternalMaterial = LegacyMaterialData().as<OpaqueMaterialData>();  // storage for a merged toolkit override; lives through this iteration
       if (material != nullptr) {
-        // WHITE DIAG (env DXVK_WHITE_DEBUG=1): capture the API material's albedo state BEFORE the
-        // replacement merge so we can log the vanilla lookup hash + whether the "0x<hash>" capture
-        // actually resolved. Throttled per unique hash below. Remove once white-on-replaced is solved.
-        // NOTE: the env-var gate (DXVK_WHITE_DEBUG) was never reaching the process that
-        // runs d3d9.dll (NvRemixBridge.exe), so the diagnostic produced ZERO lines no matter
-        // what. Made unconditional for this throwaway diagnostic build — logging below is
-        // throttled per-hash (cap 8192 + 600-frame re-log) so overhead is negligible.
-        // REMOVE this whole [whitedbg] instrumentation once white-on-replaced is solved.
-        static const bool s_whiteDbg = true;
-        XXH64_hash_t dbgApiAlbedoHash = 0;
-        bool dbgApiValid = false, dbgApiEmpty = true, dbgApiManaged = false;
-        if (s_whiteDbg && material->getType() == MaterialDataType::Opaque) {
-          const auto& a = material->getOpaqueMaterialData().getAlbedoOpacityTexture();
-          dbgApiValid = a.isValid();
-          dbgApiEmpty = a.isImageEmpty();
-          dbgApiManaged = a.getManagedTexture() != nullptr;
-          dbgApiAlbedoHash = a.getImageHash();
-          dbgApiAlbedoHashOuter = dbgApiAlbedoHash;
-        }
-
         fork_hooks::externalDrawMaterialReplacement(*m_pReplacer, material, mergedExternalMaterial);
 
         // FORK FIX (white-still): when a toolkit replacement was merged in, its albedo/PBR textures
@@ -2211,51 +2145,11 @@ namespace dxvk {
           auto& om = mergedExternalMaterial.getOpaqueMaterialData();
           uint32_t pinIdx = 0;
           trackTexture(om.getAlbedoOpacityTexture(), pinIdx, true, false);
-          dbgMergedTrackIdx = pinIdx;  // WHITE DIAG: current-frame track index of the merged albedo
           trackTexture(om.getRoughnessTexture(),     pinIdx, true, false);
           trackTexture(om.getMetallicTexture(),      pinIdx, true, false);
           trackTexture(om.getNormalTexture(),        pinIdx, true, false);
           trackTexture(om.getEmissiveColorTexture(), pinIdx, true, false);
           trackTexture(om.getHeightTexture(),        pinIdx, true, false);
-        }
-
-        // WHITE DIAG: log the lookup result + merged-albedo residency TRAJECTORY. Throttled per
-        // unique vanilla-albedo hash: logs on first sight, whenever the empty-state flips, and
-        // (while still empty) at most once per ~600 frames so a persistently-white asset keeps
-        // reporting "still empty" — that distinguishes "never loads" (residency race) from
-        // "loads but still white" (downstream surface-material cache). env DXVK_WHITE_DEBUG=1.
-        if (s_whiteDbg) {
-          const bool replFound = (material == &mergedExternalMaterial);
-          bool mergedManaged = false, mergedEmpty = true;
-          XXH64_hash_t mergedAlbedoHash = 0;
-          if (material->getType() == MaterialDataType::Opaque) {
-            const auto& a = material->getOpaqueMaterialData().getAlbedoOpacityTexture();
-            mergedManaged = a.getManagedTexture() != nullptr;
-            mergedEmpty = a.isImageEmpty();
-            mergedAlbedoHash = a.getImageHash();
-          }
-          struct DbgRec { uint32_t lastFrame; uint8_t lastEmpty; };
-          static std::mutex s_dbgMutex;
-          static std::unordered_map<XXH64_hash_t, DbgRec> s_dbgState;
-          std::lock_guard<std::mutex> lk(s_dbgMutex);
-          const uint32_t frame = m_device->getCurrentFrameId();
-          const uint8_t curEmpty = mergedEmpty ? 1u : 0u;
-          const XXH64_hash_t key = (dbgApiAlbedoHash != 0) ? dbgApiAlbedoHash : mergedAlbedoHash;
-          auto it = s_dbgState.find(key);
-          const bool first = (it == s_dbgState.end());
-          const bool flipped = !first && (it->second.lastEmpty != curEmpty);
-          const bool restill = !first && curEmpty == 1u && (frame - it->second.lastFrame) >= 600u;
-          if ((first || flipped || restill) && s_dbgState.size() < 8192) {
-            Logger::warn(str::format(
-              "[whitedbg] f=", std::dec, frame,
-              " apiTex=0x", std::hex, dbgApiAlbedoHash, std::dec,
-              " apiValid=", (int) dbgApiValid, " apiEmpty=", (int) dbgApiEmpty,
-              " apiMgd=", (int) dbgApiManaged,
-              " | replFound=", (int) replFound,
-              " mergedTex=0x", std::hex, mergedAlbedoHash, std::dec,
-              " mergedMgd=", (int) mergedManaged, " mergedEmpty=", (int) mergedEmpty));
-            s_dbgState[key] = DbgRec { frame, curEmpty };
-          }
         }
 
         state.drawCall.materialData.setHashOverride(material->getHash());
@@ -2278,77 +2172,6 @@ namespace dxvk {
           existingInstance, pParticles);
 
       if (instance != nullptr) {
-        // WHITE DIAG: the merged MaterialData albedo logs resident (mergedEmpty=0) yet the asset
-        // renders white on the external path. Log the BAKED albedo texture index actually bound to
-        // the external RtInstance, keyed per vanilla-albedo hash, re-logging whenever the index
-        // CHANGES — so we see if the bound index is invalid/wrong despite a resident material, and
-        // catch the legacy->external (fine->white) handoff as an index transition. Remove with the
-        // rest of the [whitedbg] instrumentation once white-on-replaced is solved.
-        {
-          static std::mutex s_idxDbgMutex;
-          static std::unordered_map<XXH64_hash_t, uint64_t> s_idxDbgState;  // vanilla albedo hash -> last logged (bakedIdx<<32 | curTrackIdx)
-          const uint32_t bakedAlbedoIdx = instance->getAlbedoOpacityTextureIndex();
-          const XXH64_hash_t k = dbgApiAlbedoHashOuter;
-          const uint64_t combined = (uint64_t(bakedAlbedoIdx) << 32) | uint64_t(dbgMergedTrackIdx);
-          std::lock_guard<std::mutex> lk(s_idxDbgMutex);
-          auto it = s_idxDbgState.find(k);
-          if (k != 0 && (it == s_idxDbgState.end() || it->second != combined) && s_idxDbgState.size() < 8192) {
-            Logger::warn(str::format(
-              "[whiteidx] apiTex=0x", std::hex, k, std::dec,
-              " bakedAlbedoIdx=", bakedAlbedoIdx,
-              " curTrackIdx=", dbgMergedTrackIdx,
-              " match=", (int) (bakedAlbedoIdx == dbgMergedTrackIdx),
-              " invalid=", (int) (bakedAlbedoIdx == kSurfaceMaterialInvalidTextureIndex)));
-            s_idxDbgState[k] = combined;
-          }
-        }
-        // [whiteres] STEADY-STATE residency trajectory. The §40 warm-up result proved the white is
-        // TIME-DELAYED (renders fine, then white later) = a SUSTAIN failure, NOT a startup race; and
-        // neverDowngradeTextures=True did not help, so it is likely NOT simple mip-demotion. This logs
-        // every ~120 frames UNCONDITIONALLY (not flip/change-gated like [whiteidx], so it captures the
-        // white STEADY STATE) for the known white 4K wall textures, reading the merged albedo's
-        // ManagedTexture directly. Splits the remaining hypotheses:
-        //   - state flips kVidMem->other / mip[begin..end) shrinks  => demotion/eviction
-        //   - frameLastUsed not tracking cur                         => the per-frame pin isn't refreshing THIS texture
-        //   - all resident + match=1 yet white in-game               => resident-but-unbound (GPU descriptor / surface encoding)
-        // Remove with the rest of the white diagnostics once solved.
-        {
-          const XXH64_hash_t k = dbgApiAlbedoHashOuter;
-          const bool replFound = (material == &mergedExternalMaterial);
-          const bool isOpaque = (material->getType() == MaterialDataType::Opaque);
-          if (k != 0 && isOpaque) {
-            static std::mutex s_resMutex;
-            static std::unordered_map<XXH64_hash_t, uint32_t> s_resLastFrame;
-            const uint32_t frame = m_device->getCurrentFrameId();
-            std::lock_guard<std::mutex> lk(s_resMutex);
-            auto it = s_resLastFrame.find(k);
-            const bool fresh = (it == s_resLastFrame.end());
-            if ((fresh && s_resLastFrame.size() < 1024u) || (!fresh && (frame - it->second) >= 120u)) {
-              s_resLastFrame[k] = frame;
-              const auto& a = material->getOpaqueMaterialData().getAlbedoOpacityTexture();
-              const Rc<ManagedTexture>& mt = a.getManagedTexture();
-              const uint32_t bakedAlbedoIdx = instance->getAlbedoOpacityTextureIndex();
-              if (mt != nullptr) {
-                Logger::warn(str::format(
-                  "[whiteres] f=", std::dec, frame, " apiTex=0x", std::hex, k, std::dec,
-                  " repl=", (int) replFound, " mgd=1",
-                  " state=", (int) mt->m_state.load(),
-                  " mip[", mt->m_currentMip_begin, "..", mt->m_currentMip_end, ")",
-                  " canDemote=", (int) mt->m_canDemote,
-                  " frameLastUsed=", std::dec, mt->m_frameLastUsed, " cur=", frame,
-                  " viewNull=", (int) a.isImageEmpty(),
-                  " bakedIdx=", bakedAlbedoIdx, " curTrackIdx=", dbgMergedTrackIdx,
-                  " match=", (int) (bakedAlbedoIdx == dbgMergedTrackIdx)));
-              } else {
-                Logger::warn(str::format(
-                  "[whiteres] f=", std::dec, frame, " apiTex=0x", std::hex, k, std::dec,
-                  " repl=", (int) replFound, " mgd=0 (non-managed albedo)",
-                  " viewNull=", (int) a.isImageEmpty(),
-                  " bakedIdx=", bakedAlbedoIdx, " curTrackIdx=", dbgMergedTrackIdx));
-              }
-            }
-          }
-        }
         if (replacementInstance->root.getUntyped() == nullptr) {
           replacementInstance->setup(PrimInstance(instance, PrimInstance::Type::Instance), submeshes.size(), nullptr);
         }
