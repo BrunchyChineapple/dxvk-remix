@@ -2283,14 +2283,16 @@ namespace dxvk {
         // Remove with the rest of the white diagnostics once solved.
         {
           const XXH64_hash_t k = dbgApiAlbedoHashOuter;
-          const bool target = (k == 0xBC3FA28BF04FB18Dull || k == 0x02C4AD62308AAC11ull);
-          if (target && material->getType() == MaterialDataType::Opaque) {
+          const bool replFound = (material == &mergedExternalMaterial);
+          const bool isOpaque = (material->getType() == MaterialDataType::Opaque);
+          if (k != 0 && isOpaque) {
             static std::mutex s_resMutex;
             static std::unordered_map<XXH64_hash_t, uint32_t> s_resLastFrame;
             const uint32_t frame = m_device->getCurrentFrameId();
             std::lock_guard<std::mutex> lk(s_resMutex);
             auto it = s_resLastFrame.find(k);
-            if (it == s_resLastFrame.end() || (frame - it->second) >= 120u) {
+            const bool fresh = (it == s_resLastFrame.end());
+            if ((fresh && s_resLastFrame.size() < 1024u) || (!fresh && (frame - it->second) >= 120u)) {
               s_resLastFrame[k] = frame;
               const auto& a = material->getOpaqueMaterialData().getAlbedoOpacityTexture();
               const Rc<ManagedTexture>& mt = a.getManagedTexture();
@@ -2298,6 +2300,7 @@ namespace dxvk {
               if (mt != nullptr) {
                 Logger::warn(str::format(
                   "[whiteres] f=", std::dec, frame, " apiTex=0x", std::hex, k, std::dec,
+                  " repl=", (int) replFound, " mgd=1",
                   " state=", (int) mt->m_state.load(),
                   " mip[", mt->m_currentMip_begin, "..", mt->m_currentMip_end, ")",
                   " canDemote=", (int) mt->m_canDemote,
@@ -2308,7 +2311,8 @@ namespace dxvk {
               } else {
                 Logger::warn(str::format(
                   "[whiteres] f=", std::dec, frame, " apiTex=0x", std::hex, k, std::dec,
-                  " NO-MANAGED-TEX viewNull=", (int) a.isImageEmpty(),
+                  " repl=", (int) replFound, " mgd=0 (non-managed albedo)",
+                  " viewNull=", (int) a.isImageEmpty(),
                   " bakedIdx=", bakedAlbedoIdx, " curTrackIdx=", dbgMergedTrackIdx));
               }
             }
