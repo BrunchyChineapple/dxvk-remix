@@ -1291,6 +1291,37 @@ namespace dxvk {
       trackTexture(opaqueMaterialData.getHeightTexture(), heightTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
       trackTexture(opaqueMaterialData.getEmissiveColorTexture(), emissiveColorTextureIndex, hasTexcoords, true, samplerFeedbackStamp);
 
+      // [whitesurf] PATH A: log the albedo binding the SHADER actually reads — i.e. what gets baked
+      // into the GPU surface material here (createSurfaceMaterial). [whiteres] proved the INSTANCE
+      // side is correct (idx 103, resident); this measures the SURFACE-MATERIAL side. For a managed
+      // (replacement) albedo, log the encoded albedoOpacityTextureIndex (valid vs 0xFFFF=invalid), the
+      // albedoConstant (with the wrapper's RED probe, a constant-fallback shows red here), and
+      // hasTexcoords (if false, trackTexture won't bind the albedo -> invalid index -> white). If this
+      // index is INVALID while [whiteres] shows 103 -> surface material has no texture -> shader uses
+      // constant -> white (the divergence). If VALID 103 -> white is downstream (descriptor/sampler).
+      // Throttled per merged-albedo hash, ~120 frames, cap 1024. Remove with the rest of the white diag.
+      {
+        const auto& dbgSurfAlbedo = opaqueMaterialData.getAlbedoOpacityTexture();
+        if (dbgSurfAlbedo.getManagedTexture() != nullptr) {
+          const XXH64_hash_t dbgSurfHash = dbgSurfAlbedo.getImageHash();
+          static std::mutex s_surfMutex;
+          static std::unordered_map<XXH64_hash_t, uint32_t> s_surfLast;
+          const uint32_t dbgSurfFrame = m_device->getCurrentFrameId();
+          std::lock_guard<std::mutex> lk(s_surfMutex);
+          auto it = s_surfLast.find(dbgSurfHash);
+          const bool fresh = (it == s_surfLast.end());
+          if ((fresh && s_surfLast.size() < 1024u) || (!fresh && (dbgSurfFrame - it->second) >= 120u)) {
+            s_surfLast[dbgSurfHash] = dbgSurfFrame;
+            Logger::warn(str::format(
+              "[whitesurf] f=", std::dec, dbgSurfFrame, " mergedAlbedoHash=0x", std::hex, dbgSurfHash, std::dec,
+              " albedoIdx=", albedoOpacityTextureIndex,
+              " invalid=", (int) (albedoOpacityTextureIndex == kSurfaceMaterialInvalidTextureIndex),
+              " albedoConst=(", albedoOpacityConstant.x, ",", albedoOpacityConstant.y, ",", albedoOpacityConstant.z, ")",
+              " hasTexcoords=", (int) hasTexcoords));
+          }
+        }
+      }
+
       emissiveIntensity = opaqueMaterialData.getEmissiveIntensity() * RtxOptions::emissiveIntensity();
       emissiveColorConstant = opaqueMaterialData.getEmissiveColorConstant();
       enableEmissive = opaqueMaterialData.getEnableEmission();
