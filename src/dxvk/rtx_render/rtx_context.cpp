@@ -739,18 +739,24 @@ namespace dxvk {
         // Motion blur runs before tonemapping while the image is still in linear HDR space.
         dispatchPostFxMotionBlur(rtOutput);
 
-        // Operator-model tonemapper (fork) owns sRGB + dither in its apply pass. The
-        // screenshot-capture sRGB WAR (TREX-553) is honored via performSRGBConversion
-        // (false when capturing => linear, no dither). Compute it here where
-        // captureScreenImage is in scope and pass it in. We deliberately do NOT run
-        // nvidia's separate dispatchSRGBDither pass: its buffer wiring doesn't match
-        // our operator tonemapper's output, and running both would double-convert.
+        // Final sRGB encode + dither owner is selectable (rtx.useSeparateSrgbDitherPass):
+        //  - default false: the operator tonemapper's apply pass does sRGB + dither (proven path,
+        //    correct brightness). The TREX-553 screenshot-capture sRGB WAR is honored via
+        //    performSRGBConversion (false when capturing => linear, no dither).
+        //  - true: tonemapper outputs linear LDR; nvidia's dispatchSRGBDither does the final sRGB +
+        //    dither after lens effects (nvidia's intended ordering; currently renders dark -- opt-in
+        //    while debugging the operator/sRGBDither handoff). Both passes share rtOutput.m_finalOutput.
         const bool performSRGBConversion = !captureScreenImage && g_allowSrgbConversionForOutput;
-        dispatchToneMapping(rtOutput, performSRGBConversion);
+        const bool useSeparateSrgbPass = RtxOptions::useSeparateSrgbDitherPass();
+        dispatchToneMapping(rtOutput, useSeparateSrgbPass ? false : performSRGBConversion);
 
         // Lens effects (chromatic aberration, vignette) run AFTER tonemapping. They are
         // display-space artifacts so they operate on post-tonemap LDR data.
         dispatchPostFxLensEffects(rtOutput);
+
+        if (useSeparateSrgbPass) {
+          dispatchSRGBDither(rtOutput, performSRGBConversion);
+        }
 
         // Composite screen overlay (from external C API) after tone mapping, before screenshot capture.
         dispatchScreenOverlay(rtOutput);

@@ -1027,6 +1027,13 @@ namespace dxvk {
                 "frame's translation, rather than retranslating the draw call into raytrace-ready scene data.\n"
                 "When false, every submit uses full dynamic geometry and instance processing (drawReplacements / processDrawCallState).\n"
                 "Disable for debugging or compatibility when suspecting preserve-path regressions.");
+    RTX_OPTION_ARGS("rtx", bool, useSeparateSrgbDitherPass, false,
+                "Fork: selects which pass applies the final sRGB encode + dither.\n"
+                "False (default): the operator tonemapper's apply pass does sRGB + dither in one step\n"
+                "  (the proven Morrowind path -- correct brightness; screenshot-capture sRGB WAR honored).\n"
+                "True: the tonemapper outputs linear LDR and nvidia's separate dispatchSRGBDither pass does\n"
+                "  the final sRGB + dither after lens effects (nvidia's intended post-fx ordering). Known to\n"
+                "  render dark currently -- opt-in for debugging the operator/sRGBDither buffer handoff.");
     RTX_OPTION_FLAG("rtx", bool, enableInstanceDebuggingTools, false, RtxOptionFlags::NoSave, "NOTE: This will disable temporal correllation for instances, but allow the use of instance developer debug tools");
     RTX_OPTION("rtx", Vector2i, drawCallRange, Vector2i(0, INT32_MAX), "");
     RTX_OPTION("rtx", Vector3, instanceOverrideWorldOffset, Vector3(0.f, 0.f, 0.f), "");
