@@ -36,6 +36,7 @@ struct CompositeArgs {
   RayPortalHitInfo rayPortalHitInfos[maxRayPortalCount * 2];
   VolumeArgs volumeArgs;
   AccumulationArgs accumulationArgs;
+  SparseRenderingArgs sparseRenderingArgs;
 
   // -- Struct objects should go above this line to preserve alignment --
 
@@ -53,7 +54,6 @@ struct CompositeArgs {
   uint usePostFilter;
   uint demodulateRoughness;
   float roughnessDemodulationOffset;
-  uint combineLightingChannels;
 
   // One of DENOISER_MODE constants, affects signal conversion
   uint primaryDirectDenoiser;
@@ -113,5 +113,5 @@ struct CompositeArgs {
   // the wire-in factor as-is; >1 darkens cumulus shadows, <1 fades them.
   // Mirrored from RtxOptions::cloudShadowFactorStrength().
   float cloudShadowFactorStrength;
-  float pad2;
+  uint writeRayReconstructionHitDistance;
 };

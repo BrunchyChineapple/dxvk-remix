@@ -55,6 +55,7 @@
 #include "rtx_render/rtx_restir_gi_rayquery.h"
 #include "rtx_render/rtx_debug_view.h"
 #include "rtx_render/rtx_composite.h"
+#include "rtx_render/rtx_sparse_rendering.h"
 #include "dxvk_image.h"
 #include "../util/rc/util_rc_ptr.h"
 #include "../util/util_math.h"
@@ -377,6 +378,7 @@ namespace dxvk {
   RemixGui::ComboWithKey<dxvk::RtxFramePassStage>::ComboEntries aliasingPassComboEntries = { {
       { RtxFramePassStage::FrameBegin, "FrameBegin" },
       { RtxFramePassStage::Volumetrics, "Volumetrics" },
+      { RtxFramePassStage::SparseRendering, "SparseRendering" },
       { RtxFramePassStage::VolumeIntegrateRestirInitial, "VolumeIntegrateRestirInitial" },
       { RtxFramePassStage::VolumeIntegrateRestirVisible, "VolumeIntegrateRestirVisible" },
       { RtxFramePassStage::VolumeIntegrateRestirTemporal, "VolumeIntegrateRestirTemporal" },
@@ -3748,6 +3750,12 @@ namespace dxvk {
       ImGui::Unindent();
     }
 
+    if (RemixGui::CollapsingHeader("Sparse Rendering", collapsingHeaderClosedFlags)) {
+      ImGui::Indent();
+      common->metaSparseRendering().showImguiSettings();
+      ImGui::Unindent();
+    }
+
     RtxParticleSystemManager::showImguiSettings();
 
     RtxPointInstancerSystem::showImguiSettings();
@@ -3927,7 +3935,10 @@ namespace dxvk {
 
       if (RemixGui::CollapsingHeader("Post FX", collapsingHeaderClosedFlags))
         common->metaPostFx().showImguiSettings();
-      
+
+      if (RemixGui::CollapsingHeader("sRGB + Dither", collapsingHeaderClosedFlags))
+        common->metaSRGBDither().showImguiSettings();
+
       ImGui::Unindent();
     }
 
