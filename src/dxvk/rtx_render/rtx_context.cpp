@@ -1804,14 +1804,16 @@ namespace dxvk {
       getResourceManager().getSampler(VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER),
       rtOutput, GlobalTime::get().deltaTimeMs());
 
-    const bool resetToneMapperHistory = m_resetHistory || getSceneManager().getCamera().isCameraCut();
     setFramePassStage(RtxFramePassStage::ToneMapping);
     // Operator-only tonemapping (dynamic tone curve removed in the 2026-05-13 refactor).
     {
       DxvkToneMapping& toneMapper = m_common->metaToneMapping();
       toneMapper.dispatch(this,
         autoExposure.getExposureTexture().view,
-        rtOutput, performSRGBConversion, autoExposure.enabled());
+        // sRGB + dither are owned by the final dispatchSRGBDither pass (runs after
+        // lens effects and suppresses sRGB for screenshot captures), so this operator
+        // pass outputs linear LDR. Pass false here to avoid a double sRGB conversion.
+        rtOutput, /*performSRGBConversion=*/ false, autoExposure.enabled());
     }
   }
 

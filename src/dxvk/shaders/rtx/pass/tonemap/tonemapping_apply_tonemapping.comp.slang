@@ -99,21 +99,27 @@ float3 applyToneMapping(float3 color, uint2 pixelPosition)
     color = colorGrading(color);
   }
 
+  // sRGB + dither only when this operator pass is the final output stage. Under the
+  // post-fx refactor a separate dispatchSRGBDither pass owns the final sRGB + dither
+  // (after lens effects, and correctly skipped for screenshot captures), so when
+  // performSRGBConversion is false we output linear LDR and let that pass finish.
   if (cb.performSRGBConversion > 0)
   {
     color = linearToGamma(color);
+
+    // Apply dithering to the output to break up banding artifacts. First-order
+    // only; ideally we would dither in linear space using sRGB range info, but
+    // the resulting error is small.
+    color = ditherTo8Bit(
+      color,
+      pixelPosition,
+      cb.frameIndex,
+      cb.ditherMode != ditherModeNone,
+      cb.ditherMode == ditherModeSpatialTemporal
+    );
   }
 
-  // Apply dithering to the output to break up banding artifacts. First-order
-  // only; ideally we would dither in linear space using sRGB range info, but
-  // the resulting error is small.
-  return ditherTo8Bit(
-    color,
-    pixelPosition,
-    cb.frameIndex,
-    cb.ditherMode != ditherModeNone,
-    cb.ditherMode == ditherModeSpatialTemporal
-  );
+  return color;
 }
 
 [shader("compute")]
