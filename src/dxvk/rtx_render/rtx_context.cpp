@@ -739,18 +739,18 @@ namespace dxvk {
         // Motion blur runs before tonemapping while the image is still in linear HDR space.
         dispatchPostFxMotionBlur(rtOutput);
 
-        dispatchToneMapping(rtOutput);
+        // Operator-model tonemapper (fork) owns sRGB + dither in its apply pass. The
+        // screenshot-capture sRGB WAR (TREX-553) is honored via performSRGBConversion
+        // (false when capturing => linear, no dither). Compute it here where
+        // captureScreenImage is in scope and pass it in. We deliberately do NOT run
+        // nvidia's separate dispatchSRGBDither pass: its buffer wiring doesn't match
+        // our operator tonemapper's output, and running both would double-convert.
+        const bool performSRGBConversion = !captureScreenImage && g_allowSrgbConversionForOutput;
+        dispatchToneMapping(rtOutput, performSRGBConversion);
 
         // Lens effects (chromatic aberration, vignette) run AFTER tonemapping. They are
         // display-space artifacts so they operate on post-tonemap LDR data.
         dispatchPostFxLensEffects(rtOutput);
-
-        // Final output pass converts the linear post-tonemap LDR image to sRGB and applies
-        // dithering as the very last step. SRGB conversion is suppressed for screenshot
-        // captures (WAR for TREX-553: NVTT implicitly applies sRGB during dds->png conversion
-        // for 16bit float formats).
-        const bool performSRGBConversion = !captureScreenImage && g_allowSrgbConversionForOutput;
-        dispatchSRGBDither(rtOutput, performSRGBConversion);
 
         // Composite screen overlay (from external C API) after tone mapping, before screenshot capture.
         dispatchScreenOverlay(rtOutput);
@@ -1788,7 +1788,7 @@ namespace dxvk {
       rtOutput, settings);
   }
 
-  void RtxContext::dispatchToneMapping(const Resources::RaytracingOutput& rtOutput) {
+  void RtxContext::dispatchToneMapping(const Resources::RaytracingOutput& rtOutput, bool performSRGBConversion) {
     ScopedCpuProfileZone();
 
     if (m_common->metaDebugView().debugViewIdx() == DEBUG_VIEW_PRE_TONEMAP_OUTPUT) {
@@ -1810,10 +1810,7 @@ namespace dxvk {
       DxvkToneMapping& toneMapper = m_common->metaToneMapping();
       toneMapper.dispatch(this,
         autoExposure.getExposureTexture().view,
-        // sRGB + dither are owned by the final dispatchSRGBDither pass (runs after
-        // lens effects and suppresses sRGB for screenshot captures), so this operator
-        // pass outputs linear LDR. Pass false here to avoid a double sRGB conversion.
-        rtOutput, /*performSRGBConversion=*/ false, autoExposure.enabled());
+        rtOutput, performSRGBConversion, autoExposure.enabled());
     }
   }
 
