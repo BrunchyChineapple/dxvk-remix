@@ -33,6 +33,7 @@
 namespace dxvk {
 
   class DxvkDevice;
+  class DxvkPipelineManager;
 
   // Global tonemapper. Operator-only pipeline (the dynamic tone curve and
   // histogram passes were removed in the 2026-05-13 refactor). The selected
@@ -51,6 +52,10 @@ namespace dxvk {
       bool autoExposureEnabled = true);
 
     bool isEnabled() const { return tonemappingEnabled(); }
+
+    // Register (compile-warm) the operator apply pipeline at init so the first
+    // tonemapped frame doesn't stall. Called from RtxInitializer::startShaderPrewarming.
+    void prewarmShaders(DxvkPipelineManager& pipelineManager) const;
 
     void showImguiSettings();
 

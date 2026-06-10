@@ -58,6 +58,13 @@ namespace dxvk {
 
   DxvkToneMapping::~DxvkToneMapping() { }
 
+  void DxvkToneMapping::prewarmShaders(DxvkPipelineManager& pipelineManager) const {
+    // Operator-only tonemapper: a single compute apply pass. Touch its shader so the
+    // pipeline is compiled during init prewarm (mirrors the other meta-pass prewarms
+    // in RtxInitializer). sRGB/dither now live in the separate final-output pass.
+    ApplyTonemappingShader::getShader();
+  }
+
   void DxvkToneMapping::showImguiSettings() {
     RemixGui::DragFloat("Global Exposure", &exposureBiasObject(), 0.01f, -4.f, 4.f);
 
