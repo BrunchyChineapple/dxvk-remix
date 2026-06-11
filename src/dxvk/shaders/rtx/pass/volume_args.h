@@ -102,6 +102,14 @@ struct VolumeArgs {
   // Fork: froxel radiance cache temporal antilag sensitivity (0 = disabled). See
   // volume_integrator.slangh. Repurposes the former pad1 slot so CB layout is unchanged.
   float volumetricAntilagSensitivity;
+  // Fork: artistic fog-only sun-visibility gain consumed by the rtxdi fog-render path
+  // (volume_composite_helpers.slangh, commit 1a20265). Was a hardcoded 10x boost; now a
+  // knob (rtx.volumetrics.fogSunVisibilityGain). The three pad words keep VolumeArgs 16B
+  // aligned now that two floats have been added past the original tail.
+  float fogSunVisibilityGain;
+  uint pad1;
+  uint pad2;
+  uint pad3;
 };
 
 #ifdef __cplusplus

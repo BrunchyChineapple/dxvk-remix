@@ -232,6 +232,7 @@ namespace dxvk {
         m_rebuildFroxels |= RemixGui::DragInt("Froxel Depth Slices", &froxelDepthSlicesObject(), 0.1f, 1, UINT16_MAX);
         RemixGui::DragInt("Max Accumulation Frames", &maxAccumulationFramesObject(), 0.1f, 1, UINT8_MAX);
         RemixGui::DragFloat("Volumetric Antilag Sensitivity", &volumetricAntilagSensitivityObject(), 0.05f, 0.0f, 64.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::DragFloat("Fog Sun Visibility Gain", &fogSunVisibilityGainObject(), 0.1f, 0.0f, 100.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::DragFloat("Froxel Depth Slice Distribution Exponent", &froxelDepthSliceDistributionExponentObject(), 0.01f, 0.0f, FLT_MAX, "%.3f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::DragFloat("Froxel Max Distance", &froxelMaxDistanceMetersObject(), 0.25f, 0.0f, FLT_MAX, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::DragFloat("Froxel Firefly Filtering Luminance Threshold", &froxelFireflyFilteringLuminanceThresholdObject(), 0.1f, 0.0f, FLT_MAX, "%.3f", ImGuiSliderFlags_AlwaysClamp);
@@ -578,6 +579,7 @@ namespace dxvk {
 
     volumeArgs.maxAccumulationFrames = static_cast<uint16_t>(maxAccumulationFrames());
     volumeArgs.volumetricAntilagSensitivity = volumetricAntilagSensitivity();
+    volumeArgs.fogSunVisibilityGain = fogSunVisibilityGain();
     volumeArgs.froxelDepthSliceDistributionExponent = froxelDepthSliceDistributionExponent();
     volumeArgs.froxelMaxDistance = froxelMaxDistanceMeters() * RtxOptions::getMeterToWorldUnitScale();
     volumeArgs.froxelFireflyFilteringLuminanceThreshold = froxelFireflyFilteringLuminanceThreshold();
