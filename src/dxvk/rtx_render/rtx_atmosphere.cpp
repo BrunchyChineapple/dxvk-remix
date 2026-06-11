@@ -529,7 +529,9 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   // Hex de-tiling gate (fork — 2026-06-11, stage A). Lives in the former
   // padCloudLook0 slot so the CB layout is unchanged.
   args.cloudHexTilingEnable            = RtxOptions::cloudHexTilingEnable() ? 1.0f : 0.0f;
-  args.padCloudLook1                   = 0.0f;
+  // Bake frequency scale (fork — 2026-06-11, stage B). Lives in the former
+  // padCloudLook1 slot so the CB layout is unchanged.
+  args.cloudNoiseBaseFreqScale         = RtxOptions::cloudNoiseBaseFreqScale();
   args.padCloudLook2                   = 0.0f;
 
   // ----- Meteor / shooting star system (fork, 2026-05-21) -----
@@ -776,7 +778,8 @@ bool RtxAtmosphere::needsCloudNoiseRebake() const {
   return m_cachedNoiseTileKm         != RtxOptions::cloudNoiseTileKm()
       || m_cachedWorleyFrequency     != RtxOptions::cloudWorleyFrequency()
       || m_cachedWorleyOctaves       != RtxOptions::cloudWorleyOctaves()
-      || m_cachedWorleyCarveStrength != RtxOptions::cloudWorleyCarveStrength();
+      || m_cachedWorleyCarveStrength != RtxOptions::cloudWorleyCarveStrength()
+      || m_cachedBaseFreqScale       != RtxOptions::cloudNoiseBaseFreqScale();
 }
 
 void RtxAtmosphere::cacheCloudNoiseBakeInputs() {
@@ -784,6 +787,7 @@ void RtxAtmosphere::cacheCloudNoiseBakeInputs() {
   m_cachedWorleyFrequency     = RtxOptions::cloudWorleyFrequency();
   m_cachedWorleyOctaves       = RtxOptions::cloudWorleyOctaves();
   m_cachedWorleyCarveStrength = RtxOptions::cloudWorleyCarveStrength();
+  m_cachedBaseFreqScale       = RtxOptions::cloudNoiseBaseFreqScale();
 }
 
 void RtxAtmosphere::createLutResources(Rc<DxvkContext> ctx) {
