@@ -97,6 +97,10 @@ namespace dxvk {
                "Large values result in greater image stability at the cost of potentially more temporal lag."
                "Should generally be set to as large a value as is viable as the froxel radiance cache is assumed to be fairly noise-free and stable which temporal accumulation helps with.",
                args.minValue = static_cast<uint8_t>(1), args.maxValue = std::numeric_limits<uint8_t>::max());
+    RTX_OPTION_ARGS("rtx.volumetrics", float, volumetricAntilagSensitivity, 4.0f,
+               "Temporal antilag for the froxel radiance cache. When the radiance sampled for a froxel this frame diverges strongly from its accumulated history (e.g. a fast day/night or interior/exterior transition), that froxel's effective accumulation history is shortened proportionally so it reconverges quickly instead of lingering for up to maxAccumulationFrames (which otherwise shows as a stale screen-aligned haze patch that only clears when you turn away).\n"
+               "Higher values react to smaller changes (faster clearing, but more sensitive to per-frame noise); 0 disables antilag and restores pure accumulation behavior.",
+               args.minValue = 0.0f, args.maxValue = 64.0f, args.flags = RtxOptionFlags::UserSetting);
     RTX_OPTION_ARGS("rtx.volumetrics", float, froxelDepthSliceDistributionExponent, 2.0f, "The exponent to use on depth values to nonlinearly distribute froxels away from the camera. Higher values bias more froxels closer to the camera with 1 being linear.",
                     args.minValue = 1e-4f);
     RTX_OPTION_ARGS("rtx.volumetrics", float, froxelMaxDistanceMeters, 20.0f, "The maximum distance in world units to allocate the froxel grid out to. Should be less than the distance between the camera's near and far plane, as the froxel grid will clip to the far plane otherwise.  The unit of measurement is meters.",

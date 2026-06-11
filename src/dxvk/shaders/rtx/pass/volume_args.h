@@ -99,7 +99,9 @@ struct VolumeArgs {
   uint resetHistory;
   uint16_t enableTranslucentShadows;
   uint16_t pad0;
-  uint pad1;
+  // Fork: froxel radiance cache temporal antilag sensitivity (0 = disabled). See
+  // volume_integrator.slangh. Repurposes the former pad1 slot so CB layout is unchanged.
+  float volumetricAntilagSensitivity;
 };
 
 #ifdef __cplusplus
