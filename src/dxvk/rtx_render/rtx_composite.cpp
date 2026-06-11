@@ -347,6 +347,12 @@ namespace dxvk {
     ctx->bindResourceView(COMPOSITE_SECONDARY_COMBINED_SPECULAR_RADIANCE_HIT_DISTANCE_INPUT, rtOutput.m_secondaryCombinedSpecularRadiance.view(Resources::AccessType::Read), nullptr);
 
     const DxvkReSTIRGIRayQuery& restirGI = ctx->getCommonObjects()->metaReSTIRGIRayQuery();
+    // Restore the primary (RTXDI) BSDF factor binding. The nvidia/main merge dropped this
+    // bindResourceView during conflict resolution while keeping the slot in the pipeline
+    // layout and the shader read (vec2 bsdfFactor = cb.enableRtxdi ? BSDFFactor[...] : 1).
+    // Left unbound, BSDFFactor read 0 with RTXDI on (default) -> primaryDirectRadiance *= 0,
+    // blacking out direct lighting (the default-settings darkness regression). 2026-06-11.
+    ctx->bindResourceView(COMPOSITE_BSDF_FACTOR_INPUT, rtOutput.m_bsdfFactor.view, nullptr);
     ctx->bindResourceView(COMPOSITE_BSDF_FACTOR2_INPUT, restirGI.getBsdfFactor2().view, nullptr);
     ctx->bindResourceView(COMPOSITE_PRIMARY_CLOUD_SHADOW_FACTOR_INPUT, rtOutput.m_primaryCloudShadowFactor.view, nullptr);
     ctx->bindResourceView(COMPOSITE_DIRECT_PIXEL_SAMPLING_RATE_INPUT, rtOutput.m_sparseRenderingDirectPixelSamplingRate.view, nullptr);
