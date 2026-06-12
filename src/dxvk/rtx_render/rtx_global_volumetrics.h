@@ -101,8 +101,8 @@ namespace dxvk {
                "Temporal antilag for the froxel radiance cache. When the radiance sampled for a froxel this frame diverges strongly from its accumulated history (e.g. a fast day/night or interior/exterior transition), that froxel's effective accumulation history is shortened proportionally so it reconverges quickly instead of lingering for up to maxAccumulationFrames (which otherwise shows as a stale screen-aligned haze patch that only clears when you turn away).\n"
                "Higher values react to smaller changes (faster clearing, but more sensitive to per-frame noise); 0 disables antilag and restores pure accumulation behavior.",
                args.minValue = 0.0f, args.maxValue = 64.0f, args.flags = RtxOptionFlags::UserSetting);
-    RTX_OPTION_ARGS("rtx.volumetrics", float, fogSunVisibilityGain, 10.0f,
-               "Artistic fog-only sun-visibility gain applied at the volumetric fog-render site. Volumetric fog needs more energy than the physical sun contribution gives at normal exposure to read as fog; this is an artistic dial, not a unit-conversion fix. Other consumers of the same froxel radiance cache (decals/particles/PSR/SAB) read the unscaled physical values. The previous hardcoded behavior was a fixed 10x boost, which is the default here.",
+    RTX_OPTION_ARGS("rtx.volumetrics", float, fogSunVisibilityGain, 2.0f,
+               "Artistic fog-only sun-visibility gain applied at the volumetric fog-render site. Volumetric fog needs more energy than the physical sun contribution gives at normal exposure to read as fog; this is an artistic dial, not a unit-conversion fix. Other consumers of the same froxel radiance cache (decals/particles/PSR/SAB) read the unscaled physical values. The original hardcoded behavior was a fixed 10x boost; the Morrowind fork lowers the default to 2x because the 10x gain plus a low bright sun blew the always-on terrain haze out to a bright white wall at sunrise/sunset. Raise toward 10 for denser/brighter fog weathers.",
                args.minValue = 0.0f, args.maxValue = 100.0f, args.flags = RtxOptionFlags::UserSetting);
     RTX_OPTION_ARGS("rtx.volumetrics", float, froxelDepthSliceDistributionExponent, 2.0f, "The exponent to use on depth values to nonlinearly distribute froxels away from the camera. Higher values bias more froxels closer to the camera with 1 being linear.",
                     args.minValue = 1e-4f);
@@ -177,10 +177,11 @@ namespace dxvk {
     RTX_OPTION_ARGS("rtx.volumetrics", float, noiseFieldGain, 0.5f, "Visual Parameter: A scale factor in the range (0, infinity) to apply to the noise amplitude with each noise octave. Larger values typically make the noise field more jagged whereas lower values make the noise field smoother.",
                     args.minValue = 0.0f);
     RTX_OPTION("rtx.volumetrics", float, depthOffset, 0.5f, "Depth offset to avoid volumetric light leaking.");
-    RTX_OPTION("rtx.volumetrics", bool, enableAtmosphere, false,
+    RTX_OPTION_FLAG("rtx.volumetrics", bool, enableAtmosphere, false, RtxOptionFlags::NoSave,
                "Enables a finite atmosphere in the volumetrics system.\n"
                "When false, the volumetric volume is assumed to reach to infinity in every direction, when true the volumetric volume will be limited to that a finite atmosphere controlled by parameters describing atmosphere height and its curvature via a planetary radius.\n"
-               "This option should generally be enabled if volumetrics are used in outdoor settings as without a finite atmosphere infinite light sources such as the skybox and distant lights will not function properly.");
+               "This option should generally be enabled if volumetrics are used in outdoor settings as without a finite atmosphere infinite light sources such as the skybox and distant lights will not function properly.\n"
+               "NoSave (Morrowind fork): the d3d8to9 wrapper's syncRemixSky() drives this per cell (True in exterior for a terrain-hugging sky-safe haze slab, False in true interiors), so it must route to the Derived layer and never persist to user.conf / rtx.conf.");
     RTX_OPTION("rtx.volumetrics", float, atmospherePlanetRadiusMeters, 10000.f, "Radius of the planet in meters, respects scene scale.");
     RTX_OPTION("rtx.volumetrics", float, atmosphereHeightMeters, 30.0f, "Height of the atmosphere in meters, respects scene scale.");
     RTX_OPTION("rtx.volumetrics", bool, atmosphereInverted, false,

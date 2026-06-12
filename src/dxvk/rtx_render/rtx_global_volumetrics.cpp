@@ -527,6 +527,15 @@ namespace dxvk {
             normalizedRange = (fogState.end - fogRemapMaxDistanceMin) / maxDistanceRange;
           }
 
+          // BUG B fix (white-wall blow-up): clamp the normalized position of the game's
+          // fog-end inside the [Min,Max] input window to [0,1]. Without this, a short
+          // weather fog-end (thick fog, sunrise/sunset hazes) drives normalizedRange < 0,
+          // which extrapolates transmittanceMeasurementDistance toward zero/negative and
+          // makes the Beer-Lambert extinction sigma_t = -ln(T)/d explode into a near-opaque
+          // medium a couple meters from the camera. Clamping bounds the output to the
+          // configured [...MeasurementDistanceMin, ...Max] window so it can never invert.
+          normalizedRange = normalizedRange < 0.0f ? 0.0f : (normalizedRange > 1.0f ? 1.0f : normalizedRange);
+
           transmittanceMeasurementDistance = normalizedRange * transmittanceMeasurementDistanceRange + fogRemapTransmittanceMeasurementDistanceMin;
         } else if (fogState.mode == D3DFOG_EXP || fogState.mode == D3DFOG_EXP2) {
           // Note: Derived using the following, doesn't take fog color into account but that is fine for a rough estimate:
@@ -550,6 +559,13 @@ namespace dxvk {
     }
 
     // Calculate scattering and attenuation coefficients for the volume
+
+    // BUG B backstop: never invert a zero/negative measurement distance. The saturate
+    // above bounds the LINEAR remap path, but this also covers EXP/EXP2 and any path that
+    // leaves transmittanceMeasurementDistance unset/pathological, so sigma_t below stays finite.
+    if (!(transmittanceMeasurementDistance > 1.0f)) {
+      transmittanceMeasurementDistance = 1.0f;
+    }
 
     Vector3 const volumetricAttenuationCoefficient{
       -log(transmittanceColorLinear.x) / transmittanceMeasurementDistance,
