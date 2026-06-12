@@ -131,9 +131,9 @@
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.999f, 0.999f, 0.999f))               \
-  X(float,   transmittanceMeasurementDistanceMeters,    1500.0f)                                       \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
+  X(Vector3, transmittanceColor,                        Vector3(0.83f, 0.87f, 0.93f))               \
+  X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                       \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.92f, 0.94f, 0.97f))               \
   X(float,   volumetricAnisotropy,                      0.0f)
 
 // partlyCloudy — Morrowind "Cloudy": dense coverage approaching overcast levels
@@ -161,10 +161,10 @@
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.998f, 0.998f, 0.998f))               \
-  X(float,   transmittanceMeasurementDistanceMeters,    600.0f)                                        \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
-  X(float,   volumetricAnisotropy,                      0.05f)
+  X(Vector3, transmittanceColor,                        Vector3(0.80f, 0.84f, 0.90f))               \
+  X(float,   transmittanceMeasurementDistanceMeters,    175.0f)                                        \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.92f, 0.94f, 0.97f))               \
+  X(float,   volumetricAnisotropy,                      0.0f)
 
 // overcast — solid sky cover, the canonical thick-deck reference
 #define WEATHER_PRESET_VALUES_overcast(X)                                                              \
@@ -191,9 +191,9 @@
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.995f, 0.995f, 0.995f))               \
-  X(float,   transmittanceMeasurementDistanceMeters,    500.0f)                                        \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
+  X(Vector3, transmittanceColor,                        Vector3(0.72f, 0.76f, 0.82f))               \
+  X(float,   transmittanceMeasurementDistanceMeters,    140.0f)                                        \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.90f, 0.92f, 0.95f))               \
   X(float,   volumetricAnisotropy,                      0.05f)
 
 // hazy — warm summer haze with broken cumulus
@@ -221,10 +221,10 @@
   X(float,   nightSkyBrightness,                        0.010f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.985f, 0.97f, 0.94f))                 \
-  X(float,   transmittanceMeasurementDistanceMeters,    250.0f)                                        \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.98f, 0.96f))                  \
-  X(float,   volumetricAnisotropy,                      0.30f)
+  X(Vector3, transmittanceColor,                        Vector3(0.82f, 0.78f, 0.72f))                 \
+  X(float,   transmittanceMeasurementDistanceMeters,    120.0f)                                        \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.93f, 0.90f, 0.85f))                  \
+  X(float,   volumetricAnisotropy,                      0.35f)
 
 // foggy — Morrowind: thick ground fog + overcast cloud layer above
 #define WEATHER_PRESET_VALUES_foggy(X)                                                                 \
@@ -251,9 +251,9 @@
   X(float,   nightSkyBrightness,                        0.012f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.90f, 0.92f, 0.95f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    40.0f)                                         \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 0.99f))                  \
+  X(Vector3, transmittanceColor,                        Vector3(0.62f, 0.66f, 0.72f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    50.0f)                                         \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.95f, 0.96f, 0.97f))                  \
   X(float,   volumetricAnisotropy,                      0.15f)
 
 // drizzle — light rain, medium fog
@@ -281,9 +281,9 @@
   X(float,   nightSkyBrightness,                        0.010f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.95f, 0.96f, 0.97f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                        \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.98f, 0.98f, 0.99f))                  \
+  X(Vector3, transmittanceColor,                        Vector3(0.74f, 0.78f, 0.84f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    100.0f)                                        \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.93f, 0.94f, 0.96f))                  \
   X(float,   volumetricAnisotropy,                      0.10f)
 
 // rainstorm — heavy clouds, dim sun, dense fog
@@ -311,9 +311,9 @@
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.85f, 0.88f, 0.92f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    100.0f)                                        \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.97f, 0.97f, 0.98f))                  \
+  X(Vector3, transmittanceColor,                        Vector3(0.58f, 0.63f, 0.70f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    65.0f)                                        \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.93f, 0.94f, 0.96f))                  \
   X(float,   volumetricAnisotropy,                      0.10f)
 
 // thunderstorm — heaviest, bruised tone (retuned 2026-05-09 by in-game
@@ -343,10 +343,10 @@
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.75f, 0.78f, 0.82f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    60.0f)                                         \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.95f, 0.95f, 0.97f))                  \
-  X(float,   volumetricAnisotropy,                      0.0f)
+  X(Vector3, transmittanceColor,                        Vector3(0.50f, 0.55f, 0.62f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    50.0f)                                         \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.92f, 0.93f, 0.95f))                  \
+  X(float,   volumetricAnisotropy,                      0.10f)
 
 // snow — medium clouds, cool fog, snow particles
 #define WEATHER_PRESET_VALUES_snow(X)                                                                  \
@@ -373,9 +373,9 @@
   X(float,   nightSkyBrightness,                        0.012f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.97f, 0.98f, 0.99f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    250.0f)                                        \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 0.99f))                  \
+  X(Vector3, transmittanceColor,                        Vector3(0.78f, 0.82f, 0.88f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    110.0f)                                        \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.96f, 0.97f, 0.98f))                  \
   X(float,   volumetricAnisotropy,                      0.0f)
 
 // blizzard — whiteout, severe visibility loss
@@ -403,8 +403,8 @@
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.92f, 0.95f, 0.98f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    50.0f)                                         \
+  X(Vector3, transmittanceColor,                        Vector3(0.80f, 0.84f, 0.90f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    40.0f)                                         \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 1.00f))                  \
   X(float,   volumetricAnisotropy,                      0.0f)
 
@@ -433,10 +433,10 @@
   X(float,   nightSkyBrightness,                        0.010f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.95f, 0.55f, 0.28f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    35.0f)                                         \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.90f, 0.70f, 0.45f))                  \
-  X(float,   volumetricAnisotropy,                      0.60f)
+  X(Vector3, transmittanceColor,                        Vector3(0.78f, 0.45f, 0.22f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    38.0f)                                         \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.88f, 0.66f, 0.42f))                  \
+  X(float,   volumetricAnisotropy,                      0.55f)
 
 // smoggy — industrial dark grey-brown haze
 #define WEATHER_PRESET_VALUES_smoggy(X)                                                                \
@@ -463,9 +463,9 @@
   X(float,   nightSkyBrightness,                        0.010f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.70f, 0.65f, 0.55f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                        \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.85f, 0.80f, 0.70f))                  \
+  X(Vector3, transmittanceColor,                        Vector3(0.62f, 0.58f, 0.50f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    120.0f)                                        \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.84f, 0.80f, 0.70f))                  \
   X(float,   volumetricAnisotropy,                      0.20f)
 
 // ---------------------------------------------------------------------------
