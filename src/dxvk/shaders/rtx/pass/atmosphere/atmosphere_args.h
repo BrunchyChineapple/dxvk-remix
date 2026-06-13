@@ -547,4 +547,15 @@ struct AtmosphereArgs {
   float padBloodmoon0;
   vec3  bloodmoonTint;       // Surface tint color participating moons blend toward. Default deep crimson.
   float padBloodmoon1;
+  // ----- Cloud-edge / halo tuning (fork — 2026-06-13). Exposed live in ImGui. -----
+  float cloudEdgeSoftness;            // VIEW coverage-gate smoothstep band width [~0.02..0.4].
+                                      // Sets silhouette softness: wider => broader faint
+                                      // sub-threshold skirt around each cloud (the soft halo).
+                                      // VIEW path only; the shadow/optical-depth gate stays 0.25.
+  float cloudEdgeAmbientFade;         // Density at which a thin sample's (horizon-tinted) ambient
+                                      // reaches full strength [0..~0.5]. Below it the ambient fades
+                                      // toward 0 so the soft skirt doesn't read as grey-brown haze.
+                                      // 0 = off (ambient at full strength on all samples).
+  float pad_cloudEdge0;               // 16-byte alignment
+  float pad_cloudEdge1;
 };
