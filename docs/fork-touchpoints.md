@@ -572,6 +572,28 @@ initializer list and can't be lifted into a separate TU.
 - **Inline tweak** — remove `TonemappingMode` enum (Global / Local / Direct) and `tonemappingMode` RTX_OPTION. The dynamic tone curve (histogram + curve passes) is removed; the apply pass dispatches the operator directly. Local tonemapping (`DxvkLocalToneMapping`, `useLocalToneMapping` RTX_OPTION, `rtx.localtonemap.*`) removed entirely on 2026-05-15. The vestigial `directOperatorMode` CB field was removed in the 2026-05-XX cleanup along with the dead histogram / tone-curve dispatch passes and the ACES enum rename (`ACES`/`ACESLegacy` → `ACESHill`/`ACESNarkowicz`).
   *2026-05-13 tonemap refactor: simplified from three-mode selector to global operator dropdown. 2026-05-15: local tonemap path removed entirely. 2026-05-XX: dead-code cleanup + snake_case shader rename.*
 
+- **Inline tweak** — weather-preset cold-default alignment (2026-05-26). Ten cold defaults aligned to `WEATHER_PRESET_VALUES_overcast` in `rtx_fork_weather.h` (the macro the codebase comments call "current default look"): `cloudShadowStrength` 1.0 → 0.10, `cloudCoverageMean` 0.85 → 0.64, `cloudCoverageSpread` 1.0 → 0.16, `cloudTypeMean` 0.75 → 0.5, `cloudTypeSpread` 0.5 → 0.2, `cloudTypeNoiseScale` 0.001 → 0.0034, `cloudDensity` 1.65 → 1.8, `cloudThickness` 2.75 → 3.05, `aerosolDensity` 1.0 → 1.1, `sunIlluminance` (20,20,20) → (15,15,15). Fixes the regression introduced by the 2026-05-19 `cloudShadowStrength` 0→1 flip: users sitting on the dormant "(none / dormant)" weather preset saw ground geometry crushed dark by full-strength cloud-voxel shadows over 85% default coverage. The dormant blender path leaves cold RTX_OPTIONs untouched, so the cold values themselves had to move.
+
+---
+
+## src/dxvk/rtx_render/rtx_global_volumetrics.cpp
+
+**Category:** index-only
+
+- **Inline tweak** at `RtxGlobalVolumetrics::dispatch` (volumeArgs population block) — 1 LOC (2026-05-26). Populates `volumeArgs.fogSunVisibilityGain` from the matching RTX_OPTION. Adjacent to the existing `volumetricFogAnisotropy` populate; same trivial pattern. Companion to the new field in `volume_args.h` and the new option in `rtx_global_volumetrics.h`.
+
+---
+
+## src/dxvk/rtx_render/rtx_global_volumetrics.h
+
+**Pre-refactor fork footprint:** N/A — value-only cold-default tweaks
+
+**Category:** index-only
+
+- **Inline tweak** — weather-preset cold-default alignment (2026-05-26). Three RTX_OPTION cold defaults aligned to the `WEATHER_PRESET_VALUES_overcast` block in `rtx_fork_weather.h`: `transmittanceColor` (0.999, 0.999, 0.999) → (0.995, 0.995, 0.995), `transmittanceMeasurementDistanceMeters` 200.0 → 500.0, `anisotropy` 0.0 → 0.05 (mapped from `volumetricAnisotropy` in the preset). Companion to the matching `rtx_options.h` block — same rationale: the dormant "(none / dormant)" weather preset path leaves cold RTX_OPTIONs untouched, so the cold defaults themselves had to move to match overcast.
+
+- **Inline tweak** — new `fogSunVisibilityGain` RTX_OPTION (2026-05-26). `rtx.volumetrics.fogSunVisibilityGain` (default 5.0, range 0.0–50.0) replaces the historical hardcoded artistic gain (x5 with a misleading "10x" comment in the gmod-rtx port) that was previously baked into the per-cache-write expression in fork-owned `atmosphere_common.slangh`. Read by `volume_composite_helpers.slangh::integrateVolumetricNEE` (consumer-side fog application only — surface consumers still read the cache straight). Companions: `rtx_global_volumetrics.cpp` (CB populate), `volume_args.h` (CB field), submodule fork edit at `rtxdi-sdk/include/volumetrics/rtx/algorithm/volume_composite_helpers.slangh`.
+
 ---
 
 ## src/dxvk/rtx_render/rtx_overlay_window.cpp
@@ -1199,6 +1221,14 @@ initializer list and can't be lifted into a separate TU.
 
 ---
 
+## src/dxvk/shaders/rtx/pass/volume_args.h
+
+**Category:** index-only
+
+- **Inline tweak** at the `VolumeArgs` struct tail (replaces the `vec2 pad0` slot) — 1 LOC delta (2026-05-26). Adds `float fogSunVisibilityGain;` consuming 4 bytes of the existing 8-byte `pad0` slot; `pad0` shrinks to `float pad0;` to preserve 16-byte struct alignment. Consumed by the submodule fork edit at `rtxdi-sdk/include/volumetrics/rtx/algorithm/volume_composite_helpers.slangh` (named knob replaces the previous hardcoded `* 10.0f` artistic gain at the fog-render consumer site). Companions: `rtx_global_volumetrics.{h,cpp}`.
+
+---
+
 ## src/dxvk/rtx_render/rtx_fork_atmosphere.cpp
 
 **Category:** fork-owned (modifications by weather preset workstream)
@@ -1442,5 +1472,34 @@ all three visually:
 
 - **`src/dxvk/rtx_render/rtx_fork_atmosphere.cpp`** — fork-owned additions.
   *Adds Height LUT (1 checkbox), Layer 2 (1 checkbox + 5 sliders), and Worley carve (2 `DragFloat` + 1 `DragInt`) ImGui subsections inside the existing Clouds tree, each with tooltips describing the slide source and the relaunch requirement where applicable.*
+
+---
+
+## Workstream — Multiscattering: preset-faithful default + physical-blend knob (fork — 2026-05-26)
+
+Owen's `3e37062b` (`fix(atmosphere): fix multiscattering to match reference two-term model`) on canonical replaced the numerical hemisphere integration in `computeMultiscattering` with an analytical-only fit using heavily blue-biased coefficients (`vec3(0.217, 0.347, 0.594) * 0.02`), and switched `evalAtmosphereRadiance` to sample the multiscattering LUT instead of calling the inline analytical helpers. Two consequences:
+
+1. **Cloud-vs-sky color mismatch at sunset.** `cloud_render.comp.slang` reads the sky-view LUT at the sun direction as the warm ambient source for cumulus. The new bake pumped extra blue energy into the LUT at every elevation, so the cumulus ambient term lost its warm tint and read white against an orange sky.
+2. **Preset color washed across all defaults.** With the LUT consumed by `evalAtmosphereRadiance`, the hemisphere integration's wavelength bias amplified each preset's Rayleigh into the sky (Earth too blue, Desert blue-ish, Mars desaturated). The previously-inline `getAnalyticalMultiscattering` was a tame curve fit that the presets were calibrated against.
+
+Fork resolution: restore the numerical hemisphere integration in the LUT bake AND keep the inline analytical multiscattering as the default in `evalAtmosphereRadiance`, with a per-preset knob to blend in the LUT-based physical version when realism is wanted.
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/multiscattering_lut.comp.slang`** — restoration to pre-`3e37062b` state.
+  *Restores `computeMultiscattering` to the 64-direction × 20-march-sample hemisphere integration (Hillaire 2nd-order scattering primary term) plus ground reflection plus analytical fit. Restores `computeAnalyticalMultiscattering` coefficients to the toned-down `vec3(0.35, 0.38, 0.45) × 0.01` ("more neutral, less blue-heavy") tuning that prevents purple cast when combined with sunset orange.*
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_common.slangh`** — fork-owned inline tweak.
+  *Inside `evalAtmosphereRadiance`'s per-sample loop: replaces the post-`3e37062b` LUT-only multiscattering with a `lerp(contribAnalytical, contribLut, args.multiScatterPhysicalStrength)` blend. `contribAnalytical` calls the existing inline `getAnalyticalMultiscattering` (preset-faithful, the pre-`3e37062b` shape); `contribLut` samples the multiscattering LUT (the now-restored hemisphere integration). Default 0.0 = byte-identical to pre-`3e37062b`; 1.0 = full physical.*
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_args.h`** — fork-owned addition.
+  *Replaces the existing `uint pad2` slot at the end of the LUT-dims 16-byte row with `float multiScatterPhysicalStrength`. No struct layout change; existing field offsets unchanged.*
+
+- **`src/dxvk/rtx_render/rtx_options.h`** — fork-owned addition.
+  *Adds `RTX_OPTION("rtx.atmosphere", float, multiScatterPhysicalStrength, 0.0f, …)` immediately after `sunIlluminance` in the `rtx.atmosphere` cluster.*
+
+- **`src/dxvk/rtx_render/rtx_atmosphere.cpp`** — fork-owned addition.
+  *Inside `getAtmosphereArgs()`: sets `args.multiScatterPhysicalStrength = RtxOptions::multiScatterPhysicalStrength()`. Removes the now-stale `args.pad2 = 0` write (slot is the new typed field). ~2 LOC net.*
+
+- **`src/dxvk/rtx_render/rtx_fork_atmosphere.cpp`** — fork-owned addition.
+  *Adds a `RemixGui::DragFloat("Multiscatter Physical Strength", …, 0.0f, 1.0f, "%.2f", sliderFlags)` widget at the end of the Atmosphere → Advanced ImGui tree (right after Ozone Layer Width), with a tooltip explaining the artistic-vs-physical tradeoff. ~6 LOC.*
 
 ---
