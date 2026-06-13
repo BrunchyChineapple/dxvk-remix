@@ -152,18 +152,24 @@ namespace fork_hooks {
           ctx.m_atmosphere->setCloudShadowCameraPosition(cameraPosYUpKm);
         }
 
-        // Allocate the cloud render RT at the FULL TARGET extent (post-DLSS
-        // output resolution) instead of the downscale extent. DLSS Quality
-        // input is ~67% scale per axis, which means a 1-pixel-wide cloud
-        // alpha edge in downscaled space landed mid-pixel in target space
-        // and DLSS reconstruction couldn't recover a clean edge transition.
-        // Rendering the cloud RT at target extent gives the consumer
-        // (atmosphere_sky.slangh sky-miss branch) a bilinear-filtered tap
-        // that resolves to a smooth edge before DLSS sees it. Cost: cloud
-        // march does (1 / scale)^2 more pixel work (~2.25x at Quality);
-        // cloud march is a small fraction of total RT cost so this is fine.
-        const VkExtent3D targetExtent3D = ctx.getResourceManager().getTargetDimensions();
-        const VkExtent2D cloudRenderExtent = { targetExtent3D.width, targetExtent3D.height };
+        // Cloud render RT extent (fork). The sky-miss composite in
+        // atmosphere_sky.slangh derives the sample UV by dividing the
+        // DOWNSCALE-space pixelCoord by args.cloudRenderFullDimX/Y, so the
+        // extent published here MUST be the downscale (DLSS-input) extent —
+        // the coordinate space pixelCoord actually lives in. Passing the
+        // full target extent here (the old override #14 supersample) made
+        // cloudRenderFullDimX/Y larger than pixelCoord's range, so the UV
+        // only spanned ~0.67 of the RT and the clouds read as mis-registered
+        // / lagging the camera. ensureCloudRenderRT records this as
+        // m_cloudRenderFullExtent and allocates the RT at
+        // cloudRenderResolutionScale of it (default 1.0 = full downscale res
+        // for Morrowind; the slider trades quality for perf down to 0.25).
+        // Kim's half-res model supersedes override #14's target-extent
+        // supersample: the bilinear upsample at the sky-miss composite already
+        // resolves cloud edges to soft transitions before DLSS sees them,
+        // which was override #14's actual purpose.
+        const VkExtent3D downscaleExtent3D = ctx.getResourceManager().getDownscaleDimensions();
+        const VkExtent2D cloudRenderExtent = { downscaleExtent3D.width, downscaleExtent3D.height };
         ctx.m_atmosphere->ensureCloudRenderRT(&ctx, cloudRenderExtent);
       }
 
