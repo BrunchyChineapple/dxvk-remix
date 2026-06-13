@@ -106,9 +106,8 @@ namespace dxvk {
                args.minValue = 0.0f, args.maxValue = 100.0f, args.flags = RtxOptionFlags::UserSetting);
     RTX_OPTION_ARGS("rtx.volumetrics", float, froxelDepthSliceDistributionExponent, 2.0f, "The exponent to use on depth values to nonlinearly distribute froxels away from the camera. Higher values bias more froxels closer to the camera with 1 being linear.",
                     args.minValue = 1e-4f);
-    RTX_OPTION_ARGS("rtx.volumetrics", float, froxelMaxDistanceMeters, 20.0f, "The maximum distance in world units to allocate the froxel grid out to. Should be less than the distance between the camera's near and far plane, as the froxel grid will clip to the far plane otherwise.  The unit of measurement is meters.\n"
-                    "NoSave (Morrowind fork): the d3d8to9 wrapper drives this per cell via syncRemixSky() (~600m in exterior so in-scattered aerial haze reaches Morrowind's view distance, 20m default in true interiors so the fixed 48 froxel depth-slices keep near-field resolution for indoor light shafts). The grid resolution is fixed, so a larger distance just stretches the same slices over a longer range (coarser far froxels) rather than costing more.",
-                    args.minValue = 0.0f, args.flags = RtxOptionFlags::NoSave);
+    RTX_OPTION_ARGS("rtx.volumetrics", float, froxelMaxDistanceMeters, 20.0f, "The maximum distance in world units to allocate the froxel grid out to. Should be less than the distance between the camera's near and far plane, as the froxel grid will clip to the far plane otherwise.  The unit of measurement is meters.",
+                    args.minValue = 0.0f);
     RTX_OPTION_ARGS("rtx.volumetrics", float, froxelFireflyFilteringLuminanceThreshold, 1000.0f, "Sets the maximum luminance threshold for the volumetric firefly filtering to clamp to.",
                     args.minValue = 0.0f);
     RTX_OPTION_ARGS("rtx.volumetrics", uint32_t, initialRISSampleCount, 32,
@@ -178,14 +177,12 @@ namespace dxvk {
     RTX_OPTION_ARGS("rtx.volumetrics", float, noiseFieldGain, 0.5f, "Visual Parameter: A scale factor in the range (0, infinity) to apply to the noise amplitude with each noise octave. Larger values typically make the noise field more jagged whereas lower values make the noise field smoother.",
                     args.minValue = 0.0f);
     RTX_OPTION("rtx.volumetrics", float, depthOffset, 0.5f, "Depth offset to avoid volumetric light leaking.");
-    RTX_OPTION_FLAG("rtx.volumetrics", bool, enableAtmosphere, false, RtxOptionFlags::NoSave,
+    RTX_OPTION("rtx.volumetrics", bool, enableAtmosphere, false,
                "Enables a finite atmosphere in the volumetrics system.\n"
                "When false, the volumetric volume is assumed to reach to infinity in every direction, when true the volumetric volume will be limited to that a finite atmosphere controlled by parameters describing atmosphere height and its curvature via a planetary radius.\n"
-               "This option should generally be enabled if volumetrics are used in outdoor settings as without a finite atmosphere infinite light sources such as the skybox and distant lights will not function properly.\n"
-               "NoSave (Morrowind fork): the d3d8to9 wrapper's syncRemixSky() drives this per cell (True in exterior for a terrain-hugging sky-safe haze slab, False in true interiors), so it must route to the Derived layer and never persist to user.conf / rtx.conf.");
+               "This option should generally be enabled if volumetrics are used in outdoor settings as without a finite atmosphere infinite light sources such as the skybox and distant lights will not function properly.");
     RTX_OPTION("rtx.volumetrics", float, atmospherePlanetRadiusMeters, 10000.f, "Radius of the planet in meters, respects scene scale.");
-    RTX_OPTION("rtx.volumetrics", float, atmosphereHeightMeters, 80.0f, "Height of the atmosphere in meters, respects scene scale.\n"
-               "Morrowind fork: the shell top sits at this altitude above the world ground plane (sea level), tracking the camera horizontally only, so it acts as a fixed-altitude haze ceiling. Lower keeps the zenith sky clearer; higher covers taller distant terrain at the cost of more low-sky/horizon haze. 80m (=8000 world units at 100 units/m) is a sky-safe start for aerial perspective; tune live.");
+    RTX_OPTION("rtx.volumetrics", float, atmosphereHeightMeters, 30.0f, "Height of the atmosphere in meters, respects scene scale.");
     RTX_OPTION("rtx.volumetrics", bool, atmosphereInverted, false,
                "A flag to invert the rendering of the volumetric atmosphere if rtx.volumetrics.enableAtmosphere is enabled.\n"
                "Some games render the world upside down and that cannot be detected automatically, this setting can be used to correct that inversion for the volumetric atmosphere.");
