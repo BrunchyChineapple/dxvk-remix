@@ -107,9 +107,14 @@ struct VolumeArgs {
   // knob (rtx.volumetrics.fogSunVisibilityGain). The three pad words keep VolumeArgs 16B
   // aligned now that two floats have been added past the original tail.
   float fogSunVisibilityGain;
-  uint pad1;
-  uint pad2;
-  uint pad3;
+  // Fork: exponential height falloff for the global volumetric. When enabled, density (and the
+  // beyond-grid surface extinction) is scaled by exp(-max(0, altitude - seaLevel)/scaleHeight),
+  // where altitude = dot(worldPos, sceneUpDirection). Gives a ground-hugging fog layer that clears
+  // the air/zenith and tames the uniform-medium horizon wall, independent of enableAtmosphere.
+  // Altitudes/heights are in WORLD UNITS (meters * getMeterToWorldUnitScale()). Repurposes pad1..3.
+  uint  enableHeightFalloff;
+  float heightFalloffSeaLevel;     // world-unit altitude where density is full (and below)
+  float heightFalloffScaleHeight;  // world-unit e-folding height of the falloff
 };
 
 #ifdef __cplusplus

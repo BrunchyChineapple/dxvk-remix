@@ -652,6 +652,12 @@ namespace dxvk {
     volumeArgs.atmosphereRadiusSquared = atmosphereRadius * atmosphereRadius;
     volumeArgs.maxAttenuationDistanceForNoAtmosphere = transmittanceMeasurementDistance * 5;
 
+    // Fork: exponential height falloff (ground-hugging fog; clears air/zenith; tames the horizon wall).
+    // Altitude reference + scale height converted from meters to world units (respects scene scale).
+    volumeArgs.enableHeightFalloff = enableHeightFalloff() ? 1u : 0u;
+    volumeArgs.heightFalloffSeaLevel = heightFalloffSeaLevelMeters() * RtxOptions::getMeterToWorldUnitScale();
+    volumeArgs.heightFalloffScaleHeight = std::max(0.1f, heightFalloffScaleHeightMeters() * RtxOptions::getMeterToWorldUnitScale());
+
     volumeArgs.cameras[froxelVolumeMain] = mainCamera.getVolumeShaderConstants(volumeArgs.froxelMaxDistance);
     if (enablePortalVolumes) {
       volumeArgs.cameras[froxelVolumePortal0] = cameraManager.getCamera(CameraType::Portal0).getVolumeShaderConstants(volumeArgs.froxelMaxDistance);

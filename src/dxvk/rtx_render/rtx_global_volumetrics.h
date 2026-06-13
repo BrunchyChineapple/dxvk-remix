@@ -186,6 +186,16 @@ namespace dxvk {
     RTX_OPTION("rtx.volumetrics", bool, atmosphereInverted, false,
                "A flag to invert the rendering of the volumetric atmosphere if rtx.volumetrics.enableAtmosphere is enabled.\n"
                "Some games render the world upside down and that cannot be detected automatically, this setting can be used to correct that inversion for the volumetric atmosphere.");
+    RTX_OPTION_ARGS("rtx.volumetrics", bool, enableHeightFalloff, true,
+               "Fork: exponential vertical density falloff for the global volumetric medium.\n"
+               "When true the fog is dense near 'sea level' and thins with altitude (density *= exp(-max(0, altitude - heightFalloffSeaLevelMeters)/heightFalloffScaleHeightMeters)), giving a ground-hugging fog layer that keeps the air/zenith clear and tames the uniform-medium horizon 'wall'. Independent of enableAtmosphere (no hard spherical shell). Applies to both the in-froxel inscatter density and the beyond-grid surface extinction.",
+               args.flags = RtxOptionFlags::UserSetting);
+    RTX_OPTION_ARGS("rtx.volumetrics", float, heightFalloffSeaLevelMeters, 0.0f,
+               "Fork: world altitude (in meters, respects scene scale) at and below which the height-falloff fog is at full density. Tune so the dense fog sits at the ground/water level of the scene. Only used when enableHeightFalloff is true.",
+               args.flags = RtxOptionFlags::UserSetting);
+    RTX_OPTION_ARGS("rtx.volumetrics", float, heightFalloffScaleHeightMeters, 30.0f,
+               "Fork: e-folding height (in meters, respects scene scale) of the vertical density falloff. Larger = a thicker/taller fog layer (approaches uniform); smaller = a tighter ground-hugging layer. Only used when enableHeightFalloff is true.",
+               args.minValue = 0.1f, args.flags = RtxOptionFlags::UserSetting);
     RTX_OPTION_FLAG("rtx.volumetrics", bool, debugDisableRadianceScaling, false, RtxOptionFlags::NoSave,
                "Disables the volumetric radiance scaling feature, this effectively sets the per light radiance scaling to 1.f.  Useful when debugging issues when this feature is suspected.\n"
                "Do not ship your mod with this in the rtx.conf.");
