@@ -242,6 +242,16 @@ namespace dxvk {
                "This scaling factor is applied to the fixed function fog's color and becomes a multiscattering approximation in the volumetrics system.\n"
                "Sometimes useful but this multiscattering approximation is very basic (just a simple ambient term for now essentially) and may not look very good depending on various conditions.",
                args.minValue = 0.0f);
+    RTX_OPTION_ARGS("rtx.volumetrics", float, fogAmbientBrightness, 0.3f,
+               "Fork (Morrowind): decouples the volumetric fog's flat ambient in-scatter brightness "
+               "from the weather fog COLOR. The legacy ambient floor (fogColor * fogRemapColorMultiscatteringScale) "
+               "goes black in dense overcast / rain / foggy weather -- the weather fog color is near-black there "
+               "AND the sun cannot reach the dense medium to in-scatter, so the fog reads as a midday black-out. "
+               "This instead drives the ambient floor to the weather color's HUE at this luminance, so dense fog "
+               "reads as lit haze. It does NOT change fog density (extinction still comes from transmittanceColor / "
+               "transmittanceMeasurementDistance) and does NOT touch fogSunVisibilityGain (which blows white over "
+               "water). Tune to taste; 0 restores the legacy weather-color floor.",
+               args.minValue = 0.0f, args.maxValue = 50.0f);
 
     enum class RaytraceMode {
       RayQuery = 0,

@@ -554,8 +554,25 @@ namespace dxvk {
         }
       }
 
-      // Add some "ambient" from the original fog as a constant term applied to fog during preintegration
-      multiScatteringEstimate = fogState.color * fogRemapColorMultiscatteringScale();
+      // Fog ambient in-scatter floor. The legacy floor (fogState.color *
+      // fogRemapColorMultiscatteringScale) collapses to black in dense overcast
+      // weather (rain/foggy): the weather fog color is near-black there AND the
+      // sun can't reach the dense medium to in-scatter, so the fog's only light
+      // IS this floor -> a midday black-out. fogAmbientBrightness decouples the
+      // floor BRIGHTNESS from the weather color's darkness: keep the weather
+      // color's hue, but drive its luminance to fogAmbientBrightness, so dense
+      // fog reads as lit haze. Density is untouched (extinction below derives
+      // from transmittanceColor / measurementDistance) and fogSunVisibilityGain
+      // is not involved (no over-water blow-out). <= 0 keeps the legacy floor.
+      if (fogAmbientBrightness() > 0.0f) {
+        const float weatherFogLuminance = sRGBLuminance(fogState.color);
+        const Vector3 weatherFogHue = weatherFogLuminance > 1.0e-3f
+          ? fogState.color * (1.0f / weatherFogLuminance)
+          : Vector3(1.0f, 1.0f, 1.0f);
+        multiScatteringEstimate = weatherFogHue * fogAmbientBrightness();
+      } else {
+        multiScatteringEstimate = fogState.color * fogRemapColorMultiscatteringScale();
+      }
     }
 
     // Calculate scattering and attenuation coefficients for the volume
