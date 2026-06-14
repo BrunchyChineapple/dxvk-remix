@@ -1274,27 +1274,24 @@ AtmosphereVolumeSunSample sampleAtmosphereSunLightVolume(vec3 volumePos, vec3 vi
   const float kVolumetricAnisotropy = 0.3f;  // Moderate forward scattering
   float phase = hgPhase(cosTheta, kVolumetricAnisotropy);
   
-  // For volumetrics, we include the phase function in the radiance
+  // For volumetrics, we include the phase function in the radiance.
   // The phase function replaces the BRDF for volume scattering.
   //
-  // Cache stores the honest sun contribution to in-scattering -- no artistic
-  // gain factor is baked in here. The historical fog-visibility gain (a hardcoded
-  // x5 with a misleading "10x" comment in the gmod-rtx port) has moved to a
-  // user-tunable knob (rtx.volumetrics.fogSunVisibilityGain) read at the
-  // fog-render consumer site in volume_composite_helpers.slangh. Surface
-  // consumers (decals/particles/PSR/SAB Path B via evalVolumetricNEE) read this
-  // cache straight, which is correct for their lighting math when un-muted.
+  // Morrowind fog calibration: KEEP the historical x5 sun gain baked into the
+  // froxel radiance cache. The whole volumetric-fog look (rtxdi height-falloff
+  // fog, fogSunVisibilityGain=2 at the consumer, per-weather presets) was tuned
+  // with this x5 present. remixplus's "honest cache" rework (ae3f7686) removed
+  // it, which dimmed the day ~uniformly (fog + cache-fed surface NEE both fell
+  // 5x). We restore it here rather than compensating via fogSunVisibilityGain —
+  // raising that knob walls the over-water in-scatter bright white (documented
+  // landmine; see fog-weather-volumetrics-handoff.md).
   //
-  // Fork: sun-elevation gate. Volumetric NEE fires for any sun above the -15deg
-  // twilight cutoff, but the cache is filled by per-froxel visibility rays from
-  // positions in the air -- froxels see the sun over local terrain even when
-  // ground surfaces are in shadow. sunAboveHorizonGate (Y-up, smoothstep
-  // 0..sin(5deg)) fades the contribution as the sun crosses the geodetic horizon,
-  // killing bright fog/decals when the sun is visually below terrain. This is a
-  // per-froxel visibility approximation, not an artistic gain.
+  // Fork: sun-elevation gate. sunAboveHorizonGate (Y-up, smoothstep 0..sin(5deg))
+  // fades the contribution as the sun crosses the geodetic horizon, killing
+  // bright fog/decals when the sun is visually below terrain.
   float sunElevationGate = sunAboveHorizonGate(args);
-  result.radiance = args.sunIlluminance * transmittance * phase * mieModulation * sunVisibility * args.sunRayBrightness * sunElevationGate;
-  result.valid = any(transmittance > vec3(0.0f));
+  result.radiance = args.sunIlluminance * transmittance * phase * mieModulation * sunVisibility * args.sunRayBrightness * 5.0f * sunElevationGate;
+  result.valid = any(result.radiance > vec3(0.0f));
 
 #ifdef ATMOSPHERE_AVAILABLE
   // Voxel-grid cloud-on-terrain shadow wire-in for volumetric NEE
