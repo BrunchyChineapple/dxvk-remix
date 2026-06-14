@@ -1449,6 +1449,22 @@ namespace fork_hooks {
             "How strongly clouds cast shadows on terrain. 0 = no cloud "
             "shadows, 1 = full voxel-grid cumulus-shaped shadow patches.");
 
+        RemixGui::DragFloat("Sky Ambient (Fog)", &RtxOptions::cloudSkyAmbientStrengthObject(),
+                            0.01f, 0.0f, 3.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Lights the volumetric fog with the actual sky-dome radiance (sky-view "
+            "LUT), cloud-occluded. This is the physical fix for fog going black in "
+            "dense overcast: the lit sky illuminates the medium even when the sun is "
+            "occluded. 0 = feature off (baseline), 1 = physical baseline, higher = "
+            "brighter sky-lit fog. Requires rtx.skyMode = 1.");
+        RemixGui::DragFloat("Sky Ambient Cloud Occlusion", &RtxOptions::cloudSkyAmbientCloudOcclusionStrengthObject(),
+                            0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "How much clouds darken the Sky Ambient (Fog) term. 1 = full physical "
+            "occlusion (overcast fog is much darker than clear). Lower it toward ~0.4 "
+            "to keep dense overcast lit-grey, since the LUT models clouds as occluders "
+            "rather than as the bright re-emitting deck a real overcast sky is.");
+
         ImGui::Separator();
         ImGui::TextDisabled("Layer 2 (Cirrus)");
         RemixGui::Checkbox("Enable Layer 2",

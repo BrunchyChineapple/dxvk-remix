@@ -374,6 +374,16 @@ namespace dxvk {
 
           RemixGui::DragFloat("Color Multiscattering Scale", &fogRemapColorMultiscatteringScaleObject(), 0.01f, 0.0f, FLT_MAX, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 
+          RemixGui::DragFloat("Fog Ambient Brightness", &fogAmbientBrightnessObject(), 0.01f, 0.0f, 50.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+          RemixGui::SetTooltipToLastWidgetOnHover(
+              "Ambient in-scatter floor for volumetric fog. Decouples the floor "
+              "BRIGHTNESS from the weather fog color's darkness: keeps the weather "
+              "color's hue but drives its luminance to this value, so dense overcast "
+              "fog reads as lit haze instead of a midday black-out. Density and "
+              "fogSunVisibilityGain are untouched. 0 = legacy floor (weather color x "
+              "Color Multiscattering Scale). This is a synthetic backstop; the physical "
+              "fix is the cloud Sky Ambient sliders (requires rtx.skyMode = 1).");
+
           ImGui::Unindent();
         }
         ImGui::EndDisabled();
