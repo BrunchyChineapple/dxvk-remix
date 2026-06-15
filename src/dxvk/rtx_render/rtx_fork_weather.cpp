@@ -108,7 +108,8 @@ namespace dxvk { namespace fork_weather { namespace {
     // Volumetric (4)
     out.transmittanceColor                    = lerpV3(a.transmittanceColor, b.transmittanceColor, t);
     out.transmittanceMeasurementDistanceMeters = lerp(a.transmittanceMeasurementDistanceMeters, b.transmittanceMeasurementDistanceMeters, t);
-    out.fogDensityReferenceTransmittance = lerp(a.fogDensityReferenceTransmittance, b.fogDensityReferenceTransmittance, t);
+    out.fogDensityReferenceTransmittanceDay   = lerp(a.fogDensityReferenceTransmittanceDay,   b.fogDensityReferenceTransmittanceDay,   t);
+    out.fogDensityReferenceTransmittanceNight = lerp(a.fogDensityReferenceTransmittanceNight, b.fogDensityReferenceTransmittanceNight, t);
     out.singleScatteringAlbedo                = lerpV3(a.singleScatteringAlbedo, b.singleScatteringAlbedo, t);
     out.volumetricAnisotropy                  = lerp(a.volumetricAnisotropy, b.volumetricAnisotropy, t);
     return out;
@@ -330,7 +331,8 @@ namespace dxvk { namespace fork_weather { namespace {
       // Volumetric (4)
       out.transmittanceColor                = RtxOptions::clear_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::clear_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::clear_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::clear_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::clear_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::clear_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::clear_volumetricAnisotropy();
     } else if (name == "partlyCloudy") {
@@ -359,7 +361,8 @@ namespace dxvk { namespace fork_weather { namespace {
       out.moonAtmosphericCouplingStrength = RtxOptions::partlyCloudy_moonAtmosphericCouplingStrength();
       out.transmittanceColor                = RtxOptions::partlyCloudy_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::partlyCloudy_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::partlyCloudy_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::partlyCloudy_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::partlyCloudy_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::partlyCloudy_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::partlyCloudy_volumetricAnisotropy();
     } else if (name == "overcast") {
@@ -388,7 +391,8 @@ namespace dxvk { namespace fork_weather { namespace {
       out.moonAtmosphericCouplingStrength = RtxOptions::overcast_moonAtmosphericCouplingStrength();
       out.transmittanceColor                = RtxOptions::overcast_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::overcast_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::overcast_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::overcast_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::overcast_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::overcast_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::overcast_volumetricAnisotropy();
     } else if (name == "hazy") {
@@ -417,7 +421,8 @@ namespace dxvk { namespace fork_weather { namespace {
       out.moonAtmosphericCouplingStrength = RtxOptions::hazy_moonAtmosphericCouplingStrength();
       out.transmittanceColor                = RtxOptions::hazy_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::hazy_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::hazy_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::hazy_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::hazy_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::hazy_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::hazy_volumetricAnisotropy();
     } else if (name == "foggy") {
@@ -446,7 +451,8 @@ namespace dxvk { namespace fork_weather { namespace {
       out.moonAtmosphericCouplingStrength = RtxOptions::foggy_moonAtmosphericCouplingStrength();
       out.transmittanceColor                = RtxOptions::foggy_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::foggy_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::foggy_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::foggy_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::foggy_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::foggy_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::foggy_volumetricAnisotropy();
     } else if (name == "drizzle") {
@@ -475,7 +481,8 @@ namespace dxvk { namespace fork_weather { namespace {
       out.moonAtmosphericCouplingStrength = RtxOptions::drizzle_moonAtmosphericCouplingStrength();
       out.transmittanceColor                = RtxOptions::drizzle_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::drizzle_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::drizzle_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::drizzle_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::drizzle_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::drizzle_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::drizzle_volumetricAnisotropy();
     } else if (name == "rainstorm") {
@@ -504,7 +511,8 @@ namespace dxvk { namespace fork_weather { namespace {
       out.moonAtmosphericCouplingStrength = RtxOptions::rainstorm_moonAtmosphericCouplingStrength();
       out.transmittanceColor                = RtxOptions::rainstorm_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::rainstorm_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::rainstorm_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::rainstorm_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::rainstorm_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::rainstorm_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::rainstorm_volumetricAnisotropy();
     } else if (name == "thunderstorm") {
@@ -533,7 +541,8 @@ namespace dxvk { namespace fork_weather { namespace {
       out.moonAtmosphericCouplingStrength = RtxOptions::thunderstorm_moonAtmosphericCouplingStrength();
       out.transmittanceColor                = RtxOptions::thunderstorm_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::thunderstorm_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::thunderstorm_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::thunderstorm_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::thunderstorm_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::thunderstorm_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::thunderstorm_volumetricAnisotropy();
     } else if (name == "snow") {
@@ -562,7 +571,8 @@ namespace dxvk { namespace fork_weather { namespace {
       out.moonAtmosphericCouplingStrength = RtxOptions::snow_moonAtmosphericCouplingStrength();
       out.transmittanceColor                = RtxOptions::snow_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::snow_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::snow_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::snow_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::snow_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::snow_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::snow_volumetricAnisotropy();
     } else if (name == "blizzard") {
@@ -591,7 +601,8 @@ namespace dxvk { namespace fork_weather { namespace {
       out.moonAtmosphericCouplingStrength = RtxOptions::blizzard_moonAtmosphericCouplingStrength();
       out.transmittanceColor                = RtxOptions::blizzard_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::blizzard_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::blizzard_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::blizzard_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::blizzard_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::blizzard_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::blizzard_volumetricAnisotropy();
     } else if (name == "sandstorm") {
@@ -620,7 +631,8 @@ namespace dxvk { namespace fork_weather { namespace {
       out.moonAtmosphericCouplingStrength = RtxOptions::sandstorm_moonAtmosphericCouplingStrength();
       out.transmittanceColor                = RtxOptions::sandstorm_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::sandstorm_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::sandstorm_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::sandstorm_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::sandstorm_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::sandstorm_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::sandstorm_volumetricAnisotropy();
     } else if (name == "smoggy") {
@@ -649,7 +661,8 @@ namespace dxvk { namespace fork_weather { namespace {
       out.moonAtmosphericCouplingStrength = RtxOptions::smoggy_moonAtmosphericCouplingStrength();
       out.transmittanceColor                = RtxOptions::smoggy_transmittanceColor();
       out.transmittanceMeasurementDistanceMeters = RtxOptions::smoggy_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittance = RtxOptions::smoggy_fogDensityReferenceTransmittance();
+      out.fogDensityReferenceTransmittanceDay   = RtxOptions::smoggy_fogDensityReferenceTransmittanceDay();
+      out.fogDensityReferenceTransmittanceNight = RtxOptions::smoggy_fogDensityReferenceTransmittanceNight();
       out.singleScatteringAlbedo            = RtxOptions::smoggy_singleScatteringAlbedo();
       out.volumetricAnisotropy              = RtxOptions::smoggy_volumetricAnisotropy();
     } else {
@@ -699,7 +712,8 @@ namespace dxvk { namespace fork_weather { namespace {
     // Volumetric (4) — class is RtxGlobalVolumetrics
     s.transmittanceColor                     = RtxGlobalVolumetrics::transmittanceColor();
     s.transmittanceMeasurementDistanceMeters = RtxGlobalVolumetrics::transmittanceMeasurementDistanceMeters();
-    s.fogDensityReferenceTransmittance = RtxGlobalVolumetrics::fogDensityReferenceTransmittance();
+    s.fogDensityReferenceTransmittanceDay   = RtxGlobalVolumetrics::fogDensityReferenceTransmittance();
+    s.fogDensityReferenceTransmittanceNight = RtxGlobalVolumetrics::fogDensityReferenceTransmittance();
     s.singleScatteringAlbedo                 = RtxGlobalVolumetrics::singleScatteringAlbedo();
     s.volumetricAnisotropy                   = RtxGlobalVolumetrics::anisotropy();
     return s;
@@ -744,7 +758,16 @@ namespace dxvk { namespace fork_weather { namespace {
     // Volumetric (4) — class is RtxGlobalVolumetrics
     RtxGlobalVolumetrics::transmittanceColorObject().setImmediately(interp.transmittanceColor);
     RtxGlobalVolumetrics::transmittanceMeasurementDistanceMetersObject().setImmediately(interp.transmittanceMeasurementDistanceMeters);
-    RtxGlobalVolumetrics::fogDensityReferenceTransmittanceObject().setImmediately(interp.fogDensityReferenceTransmittance);
+    // Time-of-day fog density: collapse per-weather Day/Night reference transmittance
+    // by sun elevation (deg above horizon). Night at/below -5 deg, full day at/above
+    // +10 deg, smooth twilight blend between. sunElevation is game-driven by the wrapper.
+    {
+      const float sunElevDeg = RtxOptions::sunElevation();
+      const float todDayFactor = saturate((sunElevDeg + 5.0f) / 15.0f);
+      const float collapsedFogDensityRefT = lerp(interp.fogDensityReferenceTransmittanceNight,
+                                                 interp.fogDensityReferenceTransmittanceDay, todDayFactor);
+      RtxGlobalVolumetrics::fogDensityReferenceTransmittanceObject().setImmediately(collapsedFogDensityRefT);
+    }
     RtxGlobalVolumetrics::singleScatteringAlbedoObject().setImmediately(interp.singleScatteringAlbedo);
     RtxGlobalVolumetrics::anisotropyObject().setImmediately(interp.volumetricAnisotropy);
   }
@@ -998,7 +1021,8 @@ namespace dxvk { namespace fork_weather {
       ImGui::Separator(); ImGui::TextDisabled("Volumetric Fog");                                                                                           \
       RemixGui::DragFloat3("Transmittance Color",       &RtxOptions::P##_transmittanceColorObject(),         0.005f, 0.0f,   1.0f,    "%.3f", sliderFlags); \
       RemixGui::DragFloat("Transmittance Distance (m)", &RtxOptions::P##_transmittanceMeasurementDistanceMetersObject(), 5.0f, 1.0f, 2000.0f, "%.0f", sliderFlags); \
-      RemixGui::DragFloat("Fog Density Ref Transmittance", &RtxOptions::P##_fogDensityReferenceTransmittanceObject(), 0.005f, 0.004f, 0.996f, "%.3f", sliderFlags); \
+      RemixGui::DragFloat("Fog Density Ref T (Day)",   &RtxOptions::P##_fogDensityReferenceTransmittanceDayObject(),   0.005f, 0.004f, 0.996f, "%.3f", sliderFlags); \
+      RemixGui::DragFloat("Fog Density Ref T (Night)", &RtxOptions::P##_fogDensityReferenceTransmittanceNightObject(), 0.005f, 0.004f, 0.996f, "%.3f", sliderFlags); \
       RemixGui::DragFloat3("Single Scattering Albedo",  &RtxOptions::P##_singleScatteringAlbedoObject(),     0.005f, 0.0f,   1.0f,    "%.3f", sliderFlags); \
       RemixGui::DragFloat("Volumetric Anisotropy",      &RtxOptions::P##_volumetricAnisotropyObject(),       0.01f, -1.0f,   1.0f,    "%.2f", sliderFlags)
 

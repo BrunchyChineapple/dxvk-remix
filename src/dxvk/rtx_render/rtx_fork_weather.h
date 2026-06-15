@@ -55,7 +55,8 @@
   /* Volumetric (5); volumetricAnisotropy avoids clash with cloudAnisotropy */                     \
   X(Vector3, transmittanceColor,                        Vector3(0.999f, 0.999f, 0.999f))           \
   X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                    \
-  X(float,   fogDensityReferenceTransmittance,          0.85f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.70f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.85f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))           \
   X(float,   volumetricAnisotropy,                      0.0f)
 
@@ -134,7 +135,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   transmittanceMeasurementDistanceMeters,    1500.0f)                                       \
-  X(float,   fogDensityReferenceTransmittance,          0.95f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.80f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.945f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   volumetricAnisotropy,                      0.0f)
 
@@ -165,7 +167,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.998f, 0.998f, 0.998f))               \
   X(float,   transmittanceMeasurementDistanceMeters,    600.0f)                                        \
-  X(float,   fogDensityReferenceTransmittance,          0.85f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.72f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.94f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   volumetricAnisotropy,                      0.05f)
 
@@ -196,7 +199,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.995f, 0.995f, 0.995f))               \
   X(float,   transmittanceMeasurementDistanceMeters,    500.0f)                                        \
-  X(float,   fogDensityReferenceTransmittance,          0.80f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.80f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   volumetricAnisotropy,                      0.05f)
 
@@ -227,7 +231,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.985f, 0.97f, 0.94f))                 \
   X(float,   transmittanceMeasurementDistanceMeters,    250.0f)                                        \
-  X(float,   fogDensityReferenceTransmittance,          0.85f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.65f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.85f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.98f, 0.96f))                  \
   X(float,   volumetricAnisotropy,                      0.30f)
 
@@ -258,7 +263,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.90f, 0.92f, 0.95f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    40.0f)                                         \
-  X(float,   fogDensityReferenceTransmittance,          0.40f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.40f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.89f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 0.99f))                  \
   X(float,   volumetricAnisotropy,                      0.15f)
 
@@ -289,7 +295,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.95f, 0.96f, 0.97f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                        \
-  X(float,   fogDensityReferenceTransmittance,          0.70f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.70f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.98f, 0.98f, 0.99f))                  \
   X(float,   volumetricAnisotropy,                      0.10f)
 
@@ -320,7 +327,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.85f, 0.88f, 0.92f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    100.0f)                                        \
-  X(float,   fogDensityReferenceTransmittance,          0.60f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.95f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.97f, 0.97f, 0.98f))                  \
   X(float,   volumetricAnisotropy,                      0.10f)
 
@@ -353,7 +361,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.75f, 0.78f, 0.82f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    60.0f)                                         \
-  X(float,   fogDensityReferenceTransmittance,          0.55f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.50f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.89f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.95f, 0.95f, 0.97f))                  \
   X(float,   volumetricAnisotropy,                      0.0f)
 
@@ -384,7 +393,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.97f, 0.98f, 0.99f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    250.0f)                                        \
-  X(float,   fogDensityReferenceTransmittance,          0.70f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.70f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 0.99f))                  \
   X(float,   volumetricAnisotropy,                      0.0f)
 
@@ -415,7 +425,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.92f, 0.95f, 0.98f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    50.0f)                                         \
-  X(float,   fogDensityReferenceTransmittance,          0.45f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.40f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.45f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 1.00f))                  \
   X(float,   volumetricAnisotropy,                      0.0f)
 
@@ -446,7 +457,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.95f, 0.55f, 0.28f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    35.0f)                                         \
-  X(float,   fogDensityReferenceTransmittance,          0.50f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.45f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.50f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.90f, 0.70f, 0.45f))                  \
   X(float,   volumetricAnisotropy,                      0.60f)
 
@@ -477,7 +489,8 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.70f, 0.65f, 0.55f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                        \
-  X(float,   fogDensityReferenceTransmittance,          0.60f)                                     \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.50f)                                  \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.60f)                                  \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.85f, 0.80f, 0.70f))                  \
   X(float,   volumetricAnisotropy,                      0.20f)
 
