@@ -233,6 +233,13 @@ namespace dxvk {
         RemixGui::DragInt("Max Accumulation Frames", &maxAccumulationFramesObject(), 0.1f, 1, UINT8_MAX);
         RemixGui::DragFloat("Volumetric Antilag Sensitivity", &volumetricAntilagSensitivityObject(), 0.05f, 0.0f, 64.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::DragFloat("Fog Sun Visibility Gain", &fogSunVisibilityGainObject(), 0.1f, 0.0f, 100.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Above-water sun in-scatter gain. Raise for daytime sun shafts. The underwater white-wall is "
+            "controlled separately by Fog Sun Visibility Gain (Underwater) via the cameraIsUnderwater flag.");
+        RemixGui::DragFloat("Fog Sun Visibility Gain (Underwater)", &fogSunVisibilityGainUnderwaterObject(), 0.1f, 0.0f, 100.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Underwater override for the sun in-scatter gain (used when the camera is below the water surface). "
+            "Keep low/0 to avoid the underwater white wall while the above-water gain is raised for sun shafts.");
         RemixGui::DragFloat("Sun Volumetric Radiance Scale", &atmosphereSunVolumetricRadianceScaleObject(), 0.05f, 0.0f, 20.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::SetTooltipToLastWidgetOnHover(
             "Sun-only scale on the sun's contribution to volumetric fog. Independent of "
@@ -674,7 +681,7 @@ namespace dxvk {
 
     volumeArgs.maxAccumulationFrames = static_cast<uint16_t>(maxAccumulationFrames());
     volumeArgs.volumetricAntilagSensitivity = volumetricAntilagSensitivity();
-    volumeArgs.fogSunVisibilityGain = fogSunVisibilityGain();
+    volumeArgs.fogSunVisibilityGain = cameraIsUnderwater() ? fogSunVisibilityGainUnderwater() : fogSunVisibilityGain();
     volumeArgs.atmosphereSunVolumetricRadianceScale = atmosphereSunVolumetricRadianceScale();
     volumeArgs.volumetricParticleSunScale = volumetricParticleSunScale();
     volumeArgs.froxelDepthSliceDistributionExponent = froxelDepthSliceDistributionExponent();
@@ -701,7 +708,7 @@ namespace dxvk {
     volumeArgs.multiScatteringEstimate = multiScatteringEstimate;
     volumeArgs.enableReferenceMode = enableReferenceMode();
     volumeArgs.volumetricFogAnisotropy = anisotropy();
-    volumeArgs.fogSunVisibilityGain = fogSunVisibilityGain();
+    volumeArgs.fogSunVisibilityGain = cameraIsUnderwater() ? fogSunVisibilityGainUnderwater() : fogSunVisibilityGain();
 
     volumeArgs.enableNoiseFieldDensity = enableHeterogeneousFog();
     volumeArgs.noiseFieldSubStepSize = noiseFieldSubStepSizeMeters() * RtxOptions::getMeterToWorldUnitScale();
