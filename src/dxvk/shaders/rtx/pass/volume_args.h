@@ -137,6 +137,19 @@ struct VolumeArgs {
   float pad_uwfog0;
   float pad_uwfog1;
   float pad_uwfog2;
+  // Fork (Morrowind) §-9: underwater ABSOLUTE fog density. Froxels below the water plane (selected by
+  // the SAME altitude-vs-waterPlaneAltitude test as the gain split above, gated by enableWaterFogSplit)
+  // use these color-independent extinction/scattering coefficients INSTEAD of the above-water
+  // attenuationCoefficient / scatteringCoefficient, so underwater fog stays murky even in clear weather
+  // (its own sigma_t derived CPU-side from a per-weather underwater reference transmittance — NOT a scale
+  // of the near-zero-in-clear-weather above-water sigma_t). Underwater froxels also skip the height
+  // falloff (fog should not thin with altitude below the surface). The two vec3s are kept on 16-byte
+  // boundaries (preceded by the three pad words above) to match this struct's packing convention, with a
+  // single trailing pad word to keep the whole struct 16B aligned.
+  vec3  underwaterAttenuationCoefficient;
+  float pad_uwfog3;
+  vec3  underwaterScatteringCoefficient;
+  float pad_uwfog4;
 };
 
 #ifdef __cplusplus

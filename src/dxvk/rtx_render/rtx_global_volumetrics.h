@@ -285,6 +285,17 @@ namespace dxvk {
                "fog color. Lower = thicker/denser fog; higher = thinner. Has no effect unless "
                "fogDensityDecoupleFromColor is true.",
                args.minValue = 1.0f / 255.0f, args.maxValue = 1.0f - 1.0f / 255.0f, args.flags = RtxOptionFlags::UserSetting);
+    RTX_OPTION_ARGS("rtx.volumetrics", float, fogDensityReferenceTransmittanceUnderwater, 0.4f,
+               "Fork (Morrowind) §-9: neutral reference transmittance for the ABSOLUTE underwater fog "
+               "density, independent of the above-water density and of the weather fog color. Froxels below "
+               "the wrapper-fed water plane (when enableWaterFogGainSplit is on) derive their OWN extinction "
+               "sigma_t = -ln(this)/measurementDistance from this value, so water stays murky even in clear "
+               "weather -- a simple multiplier of the above-water sigma_t fails because that sigma_t is ~0 in "
+               "clear weather (N x ~0 = ~0). Lower = murkier/denser underwater fog; higher = clearer. The "
+               "WeatherBlender writes this per-frame from the per-weather underwater density; this global is "
+               "the dormant-blender fallback. Inert unless enableWaterFogGainSplit is on and the wrapper feeds "
+               "the water plane.",
+               args.minValue = 1.0f / 255.0f, args.maxValue = 1.0f - 1.0f / 255.0f, args.flags = RtxOptionFlags::UserSetting);
 
     enum class RaytraceMode {
       RayQuery = 0,

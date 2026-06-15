@@ -665,6 +665,21 @@ namespace dxvk {
     };
     Vector3 const volumetricScatteringCoefficient{ volumetricAttenuationCoefficient * singleScatteringAlbedo() };
 
+    // Fork (Morrowind) §-9: absolute underwater fog density. Underwater froxels (selected per-froxel by
+    // the §-8 water-plane test in the shader, when enableWaterFogSplit is on) use their OWN
+    // color-independent extinction derived from fogDensityReferenceTransmittanceUnderwater over the same
+    // per-weather measurement distance, NOT a scale of the (near-zero-in-clear-weather) above-water
+    // sigma_t -- that is exactly why a simple multiplier fails (N * ~0 = ~0). Keeping its own reference
+    // transmittance gives water that stays murky regardless of weather. Always computed (cheap, a couple
+    // of logs); only consumed by the shader when enableWaterFogSplit != 0, so it is inert otherwise and
+    // does not depend on the above-water fogDensityDecoupleFromColor toggle.
+    const float refUwRaw = fogDensityReferenceTransmittanceUnderwater();
+    const float refUw = refUwRaw < MinTransmittanceValue ? MinTransmittanceValue
+                      : (refUwRaw > MaxTransmittanceValue ? MaxTransmittanceValue : refUwRaw);
+    const float underwaterAttenuation = -log(refUw) / transmittanceMeasurementDistance;
+    Vector3 const underwaterAttenuationCoefficient{ underwaterAttenuation, underwaterAttenuation, underwaterAttenuation };
+    Vector3 const underwaterScatteringCoefficient{ underwaterAttenuationCoefficient * singleScatteringAlbedo() };
+
     const RtCamera& mainCamera = cameraManager.getMainCamera();
 
     // Set Volumetric Arguments
@@ -760,6 +775,10 @@ namespace dxvk {
     const float waterPlaneZ = waterPlaneWorldZ();
     volumeArgs.waterPlaneAltitude = waterPlaneZ;
     volumeArgs.enableWaterFogSplit = (enableWaterFogGainSplit() && waterPlaneZ > -1.0e8f) ? 1u : 0u;
+
+    // §-9: absolute underwater fog density coefficients (consumed only when the split above is on).
+    volumeArgs.underwaterAttenuationCoefficient = underwaterAttenuationCoefficient;
+    volumeArgs.underwaterScatteringCoefficient = underwaterScatteringCoefficient;
 
     volumeArgs.cameras[froxelVolumeMain] = mainCamera.getVolumeShaderConstants(volumeArgs.froxelMaxDistance);
     if (enablePortalVolumes) {
