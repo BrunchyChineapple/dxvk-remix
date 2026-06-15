@@ -393,6 +393,27 @@ namespace dxvk {
               "Color Multiscattering Scale). This is a synthetic backstop; the physical "
               "fix is the cloud Sky Ambient sliders (requires rtx.skyMode = 1).");
 
+          RemixGui::Separator();
+
+          RemixGui::Checkbox("Decouple Fog Density From Color", &fogDensityDecoupleFromColorObject());
+          RemixGui::SetTooltipToLastWidgetOnHover(
+              "Splits fog DENSITY from the weather fog COLOR. Off (legacy): the fog color's "
+              "luminance drives extinction, so a dark weather color both thickens the fog AND "
+              "blacks out the daytime scene (and a bright color makes fog vanish) -- one value "
+              "doing double duty. On: extinction comes from 'Fog Density Reference Transmittance' "
+              "+ the per-weather fog distance, so the color only tints the fog (via Fog Ambient "
+              "Brightness) and no longer blacks out midday. Pair with Fog Ambient Brightness for "
+              "lit fog at Fog Sun Visibility Gain = 0 (no over-water white wall).");
+
+          ImGui::BeginDisabled(!fogDensityDecoupleFromColor());
+          {
+            RemixGui::DragFloat("Fog Density Reference Transmittance", &fogDensityReferenceTransmittanceObject(), 0.005f, 1.0f / 255.0f, 1.0f - 1.0f / 255.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+            RemixGui::SetTooltipToLastWidgetOnHover(
+                "Fraction of light surviving across one fog measurement-distance when density is "
+                "decoupled from color. Lower = thicker/denser fog, higher = thinner. Color-independent.");
+          }
+          ImGui::EndDisabled();
+
           ImGui::Unindent();
         }
         ImGui::EndDisabled();
@@ -562,7 +583,13 @@ namespace dxvk {
           // density^2 = -ln(color) / measurement_distance (For exp2)
 
           if (fogState.density != 0.0f) {
-            float const transmittanceColorLuminance { sRGBLuminance(transmittanceColorLinear) };
+            // When density is decoupled from color, derive the measurement distance from the
+            // neutral reference transmittance instead of the weather color luminance, so the
+            // EXP/EXP2 density is color-independent (matches the LINEAR-mode decouple below).
+            float const transmittanceColorLuminance { fogDensityDecoupleFromColor()
+              ? (fogDensityReferenceTransmittance() < MinTransmittanceValue ? MinTransmittanceValue
+                 : (fogDensityReferenceTransmittance() > MaxTransmittanceValue ? MaxTransmittanceValue : fogDensityReferenceTransmittance()))
+              : sRGBLuminance(transmittanceColorLinear) };
 
             transmittanceMeasurementDistance = -log(transmittanceColorLuminance) / fogState.density;
             // Todo: Scene scale stuff ignored for now because scene scale stuff is not actually functioning properly. Add back in if it's ever fixed.
@@ -603,10 +630,26 @@ namespace dxvk {
       transmittanceMeasurementDistance = 1.0f;
     }
 
+    // Fog density / color split (Morrowind fork): by default the weather fog color's luminance
+    // drives extinction (sigma_t = -ln(color)/distance), so a dark weather fog color both thickens
+    // the fog AND extinguishes the daytime scene to near-black -- one value doing double duty. When
+    // fogDensityDecoupleFromColor is enabled, extinction is derived from a neutral reference
+    // transmittance instead, so the weather color only tints the in-scatter (via the
+    // multiScatteringEstimate / fogAmbientBrightness floor above) and density is controlled by
+    // fogDensityReferenceTransmittance + the per-weather fog distance (measurementDistance). The
+    // result is thick, lit fog without the midday black-out.
+    Vector3 densityTransmittanceLinear = transmittanceColorLinear;
+    if (fogDensityDecoupleFromColor()) {
+      const float refRaw = fogDensityReferenceTransmittance();
+      const float ref = refRaw < MinTransmittanceValue ? MinTransmittanceValue
+                      : (refRaw > MaxTransmittanceValue ? MaxTransmittanceValue : refRaw);
+      densityTransmittanceLinear = Vector3(ref, ref, ref);
+    }
+
     Vector3 const volumetricAttenuationCoefficient{
-      -log(transmittanceColorLinear.x) / transmittanceMeasurementDistance,
-      -log(transmittanceColorLinear.y) / transmittanceMeasurementDistance,
-      -log(transmittanceColorLinear.z) / transmittanceMeasurementDistance
+      -log(densityTransmittanceLinear.x) / transmittanceMeasurementDistance,
+      -log(densityTransmittanceLinear.y) / transmittanceMeasurementDistance,
+      -log(densityTransmittanceLinear.z) / transmittanceMeasurementDistance
     };
     Vector3 const volumetricScatteringCoefficient{ volumetricAttenuationCoefficient * singleScatteringAlbedo() };
 

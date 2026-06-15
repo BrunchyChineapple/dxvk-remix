@@ -258,6 +258,25 @@ namespace dxvk {
                "transmittanceMeasurementDistance) and does NOT touch fogSunVisibilityGain (which blows white over "
                "water). Tune to taste; 0 restores the legacy weather-color floor.",
                args.minValue = 0.0f, args.maxValue = 50.0f);
+    RTX_OPTION_ARGS("rtx.volumetrics", bool, fogDensityDecoupleFromColor, false,
+               "Fork (Morrowind): decouples volumetric fog DENSITY (extinction) from the (weather) fog COLOR.\n"
+               "By default the fog color's luminance does double duty -- sigma_t = -ln(fogColor)/measurementDistance -- "
+               "so a darker weather fog color simultaneously (a) thickens the fog and (b) extinguishes the daytime "
+               "scene to near-black, while a brighter color makes the fog vanish. There is no middle ground because "
+               "one value controls both thickness and how much the medium eats the scene.\n"
+               "When enabled, extinction is computed from fogDensityReferenceTransmittance (a neutral 'fog thickness' "
+               "control) combined with the per-weather fog DISTANCE (measurementDistance), so the weather color no "
+               "longer controls density -- it only tints the in-scatter (via Fog Ambient Brightness). Result: thick, "
+               "lit fog without the midday black-out. Density still varies per weather via the per-weather fog distance.\n"
+               "false = legacy behavior (color luminance drives density).",
+               args.flags = RtxOptionFlags::UserSetting);
+    RTX_OPTION_ARGS("rtx.volumetrics", float, fogDensityReferenceTransmittance, 0.4f,
+               "Fork (Morrowind): neutral reference transmittance used for fog extinction when "
+               "fogDensityDecoupleFromColor is enabled. This is the fraction of light that survives across one "
+               "measurementDistance of fog (sigma_t = -ln(this)/measurementDistance), independent of the weather "
+               "fog color. Lower = thicker/denser fog; higher = thinner. Has no effect unless "
+               "fogDensityDecoupleFromColor is true.",
+               args.minValue = 1.0f / 255.0f, args.maxValue = 1.0f - 1.0f / 255.0f, args.flags = RtxOptionFlags::UserSetting);
 
     enum class RaytraceMode {
       RayQuery = 0,
