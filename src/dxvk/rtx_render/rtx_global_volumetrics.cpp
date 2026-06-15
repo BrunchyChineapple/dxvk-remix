@@ -234,12 +234,17 @@ namespace dxvk {
         RemixGui::DragFloat("Volumetric Antilag Sensitivity", &volumetricAntilagSensitivityObject(), 0.05f, 0.0f, 64.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::DragFloat("Fog Sun Visibility Gain", &fogSunVisibilityGainObject(), 0.1f, 0.0f, 100.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::SetTooltipToLastWidgetOnHover(
-            "Above-water sun in-scatter gain. Raise for daytime sun shafts. The underwater white-wall is "
-            "controlled separately by Fog Sun Visibility Gain (Underwater) via the cameraIsUnderwater flag.");
+            "Above-water sun in-scatter gain. Raise for daytime sun shafts. Fog below the water surface "
+            "is controlled separately (see the underwater gain + Split Fog Gain At Water Plane).");
+        RemixGui::Checkbox("Split Fog Gain At Water Plane", &enableWaterFogGainSplitObject());
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "When on, fog below the water surface uses the underwater gain and fog above uses the above-water "
+            "gain (split by froxel altitude vs the wrapper-fed water plane). Lets you raise the above-water gain "
+            "for sun shafts without the underwater fog blowing into a white wall. Inert if the wrapper isn't feeding the water level.");
         RemixGui::DragFloat("Fog Sun Visibility Gain (Underwater)", &fogSunVisibilityGainUnderwaterObject(), 0.1f, 0.0f, 100.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::SetTooltipToLastWidgetOnHover(
-            "Underwater override for the sun in-scatter gain (used when the camera is below the water surface). "
-            "Keep low/0 to avoid the underwater white wall while the above-water gain is raised for sun shafts.");
+            "Sun in-scatter gain for fog below the water surface (the fog you see through the water from shore). "
+            "Keep low/0 to kill the underwater white wall while the above-water gain is raised for sun shafts.");
         RemixGui::DragFloat("Sun Volumetric Radiance Scale", &atmosphereSunVolumetricRadianceScaleObject(), 0.05f, 0.0f, 20.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::SetTooltipToLastWidgetOnHover(
             "Sun-only scale on the sun's contribution to volumetric fog. Independent of "
@@ -681,7 +686,8 @@ namespace dxvk {
 
     volumeArgs.maxAccumulationFrames = static_cast<uint16_t>(maxAccumulationFrames());
     volumeArgs.volumetricAntilagSensitivity = volumetricAntilagSensitivity();
-    volumeArgs.fogSunVisibilityGain = cameraIsUnderwater() ? fogSunVisibilityGainUnderwater() : fogSunVisibilityGain();
+    volumeArgs.fogSunVisibilityGain = fogSunVisibilityGain();
+    volumeArgs.fogSunVisibilityGainUnderwater = fogSunVisibilityGainUnderwater();
     volumeArgs.atmosphereSunVolumetricRadianceScale = atmosphereSunVolumetricRadianceScale();
     volumeArgs.volumetricParticleSunScale = volumetricParticleSunScale();
     volumeArgs.froxelDepthSliceDistributionExponent = froxelDepthSliceDistributionExponent();
@@ -708,7 +714,7 @@ namespace dxvk {
     volumeArgs.multiScatteringEstimate = multiScatteringEstimate;
     volumeArgs.enableReferenceMode = enableReferenceMode();
     volumeArgs.volumetricFogAnisotropy = anisotropy();
-    volumeArgs.fogSunVisibilityGain = cameraIsUnderwater() ? fogSunVisibilityGainUnderwater() : fogSunVisibilityGain();
+    volumeArgs.fogSunVisibilityGain = fogSunVisibilityGain();
 
     volumeArgs.enableNoiseFieldDensity = enableHeterogeneousFog();
     volumeArgs.noiseFieldSubStepSize = noiseFieldSubStepSizeMeters() * RtxOptions::getMeterToWorldUnitScale();
@@ -746,6 +752,14 @@ namespace dxvk {
     volumeArgs.enableHeightFalloff = enableHeightFalloff() ? 1u : 0u;
     volumeArgs.heightFalloffSeaLevel = heightFalloffSeaLevelMeters() * RtxOptions::getMeterToWorldUnitScale();
     volumeArgs.heightFalloffScaleHeight = std::max(0.1f, heightFalloffScaleHeightMeters() * RtxOptions::getMeterToWorldUnitScale());
+
+    // Fork (Morrowind): underwater fog gain split. waterPlaneWorldZ is fed by the wrapper in world
+    // units (MWBridge::WaterLevel()) along the same up axis as heightFalloffSeaLevel; a very low
+    // sentinel (no water in cell) leaves the split inert. The shader compares each froxel's altitude
+    // (dot(worldPos, sceneUpDirection)) to this plane and picks the underwater vs above-water gain.
+    const float waterPlaneZ = waterPlaneWorldZ();
+    volumeArgs.waterPlaneAltitude = waterPlaneZ;
+    volumeArgs.enableWaterFogSplit = (enableWaterFogGainSplit() && waterPlaneZ > -1.0e8f) ? 1u : 0u;
 
     volumeArgs.cameras[froxelVolumeMain] = mainCamera.getVolumeShaderConstants(volumeArgs.froxelMaxDistance);
     if (enablePortalVolumes) {

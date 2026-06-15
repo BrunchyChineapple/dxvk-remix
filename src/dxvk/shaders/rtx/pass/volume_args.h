@@ -125,9 +125,18 @@ struct VolumeArgs {
   // 2026-05-26 false-glow fix hardcoded this to 0 (=> black particles); small values (~0.008) bring
   // back atmospheric sun tint without the air-froxel false glow.
   float volumetricParticleSunScale;
-  // Keep VolumeArgs 16-byte (4-word) aligned after the two floats above.
-  float pad_sunvol0;
-  float pad_sunvol1;
+  // Fork (Morrowind): underwater fog gain split. The above-water fogSunVisibilityGain blows the
+  // fog below the water surface into a white wall when viewed from shore. enableWaterFogSplit picks
+  // fogSunVisibilityGainUnderwater for froxels whose altitude (dot(worldPos, sceneUpDirection)) is
+  // below waterPlaneAltitude, and the above-water fogSunVisibilityGain for froxels above it. The
+  // water plane (world-unit altitude) is fed by the wrapper from MWBridge::WaterLevel().
+  float fogSunVisibilityGainUnderwater;
+  float waterPlaneAltitude;            // world-unit altitude of the water surface along sceneUpDirection
+  uint  enableWaterFogSplit;           // 0 = off (whole-volume fogSunVisibilityGain), 1 = spatial split
+  // Keep VolumeArgs 16-byte (4-word) aligned.
+  float pad_uwfog0;
+  float pad_uwfog1;
+  float pad_uwfog2;
 };
 
 #ifdef __cplusplus
