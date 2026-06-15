@@ -115,6 +115,19 @@ struct VolumeArgs {
   uint  enableHeightFalloff;
   float heightFalloffSeaLevel;     // world-unit altitude where density is full (and below)
   float heightFalloffScaleHeight;  // world-unit e-folding height of the falloff
+  // Fork (Morrowind): sun-ONLY volumetric in-scatter scale, applied to the atmosphere sun
+  // radiance in volume_integrator.slangh BEFORE it enters the froxel SH. Lets sun-in-fog be tuned
+  // independently of fogSunVisibilityGain (which scales the whole composited SH incl. scene lights
+  // and sky-ambient). Run fogSunVisibilityGain=1 + dial this down to tame the over-water sun wall.
+  float atmosphereSunVolumetricRadianceScale;
+  // Fork (Morrowind): multiplier for the opacity-lighting-approx volumetric contribution on
+  // alpha-blended surfaces (particles/decals) in volume_lighting.slangh::evalVolumetricNEE. The
+  // 2026-05-26 false-glow fix hardcoded this to 0 (=> black particles); small values (~0.008) bring
+  // back atmospheric sun tint without the air-froxel false glow.
+  float volumetricParticleSunScale;
+  // Keep VolumeArgs 16-byte (4-word) aligned after the two floats above.
+  float pad_sunvol0;
+  float pad_sunvol1;
 };
 
 #ifdef __cplusplus

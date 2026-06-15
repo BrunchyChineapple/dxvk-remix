@@ -233,6 +233,15 @@ namespace dxvk {
         RemixGui::DragInt("Max Accumulation Frames", &maxAccumulationFramesObject(), 0.1f, 1, UINT8_MAX);
         RemixGui::DragFloat("Volumetric Antilag Sensitivity", &volumetricAntilagSensitivityObject(), 0.05f, 0.0f, 64.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::DragFloat("Fog Sun Visibility Gain", &fogSunVisibilityGainObject(), 0.1f, 0.0f, 100.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::DragFloat("Sun Volumetric Radiance Scale", &atmosphereSunVolumetricRadianceScaleObject(), 0.05f, 0.0f, 20.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Sun-only scale on the sun's contribution to volumetric fog. Independent of "
+            "Fog Sun Visibility Gain (which scales the whole cache incl. scene lights + sky-ambient). "
+            "Run Fog Sun Visibility Gain = 1 and lower this to tame the over-water sun wall. 1.0 = unchanged.");
+        RemixGui::DragFloat("Particle Sun Scale", &volumetricParticleSunScaleObject(), 0.001f, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Sun/atmosphere tint on alpha-blended particles & decals. 0 = black particles "
+            "(the false-glow fix); ~0.008 brings back a little atmospheric tint without the air-froxel false glow.");
         RemixGui::DragFloat("Froxel Depth Slice Distribution Exponent", &froxelDepthSliceDistributionExponentObject(), 0.01f, 0.0f, FLT_MAX, "%.3f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::DragFloat("Froxel Max Distance", &froxelMaxDistanceMetersObject(), 0.25f, 0.0f, FLT_MAX, "%.2f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::DragFloat("Froxel Firefly Filtering Luminance Threshold", &froxelFireflyFilteringLuminanceThresholdObject(), 0.1f, 0.0f, FLT_MAX, "%.3f", ImGuiSliderFlags_AlwaysClamp);
@@ -623,6 +632,8 @@ namespace dxvk {
     volumeArgs.maxAccumulationFrames = static_cast<uint16_t>(maxAccumulationFrames());
     volumeArgs.volumetricAntilagSensitivity = volumetricAntilagSensitivity();
     volumeArgs.fogSunVisibilityGain = fogSunVisibilityGain();
+    volumeArgs.atmosphereSunVolumetricRadianceScale = atmosphereSunVolumetricRadianceScale();
+    volumeArgs.volumetricParticleSunScale = volumetricParticleSunScale();
     volumeArgs.froxelDepthSliceDistributionExponent = froxelDepthSliceDistributionExponent();
     volumeArgs.froxelMaxDistance = froxelMaxDistanceMeters() * RtxOptions::getMeterToWorldUnitScale();
     volumeArgs.froxelFireflyFilteringLuminanceThreshold = froxelFireflyFilteringLuminanceThreshold();
