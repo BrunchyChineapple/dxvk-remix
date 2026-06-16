@@ -52,12 +52,13 @@
   X(float,   nightSkyBrightness,                        0.008f)                                    \
   X(float,   moonNeeStrength,                           1.0f)                                      \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                      \
-  /* Volumetric (7); volumetricAnisotropy avoids clash with cloudAnisotropy */                     \
+  /* Volumetric (8); volumetricAnisotropy avoids clash with cloudAnisotropy */                     \
   X(Vector3, transmittanceColor,                        Vector3(0.999f, 0.999f, 0.999f))           \
   X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                    \
   X(float,   fogDensityReferenceTransmittanceDay,       0.70f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.85f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.40f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.40f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.40f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))           \
   X(float,   volumetricAnisotropy,                      0.0f)
 
@@ -138,7 +139,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    1500.0f)                                       \
   X(float,   fogDensityReferenceTransmittanceDay,       0.80f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.945f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.35f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.35f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.35f)                                 \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   volumetricAnisotropy,                      0.0f)
 
@@ -171,7 +173,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    600.0f)                                        \
   X(float,   fogDensityReferenceTransmittanceDay,       0.72f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.94f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.33f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.33f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.33f)                                 \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   volumetricAnisotropy,                      0.05f)
 
@@ -204,7 +207,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    500.0f)                                        \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.80f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.30f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.30f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.30f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
   X(float,   volumetricAnisotropy,                      0.05f)
 
@@ -237,7 +241,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    250.0f)                                        \
   X(float,   fogDensityReferenceTransmittanceDay,       0.65f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.85f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.32f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.32f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.32f)                                 \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.98f, 0.96f))                  \
   X(float,   volumetricAnisotropy,                      0.30f)
 
@@ -270,7 +275,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    40.0f)                                         \
   X(float,   fogDensityReferenceTransmittanceDay,       0.40f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.89f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.22f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.22f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.22f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 0.99f))                  \
   X(float,   volumetricAnisotropy,                      0.15f)
 
@@ -303,7 +309,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                        \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.70f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.28f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.28f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.28f)                                 \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.98f, 0.98f, 0.99f))                  \
   X(float,   volumetricAnisotropy,                      0.10f)
 
@@ -336,7 +343,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    100.0f)                                        \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.95f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.25f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.25f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.97f, 0.97f, 0.98f))                  \
   X(float,   volumetricAnisotropy,                      0.10f)
 
@@ -371,7 +379,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    60.0f)                                         \
   X(float,   fogDensityReferenceTransmittanceDay,       0.50f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.89f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.22f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.22f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.22f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.95f, 0.95f, 0.97f))                  \
   X(float,   volumetricAnisotropy,                      0.0f)
 
@@ -404,7 +413,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    250.0f)                                        \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.70f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.30f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.30f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.30f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 0.99f))                  \
   X(float,   volumetricAnisotropy,                      0.0f)
 
@@ -437,7 +447,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    50.0f)                                         \
   X(float,   fogDensityReferenceTransmittanceDay,       0.40f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.45f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.20f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.20f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.20f)                                 \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 1.00f))                  \
   X(float,   volumetricAnisotropy,                      0.0f)
 
@@ -470,7 +481,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    35.0f)                                         \
   X(float,   fogDensityReferenceTransmittanceDay,       0.45f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.50f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.25f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.25f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.90f, 0.70f, 0.45f))                  \
   X(float,   volumetricAnisotropy,                      0.60f)
 
@@ -503,7 +515,8 @@
   X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                        \
   X(float,   fogDensityReferenceTransmittanceDay,       0.50f)                                  \
   X(float,   fogDensityReferenceTransmittanceNight,     0.60f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwater, 0.25f)                                 \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f)                            \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.25f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.85f, 0.80f, 0.70f))                  \
   X(float,   volumetricAnisotropy,                      0.20f)
 
