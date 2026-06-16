@@ -178,8 +178,11 @@ namespace dxvk {
       *pQualityLevels = 1;
 
     auto dst = ConvertFormatUnfixed(SurfaceFormat);
-    if (dst.FormatColor == VK_FORMAT_UNDEFINED)
+    // NV-DXVK start: harvest doitsujin/dxvk 7a3222146 -- let NULL_FORMAT multisample-type
+    // checks succeed (general D3D9 compat; some titles crash if a NULL-format MS check fails).
+    if (SurfaceFormat != D3D9Format::NULL_FORMAT && dst.FormatColor == VK_FORMAT_UNDEFINED)
       return D3DERR_NOTAVAILABLE;
+    // NV-DXVK end
 
     if (MultiSampleType != D3DMULTISAMPLE_NONE
      && (SurfaceFormat == D3D9Format::D32_LOCKABLE

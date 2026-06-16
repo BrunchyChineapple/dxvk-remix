@@ -222,7 +222,11 @@ namespace dxvk {
     constexpr UINT range = 0xfff00000;
 
     // Can't have negative memory!
-    int64_t memory = std::max<int64_t>(m_availableMemory.load(), 0);
+    // NV-DXVK start: harvest doitsujin/dxvk 9afa095c1 -- also clamp to the u32 megabyte
+    // range so available memory above 0xfff00000 (large-VRAM GPUs) reports the max instead
+    // of wrapping/truncating when masked with `range` below.
+    int64_t memory = std::min(std::max<int64_t>(m_availableMemory.load(), 0), static_cast<int64_t>(range));
+    // NV-DXVK end
 
     return UINT(memory) & range;
   }
