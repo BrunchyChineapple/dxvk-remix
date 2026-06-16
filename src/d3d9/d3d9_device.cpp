@@ -6940,6 +6940,13 @@ namespace dxvk {
     const     uint32_t regCountHardware = DetermineHardwareRegCount<ProgramType, ConstantType>();
     constexpr uint32_t regCountSoftware = DetermineSoftwareRegCount<ProgramType, ConstantType>();
 
+    // NV-DXVK start: harvest doitsujin/dxvk 92523fc0d -- guard StartRegister + Count overflow.
+    // Without this, a large StartRegister wraps the (StartRegister + Count) sum to a small value,
+    // bypassing the regCountSoftware bound below and crashing on an out-of-bounds constant index.
+    if (unlikely(StartRegister > UINT32_MAX - Count))
+      return D3DERR_INVALIDCALL;
+    // NV-DXVK end
+
     if (unlikely(StartRegister + Count > regCountSoftware))
       return D3DERR_INVALIDCALL;
 
@@ -7061,8 +7068,18 @@ namespace dxvk {
         // NV-DXVK start: unbound light indices
         for (uint32_t i = 0; i < caps::MaxEnabledLights && m_state.enabledLightIndices.size(); i++) {
         // NV-DXVK end
-          if (m_state.enabledLightIndices[i] != UINT32_MAX)
-            lightCount++;
+          const uint32_t idx = m_state.enabledLightIndices[i];
+          if (idx == UINT32_MAX)
+            continue;
+          // NV-DXVK start: harvest doitsujin/dxvk 6e164fc88 -- ignore invalid-type FF lights.
+          // D3D8/9 lets apps set/enable lights with an invalid Type (0 or > D3DLIGHT_DIRECTIONAL)
+          // but they don't affect lighting. Must mirror the fill loop below so the shader key's
+          // LightCount equals the number of lights actually written into data->Lights.
+          const D3DLIGHT9& light = m_state.lights[idx].value();
+          if (light.Type == 0 || light.Type > D3DLIGHT_DIRECTIONAL)
+            continue;
+          // NV-DXVK end
+          lightCount++;
         }
       }
 
@@ -7195,7 +7212,13 @@ namespace dxvk {
         auto idx = m_state.enabledLightIndices[i];
         if (idx == UINT32_MAX)
           continue;
-        data->Lights[lightIdx++] = D3D9Light(m_state.lights[idx].value(), m_state.transforms[GetTransformIndex(D3DTS_VIEW)]);
+        // NV-DXVK start: harvest doitsujin/dxvk 6e164fc88 -- ignore invalid-type FF lights
+        // (must match the LightCount counting loop above).
+        const D3DLIGHT9& light = m_state.lights[idx].value();
+        if (light.Type == 0 || light.Type > D3DLIGHT_DIRECTIONAL)
+          continue;
+        // NV-DXVK end
+        data->Lights[lightIdx++] = D3D9Light(light, m_state.transforms[GetTransformIndex(D3DTS_VIEW)]);
       }
 
       data->Material = m_state.material;
