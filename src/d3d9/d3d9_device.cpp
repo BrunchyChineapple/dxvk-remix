@@ -4830,9 +4830,17 @@ namespace dxvk {
 
     UINT Subresource = pResource->CalcSubresource(Face, MipLevel);
 
-    // We weren't locked anyway!
-    if (unlikely(!pResource->GetLocked(Subresource)))
-      return D3D_OK;
+    // NV-DXVK start: harvest doitsujin/dxvk 77020760f -- don't allow multiple unlocks
+    // except for D3DRTYPE_TEXTURE. D3D9 leniently allows redundant unlocks on plain
+    // textures (returns D3D_OK) but returns D3DERR_INVALIDCALL for volume/cube/surface
+    // resources. Makes UnlockImage symmetric with the double-lock guard in LockImage.
+    if (unlikely(!pResource->GetLocked(Subresource))) {
+      if (pResource->GetType() == D3DRTYPE_TEXTURE)
+        return D3D_OK;
+      else
+        return D3DERR_INVALIDCALL;
+    }
+    // NV-DXVK end
 
     pResource->SetLocked(Subresource, false);
 
