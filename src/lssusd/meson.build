@@ -15,12 +15,18 @@ else
 endif
 thread_dep = dependency('threads')
 
+# Embed the MDLs the capture exporter writes into captures. These were repointed
+# from the build-time-fetched `external/omni_core_materials/Base/` package to the
+# in-repo `src/mdl/Base/` copies (migrated by 1ea51ea0) so the C255 bool-range
+# warning fix (86f4f5b74) actually reaches the binary -- the external package copy
+# is git-ignored, fetched stale, and still carries the buggy
+# `anno::hard_range(0, 1)` on `subsurface_diffusion_profile`.
 libusd_embedded_data_files = files([
-  '../../external/omni_core_materials/Base/AperturePBR_Opacity.mdl',
-  '../../external/omni_core_materials/Base/AperturePBR_Translucent.mdl',
-  '../../external/omni_core_materials/Base/AperturePBR_Model.mdl',
-  '../../external/omni_core_materials/Base/AperturePBR_Normal.mdl',
-  '../../external/omni_core_materials/Base/AperturePBR_SpriteSheet.mdl',
+  '../mdl/Base/AperturePBR_Opacity.mdl',
+  '../mdl/Base/AperturePBR_Translucent.mdl',
+  '../mdl/Base/AperturePBR_Model.mdl',
+  '../mdl/Base/AperturePBR_Normal.mdl',
+  '../mdl/Base/AperturePBR_SpriteSheet.mdl',
 ])
 
 libusd_generated_embedded_files = embedding_compiler.process(libusd_embedded_data_files)
