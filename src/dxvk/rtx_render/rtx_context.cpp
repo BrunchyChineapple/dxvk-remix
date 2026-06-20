@@ -613,6 +613,10 @@ namespace dxvk {
       RtxParticleSystemManager& particles = m_device->getCommon()->metaParticleSystem();
       particles.submitDrawState(this);
 
+      // Pump clean-path (world-anchored) PointInstancers. Unlike game draws, these are not triggered by
+      // a captured-draw hash, so they must be submitted once per frame here (next to the particle pump).
+      getSceneManager().submitWorldAnchoredInstancers(this);
+
       this->spillRenderPass(false);
 
       getCommonObjects()->getTextureManager().submitTexturesToDeviceLocal(this, m_execBarriers, m_execAcquires);

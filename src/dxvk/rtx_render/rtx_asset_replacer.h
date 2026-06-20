@@ -117,6 +117,20 @@ namespace dxvk {
     {}
   };
 
+  // A clean-path (world-anchored) UsdGeomPointInstancer authored under /RootNode/ScatterBrush.
+  // Unlike the hash-anchored mesh replacements (m_meshReplacers), these are NOT tied to a captured
+  // game draw call. They are submitted every frame by SceneManager::submitWorldAnchoredInstancers
+  // using their USD world transform (baked into each AssetReplacement's instancesToObject, so the
+  // submit-time objectToWorld is identity). This lets a real PointInstancer at a clean USD path
+  // render in the runtime the same way it already renders in the toolkit (HdRemix).
+  struct WorldAnchoredInstancer {
+    // Replacement entries (mesh + optional lights) for one PointInstancer. Each mesh entry carries
+    // world-space instancesToObject (fast path) or a world-space replacementToObject (slow path).
+    std::vector<AssetReplacement> replacements;
+    // Stable identity (hash of the instancer prim path) used for ReplacementInstance persistence.
+    XXH64_hash_t identityHash = kEmptyHash;
+  };
+
   struct SecretReplacement {
     const std::string header;
     const std::string name;
@@ -224,10 +238,22 @@ namespace dxvk {
       m_geometries.clear();
       m_graphTopologies.clear();
       m_secretReplacements.clear();
+      m_worldInstancers.clear();
     }
 
     const SecretReplacements& secretReplacements() const {
       return m_secretReplacements;
+    }
+
+    // Adds a world-anchored (clean-path) PointInstancer's replacement set.
+    void addWorldInstancer(WorldAnchoredInstancer&& wi) {
+      std::lock_guard<sync::Spinlock> lock(m_spinlock);
+      m_worldInstancers.emplace_back(std::move(wi));
+    }
+
+    // Returns all world-anchored PointInstancers loaded by this mod.
+    const std::vector<WorldAnchoredInstancer>& worldInstancers() const {
+      return m_worldInstancers;
     }
 
   private:
@@ -248,12 +274,19 @@ namespace dxvk {
 
     // Secret replacements if any
     SecretReplacements m_secretReplacements;
+
+    // Clean-path (world-anchored) PointInstancers, submitted per-frame rather than hash-anchored.
+    std::vector<WorldAnchoredInstancer> m_worldInstancers;
   };
 
   struct AssetReplacer {
     std::vector<AssetReplacement>* getReplacementsForMesh(XXH64_hash_t hash);
     std::vector<AssetReplacement>* getReplacementsForLight(XXH64_hash_t hash);
     MaterialData* getReplacementMaterial(XXH64_hash_t hash);
+
+    // Aggregates clean-path (world-anchored) PointInstancers across all loaded mods.
+    // Returned pointers reference per-mod storage and are valid until replacements reload.
+    std::vector<const WorldAnchoredInstancer*> getWorldAnchoredInstancers();
 
     // process the replacement USD and create all the m_replacements entries.
     void initialize(const Rc<DxvkContext>& context);

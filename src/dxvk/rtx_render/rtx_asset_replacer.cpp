@@ -50,6 +50,22 @@ std::vector<AssetReplacement>* AssetReplacer::getReplacementsForMesh(XXH64_hash_
   return nullptr;
 }
 
+std::vector<const WorldAnchoredInstancer*> AssetReplacer::getWorldAnchoredInstancers() {
+  std::vector<const WorldAnchoredInstancer*> result;
+  if (!RtxOptions::getEnableReplacementMeshes())
+    return result;
+
+  for (auto& mod : m_modManager.mods()) {
+    const auto& instancers = mod->replacements().worldInstancers();
+    result.reserve(result.size() + instancers.size());
+    for (const auto& wi : instancers) {
+      result.push_back(&wi);
+    }
+  }
+
+  return result;
+}
+
 std::vector<AssetReplacement>* AssetReplacer::getReplacementsForLight(XXH64_hash_t hash) {
   if (!RtxOptions::getEnableReplacementLights())
     return nullptr;

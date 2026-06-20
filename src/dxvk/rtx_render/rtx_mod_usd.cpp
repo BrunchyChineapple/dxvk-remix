@@ -1261,6 +1261,48 @@ void UsdMod::Impl::processUSD(const Rc<DxvkContext>& context) {
     }
   }
 
+  // Process World-Anchored PointInstancers (clean-path scatter, e.g. /RootNode/ScatterBrush)
+  //
+  // Unlike the mesh/light replacements above, these PointInstancers live at a clean USD path that is
+  // NOT a captured-draw `mesh_<HASH>` scope, so they never enter m_meshReplacers and no game draw call
+  // ever triggers them (which is why a clean-path PI renders in the toolkit but is invisible in the
+  // runtime). We collect them here and let SceneManager::submitWorldAnchoredInstancers submit them every
+  // frame from their USD world transform. Reusing processPointInstancer with rootPrim = the stage
+  // pseudo-root makes ComputeRelativeTransform(PI, pseudoRoot) yield the instancer's full world
+  // transform, so the resulting instancesToObject are world-space and the submit-time objectToWorld is
+  // identity.
+  if (RtxOptions::enableWorldAnchoredInstancers()) {
+    pxr::UsdPrim scatterRoot = stage->GetPrimAtPath(pxr::SdfPath("/RootNode/ScatterBrush"));
+    if (scatterRoot.IsValid()) {
+      pxr::UsdPrim pseudoRoot = stage->GetPseudoRoot();
+      std::vector<pxr::UsdPrim> primStack;
+      primStack.push_back(scatterRoot);
+      while (!primStack.empty()) {
+        pxr::UsdPrim prim = primStack.back();
+        primStack.pop_back();
+
+        if (prim.IsA<pxr::UsdGeomPointInstancer>()) {
+          std::vector<AssetReplacement> replacementVec;
+          Args args = {context, xformCache, pseudoRoot, replacementVec};
+          processPointInstancer(args, prim);
+          if (!replacementVec.empty()) {
+            WorldAnchoredInstancer wi;
+            wi.replacements = std::move(replacementVec);
+            const std::string primPath = prim.GetPath().GetString();
+            wi.identityHash = XXH3_64bits(primPath.c_str(), primPath.size());
+            m_owner.m_replacements->addWorldInstancer(std::move(wi));
+          }
+          // Do not descend into a PointInstancer's prototype subtree.
+          continue;
+        }
+
+        for (pxr::UsdPrim child : prim.GetFilteredChildren(pxr::UsdPrimIsActive)) {
+          primStack.push_back(child);
+        }
+      }
+    }
+  }
+
   // flush entire cache, kinda a sledgehammer
   context->emitMemoryBarrier(0,
     VK_PIPELINE_STAGE_TRANSFER_BIT,

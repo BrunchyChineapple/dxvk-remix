@@ -153,6 +153,11 @@ public:
 
   void submitDrawState(Rc<DxvkContext> ctx, const DrawCallState& input, const MaterialData* overrideMaterialData);
   void submitExternalDraw(Rc<DxvkContext> ctx, ExternalDrawState&& state);
+
+  // Submits all clean-path (world-anchored) UsdGeomPointInstancers once per frame. These are authored
+  // under /RootNode/ScatterBrush and are not anchored to a captured game draw call, so they must be
+  // pumped every frame from their USD world transform (see AssetReplacer::getWorldAnchoredInstancers).
+  void submitWorldAnchoredInstancers(Rc<DxvkContext> ctx);
   void setStartInMediumMaterial(const MaterialData& translucentMaterial);
   void clearStartInMediumMaterial();
 

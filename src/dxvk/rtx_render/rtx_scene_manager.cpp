@@ -2503,6 +2503,61 @@ namespace dxvk {
     }
   }
 
+  void SceneManager::submitWorldAnchoredInstancers(Rc<DxvkContext> ctx) {
+    if (!RtxOptions::enableWorldAnchoredInstancers()) {
+      return;
+    }
+
+    std::vector<const WorldAnchoredInstancer*> instancers = m_pReplacer->getWorldAnchoredInstancers();
+    if (instancers.empty()) {
+      return;
+    }
+
+    const RtCamera& rtCamera = getCameraManager().getCamera(CameraType::Main);
+    const uint32_t currentFrameId = m_device->getCurrentFrameId();
+
+    for (const WorldAnchoredInstancer* entry : instancers) {
+      if (entry == nullptr || entry->replacements.empty()) {
+        continue;
+      }
+
+      // Build a world-anchored anchor draw call. objectToWorld is identity because each replacement's
+      // instancesToObject (fast path) or replacementToObject (slow path) already holds the instance's
+      // world transform; the camera matrices come from the live scene camera. This mirrors how
+      // submitExternalDraw parameterizes the additive, non-game-draw geometry path.
+      DrawCallState anchor {};
+      anchor.cameraType = CameraType::Main;
+      anchor.transformData.objectToWorld = Matrix4();
+      anchor.transformData.worldToView = Matrix4 { rtCamera.getWorldToView() };
+      anchor.transformData.viewToProjection = Matrix4 { rtCamera.getViewToProjection() };
+      anchor.transformData.objectToView = anchor.transformData.worldToView;
+      anchor.transformData.textureTransform = Matrix4();
+      anchor.transformData.texgenMode = TexGenMode::None;
+      anchor.materialData.colorTextures[0] = TextureRef {};
+      anchor.materialData.colorTextures[1] = TextureRef {};
+
+      // Persistence: a stable ReplacementInstance keyed by the instancer's prim-path identity so the
+      // RtInstances survive across frames. Without advancing frameLastSeen every frame, the 4-frame GC
+      // (numFramesToKeepInstances) destroys the RI and the geometry flickers/disappears. worldPos and
+      // transform are the instancer origin (identity) since the per-instance world placement lives in
+      // instancesToObject.
+      const ReplacementInstance::LookupKey key {
+        entry->identityHash, entry->identityHash, kEmptyHash, kEmptyHash, Vector3(), anchor.transformData.objectToWorld
+      };
+      ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(key);
+
+      const std::vector<AssetReplacement>* pReplacements = &entry->replacements;
+      MaterialData renderMaterialData = LegacyMaterialData().as<OpaqueMaterialData>();
+      drawReplacements(ctx, &anchor, pReplacements, renderMaterialData, replacementInstance);
+
+      // Advance GC bookkeeping every frame (mirrors submitExternalDraw). drawReplacements already set
+      // geometryBoundingBox / objectToWorld via recalculateBoundingBox.
+      replacementInstance->frameLastSeen = currentFrameId;
+      replacementInstance->categoryFlags = anchor.getCategoryFlags().raw();
+      replacementInstance->isSkinned = false;
+    }
+  }
+
   void SceneManager::destroyExternalMesh(remixapi_MeshHandle handle) {
     if (handle) {
       m_drawCallTracker.removeReplacementInstancesWithSpatialMapHash(

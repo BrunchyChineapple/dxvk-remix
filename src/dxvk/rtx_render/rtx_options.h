@@ -1132,6 +1132,11 @@ namespace dxvk {
     RTX_OPTION("rtx", bool, enableReplacementInstancerMeshRendering, true,
                "Enables or disables rendering GeomPointInstancer meshes using an optimized path.\n"
                "Requires reloading replacement assets.");
+    RTX_OPTION("rtx", bool, enableWorldAnchoredInstancers, true,
+               "Enables rendering of clean-path (world-anchored) UsdGeomPointInstancers authored under /RootNode/ScatterBrush.\n"
+               "These instancers are not anchored to a captured game draw call; they are submitted every frame from\n"
+               "their USD world transform, so a real PointInstancer at a clean USD path renders in the runtime the same\n"
+               "way it already renders in the toolkit. Requires reloading replacement assets.");
     RTX_OPTION("rtx", uint, adaptiveResolutionReservedGPUMemoryGiB, 2,
                "The amount of GPU memory in gibibytes to reserve away from consideration for adaptive resolution replacement textures.\n"
                "This value should only be changed to reflect the estimated amount of memory Remix itself consumes on the GPU (aside from texture loading, mostly from rendering-related buffers) and should not be changed otherwise.\n"
