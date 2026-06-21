@@ -108,16 +108,6 @@ void integrate_direct_pass(uvec2 threadIndex)
     return;
   }
 
-  // Default the per-pixel cumulus shadow factor to 1.0 (no modulation) before any
-  // direct-lighting early-out below can skip the sun-NEE call site. evalAtmosphereSunNEE
-  // overwrites this for the pixels it actually visits (fork - 2026-05-18). Uses the
-  // sparse-remapped pixelCoordinate so the factor lands on the real screen pixel the
-  // composite pass reads (identical to threadIndex when sparse rendering is disabled).
-  if (isDirectActive)
-  {
-    PrimaryCloudShadowFactor[pixelCoordinate] = 1.0f;
-  }
-
   RNG rng = createRNG(pixelCoordinate, cb.frameIdx);
 
   // Deserialize flags

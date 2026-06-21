@@ -163,7 +163,6 @@ struct RaytraceArgs {
   NrcArgs nrcArgs;
   SssArgs sssArgs;
   EyeArgs eyeArgs;
-  AtmosphereArgs atmosphereArgs;
   ShadowTerminatorArgs shadowTerminatorArgs;
   AtmosphereArgs atmosphereArgs;
 

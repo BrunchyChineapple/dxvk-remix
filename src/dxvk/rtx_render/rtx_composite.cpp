@@ -68,7 +68,6 @@ namespace dxvk {
         CONSTANT_BUFFER(COMPOSITE_CONSTANTS_INPUT)
         TEXTURE2D(COMPOSITE_BSDF_FACTOR_INPUT)
         TEXTURE2D(COMPOSITE_BSDF_FACTOR2_INPUT)
-        TEXTURE2D(COMPOSITE_PRIMARY_CLOUD_SHADOW_FACTOR_INPUT)
         SAMPLER3D(COMPOSITE_VOLUME_FILTERED_RADIANCE_AGE_INPUT)
         SAMPLER3D(COMPOSITE_VOLUME_FILTERED_RADIANCE_Y_INPUT)
         SAMPLER3D(COMPOSITE_VOLUME_FILTERED_RADIANCE_CO_CG_INPUT)
@@ -114,7 +113,6 @@ namespace dxvk {
         CONSTANT_BUFFER(COMPOSITE_CONSTANTS_INPUT)
         TEXTURE2D(COMPOSITE_BSDF_FACTOR_INPUT)
         TEXTURE2D(COMPOSITE_BSDF_FACTOR2_INPUT)
-        TEXTURE2D(COMPOSITE_PRIMARY_CLOUD_SHADOW_FACTOR_INPUT)
         TEXTURE2D(COMPOSITE_DIRECT_PIXEL_SAMPLING_RATE_INPUT)
         TEXTURE2D(COMPOSITE_INDIRECT_PIXEL_SAMPLING_RATE_INPUT)
         SAMPLER3D(COMPOSITE_VOLUME_FILTERED_RADIANCE_AGE_INPUT)
@@ -354,7 +352,6 @@ namespace dxvk {
     // blacking out direct lighting (the default-settings darkness regression). 2026-06-11.
     ctx->bindResourceView(COMPOSITE_BSDF_FACTOR_INPUT, rtOutput.m_bsdfFactor.view, nullptr);
     ctx->bindResourceView(COMPOSITE_BSDF_FACTOR2_INPUT, restirGI.getBsdfFactor2().view, nullptr);
-    ctx->bindResourceView(COMPOSITE_PRIMARY_CLOUD_SHADOW_FACTOR_INPUT, rtOutput.m_primaryCloudShadowFactor.view, nullptr);
     ctx->bindResourceView(COMPOSITE_DIRECT_PIXEL_SAMPLING_RATE_INPUT, rtOutput.m_sparseRenderingDirectPixelSamplingRate.view, nullptr);
     ctx->bindResourceView(COMPOSITE_INDIRECT_PIXEL_SAMPLING_RATE_INPUT, rtOutput.m_sparseRenderingIndirectPixelSamplingRate.view, nullptr);
     ctx->bindResourceView(COMPOSITE_ALPHA_GBUFFER_INPUT, rtOutput.m_alphaBlendGBuffer.view, nullptr);

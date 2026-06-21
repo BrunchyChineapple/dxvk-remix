@@ -269,19 +269,6 @@ vec3 loadPrimaryRadiance(
 
     unpackDenoiserRadiance(primaryDirectDiffuseRadiance, cb.primaryDirectDenoiser);
     unpackDenoiserRadiance(primaryDirectSpecularRadiance, cb.primaryDirectDenoiser);
-
-    // Post-denoise cumulus shadow application (fork). The factor texture holds
-    // raw newShadow in [0, 1] from sampleCloudGroundShadow_OptionB; multiplying
-    // here lets the high-frequency cumulus pattern modulate primary direct
-    // lighting without NRD / DLSS-RR smearing the per-cloud variation away.
-    // Default 1.0 (no modulation) when sun NEE didn't run or the voxel-grid
-    // wire-in is disabled. Specular gets the same factor as diffuse. pow(factor,
-    // cloudShadowFactorStrength) is the user contrast curve; saturate() is a
-    // defensive no-op (factor in [0,1] by construction).
-    const float primaryCloudShadowFactor = saturate(texelFetch(PrimaryCloudShadowFactor, pixelCoordinate, 0).x);
-    const float primaryCloudShadowFactorScaled = pow(primaryCloudShadowFactor, cb.cloudShadowFactorStrength);
-    primaryDirectDiffuseRadiance *= primaryCloudShadowFactorScaled;
-    primaryDirectSpecularRadiance *= primaryCloudShadowFactorScaled;
   }
 
   vec3 primaryIndirectDiffuseRadiance = vec3(0);
