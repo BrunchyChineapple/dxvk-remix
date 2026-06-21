@@ -35,6 +35,7 @@
 // stay in atmosphere_common.slangh and are pulled in via the include below.
 
 #include "rtx/pass/atmosphere/atmosphere_common.slangh"
+#include "constellations.h"  // baked lookup table for evalConstellations (fork)
 
 // ============================================================================
 // Night sky — stars, galactic band, shooting stars, airglow
@@ -327,6 +328,158 @@ vec3 evalStarField(vec3 viewDir, AtmosphereArgs args) {
   }
 
   return totalStars * args.starBrightness + milkyWayGlow;
+}
+
+// Sidereal rotation helper (fork). Rotates a sky direction around the celestial
+// pole by args.starRotation degrees (Rodrigues). Default axis (elevation 90,
+// azimuth 0) puts the pole at +Y so starRotation = 0 is the identity. Restored
+// in the remixplus-sync union: Kim's evalStarField inlines this rotation, but
+// evalConstellations below still calls the shared helper.
+vec3 applySiderealRotation(vec3 dir, AtmosphereArgs args) {
+  const float kDegToRad = 3.14159265358979323846f / 180.0f;
+  float poleElev = args.starAxisElevation * kDegToRad;
+  float poleAzi  = args.starAxisRotation  * kDegToRad;
+  vec3 axis = vec3(cos(poleElev) * sin(poleAzi),
+                   sin(poleElev),
+                   cos(poleElev) * cos(poleAzi));
+
+  float rotRad = args.starRotation * kDegToRad;
+  float c = cos(rotRad);
+  float s = sin(rotRad);
+  return dir * c + cross(axis, dir) * s + axis * dot(axis, dir) * (1.0f - c);
+}
+
+// ----------------------------------------------------------------------------
+// Constellation overlay (fork — 2026-05-24)
+//
+// Composites a baked lookup table of named-star points and polyline edges on
+// top of the procedural star field. Source: Morrowind's tx_stars_*.dds (3
+// Guardians) + tx_birth_*.dds (10 Charges + Serpent). Layout: Guardian-
+// triangle at central N/E/W, Charges clustered around their Guardian,
+// Serpent at mid-south. See patches/rtxdll/bake_constellations.py and
+// constellations.h for the table format.
+//
+// Each named star renders as a Gaussian point with PSF tied to
+// args.starPsfSharpness / args.constellationStarSize. Polyline edges (when
+// constellationEdgeBrightness > 0) draw as a Gaussian-weighted distance to
+// the great-circle arc between the two endpoint stars.
+//
+// Birthsign-month gating: the constellation whose birthsignMonth matches
+// args.constellationCurrentMonth (1..12) gets a brightness boost; others
+// stay at baseline. month=0 disables the highlight.
+// ----------------------------------------------------------------------------
+
+// Named-star color palette by constellation kind. Guardians warm white,
+// Charges cool cyan, Wanderer pink-tinged.
+static const vec3 kConstellationColorByKind[3] = {
+  vec3(1.00f, 0.95f, 0.85f),  // 0 Guardian — warm white
+  vec3(0.85f, 0.95f, 1.05f),  // 1 Charge   — cool cyan
+  vec3(1.05f, 0.85f, 0.95f),  // 2 Wanderer — pink-magenta
+};
+
+// Convert (azimuth°, elevation°) to a unit Y-up direction.
+vec3 azElToDir(float azDeg, float elDeg) {
+  const float kDegToRad = 3.14159265358979323846f / 180.0f;
+  float az = azDeg * kDegToRad;
+  float el = elDeg * kDegToRad;
+  float ce = cos(el);
+  return vec3(ce * sin(az), sin(el), ce * cos(az));
+}
+
+// Per-star color temperature classes (mirror evalStarField), tinted toward
+// the constellation kind so Guardians stay warm-white, Charges cool-blue,
+// Serpent pink — bake-deterministic so a star always shows the same color.
+vec3 constellationStarColor(uint constIdx, uint starIdx, vec3 kindTint) {
+  vec3 h = hash31(vec3(float(constIdx), float(starIdx), 17.0f));
+  float temp = h.x;
+
+  vec3 baseColor;
+  if (temp > 0.7f) {
+    baseColor = vec3(0.70f, 0.80f, 1.00f);   // Blue-white (O/B type)
+  } else if (temp > 0.3f) {
+    baseColor = vec3(1.00f, 1.00f, 0.95f);   // White-yellow (F/G type)
+  } else {
+    baseColor = vec3(1.00f, 0.85f, 0.70f);   // Orange (K type)
+  }
+
+  return mix(baseColor, baseColor * kindTint, 0.3f);
+}
+
+vec3 evalConstellations(vec3 viewDir, AtmosphereArgs args) {
+  if (args.constellationsEnabled < 0.5f) return vec3(0.0f);
+
+  // Sidereal rotation lockstep with the procedural star field.
+  vec3 dir = applySiderealRotation(normalize(viewDir), args);
+
+  float sizeScale = max(args.constellationStarSize, 0.1f);
+  float starK = args.starPsfSharpness / (sizeScale * sizeScale);
+  const float kEdgeK = 6000.0f;
+
+  int currentMonth = int(round(args.constellationCurrentMonth));
+
+  vec3 result = vec3(0.0f);
+
+  for (uint c = 0u; c < CONSTELLATION_COUNT; ++c) {
+    ConstellationMeta meta = kConstellationMeta[c];
+    if (meta.starCount == 0u) continue;
+
+    vec3 kindTint = kConstellationColorByKind[meta.kind];
+
+    float kindBoost = (meta.kind == 0u) ? args.constellationGuardianBoost : 1.0f;
+    float monthBoost = (currentMonth > 0 && uint(currentMonth) == meta.birthsignMonth)
+                        ? args.constellationMonthHighlight
+                        : 1.0f;
+    float perConst = args.constellationStarBrightness * kindBoost * monthBoost;
+
+    vec3 starDirs[MAX_STARS_PER_CONSTELLATION];
+    for (uint i = 0u; i < meta.starCount; ++i) {
+      ConstellationStar s = kConstellationStars[c * MAX_STARS_PER_CONSTELLATION + i];
+      starDirs[i] = azElToDir(s.azimuth, s.elevation);
+    }
+
+    for (uint i = 0u; i < meta.starCount; ++i) {
+      ConstellationStar s = kConstellationStars[c * MAX_STARS_PER_CONSTELLATION + i];
+      vec3 sd = starDirs[i];
+      float cd = 1.0f - dot(dir, sd);
+
+      float spot = exp(-cd * starK * 50000.0f);
+      if (spot < 1e-5f) continue;
+
+      vec3 starColor = constellationStarColor(c, i, kindTint);
+
+      float twinkle = 1.0f;
+      if (args.starTwinkleSpeed > 0.0f) {
+        vec3 hashSeed = vec3(float(c), float(i), 23.0f);
+        float twinklePhase = hash31(hashSeed).x * 6.283f;
+        float twinkleFreq  = 0.5f + hash31(hashSeed * 2.0f).x * 2.0f;
+        twinkle = 0.7f + 0.3f * sin(args.timeSeconds * twinkleFreq * args.starTwinkleSpeed + twinklePhase);
+      }
+
+      result += starColor * (spot * s.brightness * perConst * twinkle);
+    }
+
+    if (args.constellationEdgeBrightness > 0.0f) {
+      float edgeIntensity = args.constellationEdgeBrightness * monthBoost * kindBoost;
+      vec3 edgeColor = mix(vec3(1.0f), kindTint, 0.5f);
+      for (uint e = 0u; e < meta.edgeCount; ++e) {
+        ConstellationEdge ed = kConstellationEdges[c * MAX_EDGES_PER_CONSTELLATION + e];
+        if (ed.i >= meta.starCount || ed.j >= meta.starCount) continue;
+        vec3 a = starDirs[ed.i];
+        vec3 b = starDirs[ed.j];
+
+        vec3 ab = b - a;
+        float ab2 = max(dot(ab, ab), 1e-6f);
+        float t = clamp(dot(dir - a, ab) / ab2, 0.0f, 1.0f);
+        vec3 closest = normalize(a + ab * t);
+        float cd2 = 1.0f - dot(dir, closest);
+        float glow = exp(-cd2 * kEdgeK);
+        float endpointFade = 4.0f * t * (1.0f - t);
+        result += edgeColor * (glow * edgeIntensity * endpointFade);
+      }
+    }
+  }
+
+  return result;
 }
 
 // Compute night sky contribution split into two layers:
