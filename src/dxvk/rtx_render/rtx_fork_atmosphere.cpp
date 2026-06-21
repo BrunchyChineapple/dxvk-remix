@@ -977,6 +977,184 @@ namespace fork_hooks {
         ImGui::TreePop();
       }
     }
+
+    void renderConstellationsUI() {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+      if (ImGui::TreeNode("Constellations")) {
+        ImGui::TextDisabled("Lore-accurate Morrowind birthsign constellations.");
+        ImGui::TextDisabled("13 figures (3 Guardians + 10 Charges + Serpent),");
+        ImGui::TextDisabled("composited atop the procedural star field.");
+        ImGui::Separator();
+
+        RemixGui::Checkbox("Enabled", &RtxOptions::constellationsEnabledObject());
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Master toggle for the constellation overlay. The wrapper also drives this off in "
+            "true interior cells to prevent bleed-through.");
+
+        RemixGui::DragFloat("Star Brightness", &RtxOptions::constellationStarBrightnessObject(),
+                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier on the named constellation stars. 1.0 puts them at procedural-"
+            "star peak; raise for a more figure-stamp look. Per-star color temperature variation "
+            "is preserved at any setting.");
+
+        RemixGui::DragFloat("Star Size", &RtxOptions::constellationStarSizeObject(),
+                            0.05f, 0.3f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "PSF size multiplier. 1.0 = ~0.2 deg FWHM (~2.4 pixels at 1080p/90 deg FOV). "
+            "Lower = sharper pinpoint; higher = softer halo. Below 0.5 risks subpixel flicker.");
+
+        RemixGui::DragFloat("Edge Brightness", &RtxOptions::constellationEdgeBrightnessObject(),
+                            0.005f, 0.0f, 0.5f, "%.3f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Polyline glow brightness for the connect-the-dots overlay. 0 = stars only "
+            "(default; figures implied by spatial layout). 0.05-0.15 shows faint connecting lines.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Highlights");
+
+        RemixGui::DragFloat("Guardian Boost", &RtxOptions::constellationGuardianBoostObject(),
+                            0.05f, 1.0f, 3.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier for the 3 Guardian constellations (Warrior / Mage / Thief). "
+            "They sit at central N/E/W and dominate Morrowind canon.");
+
+        RemixGui::DragFloat("Birth-Month Highlight", &RtxOptions::constellationMonthHighlightObject(),
+                            0.05f, 1.0f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier on whichever constellation matches the current Morrowind "
+            "month. 1.0 = no highlight; 1.6 default boosts the player's birth-month figure "
+            "during its month. Wrapper pushes the current month every frame.");
+
+        const float currentMonth = RtxOptions::constellationCurrentMonth();
+        ImGui::Text("Current month (game-driven): %d", int(std::round(currentMonth)));
+
+        ImGui::TreePop();
+      }
+    }
+
+    void renderMeteorsUI() {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+      if (ImGui::TreeNode("Meteors & Showers")) {
+        ImGui::TextDisabled("Activity (game-driven; read-only at runtime)");
+        // Read-only display of the current activity value driven by the wrapper
+        const float currentActivity = RtxOptions::meteorShowerActivity();
+        ImGui::Text("Current shower activity: %.3f", currentActivity);
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Rates");
+        RemixGui::DragFloat("Base Rate (per sec)", &RtxOptions::meteorBaseRateObject(),
+                            0.05f, 0.0f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Background sporadic meteors per second. Always on at night when sun is below horizon. "
+            "0.25 = ~1 every 4 seconds. Random radiants.");
+        RemixGui::DragFloat("Peak Shower Rate (per sec)", &RtxOptions::meteorShowerPeakRateObject(),
+                            0.5f, 0.0f, 50.0f, "%.1f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Streaks per second at peak shower (when activity = 1.0). Multiplied by activity. "
+            "5/sec is stylized for cinematic visibility; lower for realistic shower densities.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Appearance");
+        RemixGui::DragFloat("Brightness", &RtxOptions::meteorBrightnessObject(),
+                            0.1f, 0.0f, 10.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Master brightness scalar on streak intensity.");
+        RemixGui::DragFloat3("Color", &RtxOptions::meteorColorObject(),
+                             0.01f, 0.0f, 2.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Base streak tint. Default warm-white matches typical iron/nickel meteors. "
+            "Per-streak random variation around this controlled by Color Variation.");
+        RemixGui::DragFloat("Color Variation", &RtxOptions::meteorColorVariationObject(),
+                            0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Random per-streak hue variation. 0 = all meteors use exactly Color, 1 = full random "
+            "tinting (green/blue/red simulating composition variance: copper/magnesium/nitrogen).");
+        RemixGui::DragFloat("Trail Length", &RtxOptions::meteorTrailLengthObject(),
+                            0.005f, 0.005f, 0.3f, "%.3f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Streak length in unit-sphere chord. 0.05 = ~3 degrees of sky. "
+            "Larger = longer slower-looking trails.");
+        RemixGui::DragFloat("Trail Width", &RtxOptions::meteorTrailWidthObject(),
+                            0.05f, 0.1f, 5.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Sharpness of the Gaussian falloff across the streak. "
+            "Higher = thinner pinpoint streak, lower = wider softer.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Fireballs");
+        RemixGui::DragFloat("Fireball Chance", &RtxOptions::meteorFireballChanceObject(),
+                            0.005f, 0.0f, 1.0f, "%.3f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Per-streak probability of being a slow bright fireball. Real fireballs are ~1 in 100; "
+            "0.05 default is stylized for visibility. Fireballs ignore moon dimming.");
+        RemixGui::DragFloat("Fireball Brightness Mult", &RtxOptions::meteorFireballBrightnessObject(),
+                            0.5f, 1.0f, 50.0f, "%.1f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover("Brightness multiplier for fireball-class streaks.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Radiant (game-driven during showers)");
+        ImGui::Text("Current radiant: %.1f° elev / %.1f° az",
+                    RtxOptions::meteorRadiantElevation(),
+                    RtxOptions::meteorRadiantRotation());
+        RemixGui::DragFloat("Radiant Spread", &RtxOptions::meteorRadiantSpreadObject(),
+                            1.0f, 1.0f, 90.0f, "%.0f°", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Cone half-angle around the radiant where shower meteors spawn. "
+            "Tight (~10°) = sharp Geminid-like cluster. Wide (~45°) = diffuse scattered.");
+        RemixGui::Checkbox("Enable Radiant Bias", &RtxOptions::meteorEnableRadiantBiasObject());
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "When on, shower meteors emanate from the radiant (real meteor showers do this). "
+            "When off, all meteors are randomly distributed regardless of shower activity.");
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Environment");
+        RemixGui::DragFloat("Moon Dimming Strength", &RtxOptions::meteorMoonDimmingStrengthObject(),
+                            0.05f, 0.0f, 2.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "How aggressively bright moons dim faint meteors. 1.0 = physically-plausible. "
+            "0 = no moon interaction. Doesn't affect fireballs (they survive moonlit skies).");
+
+        ImGui::TreePop();
+      }
+    }
+
+    void renderBloodmoonUI() {
+      constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+      if (ImGui::TreeNode("Bloodmoon (Hircine's Great Hunt)")) {
+        ImGui::TextDisabled("During Hircine's Great Hunt, Secunda turns crimson.");
+        ImGui::TextDisabled("Masser stays normal. Wrapper drives bloodmoonActive");
+        ImGui::TextDisabled("from quest state; debug toggle overrides it here.");
+        ImGui::Separator();
+
+        RemixGui::Checkbox("Trigger Bloodmoon (Debug)",
+                           &RtxOptions::bloodmoonActiveObject());
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Manual override for the Bloodmoon event. NoSave, so it doesn't persist past "
+            "shutdown. Wrapper writes to the same flag; whichever was written most recently "
+            "wins (the wrapper writes every frame, so its value will dominate when no debug "
+            "scripted state exists -- toggle this off to return to wrapper control).");
+
+        RemixGui::DragFloat("Tint Strength", &RtxOptions::bloodmoonStrengthObject(),
+                            0.01f, 0.0f, 1.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Color blend amount. 0 = brightness boost only (no tint), 1 = full tint replacement. "
+            "Default 1.0.");
+
+        RemixGui::DragFloat("Glow Multiplier", &RtxOptions::bloodmoonGlowObject(),
+                            0.05f, 0.5f, 4.0f, "%.2f", sliderFlags);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Brightness multiplier on participating moons during the event. 1.0 = no extra "
+            "glow. 1.4 default reads as the moon being 'lit' for the hunt.");
+
+        RemixGui::ColorEdit3("Tint Color", &RtxOptions::bloodmoonTintObject(),
+                             ImGuiColorEditFlags_Float);
+        RemixGui::SetTooltipToLastWidgetOnHover(
+            "Color participating moons blend toward during a Bloodmoon event. "
+            "Default deep crimson (0.85, 0.10, 0.05).");
+
+        ImGui::TreePop();
+      }
+    }
   } // anonymous namespace
 
   void showAtmosphereUI() {
@@ -1197,6 +1375,8 @@ namespace fork_hooks {
         renderStarsUI();
         renderMilkyWayUI();
         renderStarAppearanceUI();
+        renderConstellationsUI();
+        renderMeteorsUI();
 
         ImGui::TreePop();
       }
@@ -1205,6 +1385,7 @@ namespace fork_hooks {
       if (ImGui::TreeNode("Moons")) {
         renderMoonGlobalLightingUI();
         renderMoonCloudLookUI();
+        renderBloodmoonUI();
 
         for (int i = 0; i < static_cast<int>(MAX_MOONS); ++i) {
           renderMoonUI(i);
