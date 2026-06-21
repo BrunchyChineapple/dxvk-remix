@@ -42,6 +42,7 @@ namespace fork_hooks {
   // ---------------------------------------------------------------------------
   // externalDrawMaterialReplacement
   //
+  // ---------------------------------------------------------------------------
   // Checks for a USD material replacement via getReplacementMaterial(). If one
   // exists, mirror the legacy draw path (determineMaterialData): start from the
   // toolkit override, then merge the ORIGINAL external material's resolved

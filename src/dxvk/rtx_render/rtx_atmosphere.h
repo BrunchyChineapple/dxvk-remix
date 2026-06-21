@@ -22,6 +22,7 @@
 #pragma once
 
 #include "rtx_resources.h"
+#include "rtx_mipmap.h"
 #include "rtx_common_object.h"
 #include "rtx_fast_noise.h"
 #include "rtx/pass/atmosphere/atmosphere_args.h"
@@ -99,8 +100,7 @@ public:
    * 256x256x32 R16F camera-centered tile-wrapped voxel grid storing summed
    * optical depth along the sun direction. Baked every 8 frames at offset 0
    * by cloud_sun_density_grid.comp.slang. Consumed at shade time via
-   * sampleDSun() by the future Nubis Cubed cloud-lighting rewrite (C4-C6 of
-   * the 2026-05-12 workstream). No consumer in this commit.
+   * sampleDSun() by the Nubis Cubed cloud-lighting path.
    */
   const Resources::Resource& getCloudDSun() const { return m_cloudDSun; }
 
@@ -111,7 +111,6 @@ public:
    * optical depth toward zenith. Baked every 8 frames at offset 4 by
    * cloud_ambient_density_grid.comp.slang. Consumed at shade time via
    * sampleDAmbient() for the Nubis Cubed page-142 ambient attenuation term.
-   * No consumer in this commit.
    */
   const Resources::Resource& getCloudDAmbient() const { return m_cloudDAmbient; }
 
@@ -146,8 +145,8 @@ public:
    * full Nubis cloud march per direction: rgb = premultiplied cloud radiance,
    * a = view transmittance. Baked once per frame by
    * cloud_secondary_lut.comp.slang; consumed by evalSkyRadiance's non-primary
-   * branch (indirect / PSR / reflection sky-miss) in place of the per-ray
-   * analytical evalClouds march.
+   * branch (indirect / PSR / reflection sky-miss) to supply clouds without a
+   * per-ray cloud march.
    */
   const Resources::Resource& getCloudSecondaryLut() const { return m_cloudSecondaryLut; }
 
@@ -260,6 +259,20 @@ public:
    */
   AtmosphereArgs getAtmosphereArgs() const;
 
+  /**
+   * \brief Advance the unified cloud-motion accumulators by one frame
+   *        (fork — 2026-06-21, cloud-motion unification).
+   *
+   * Integrates wind advection + field-evolution morph + edge boil as
+   * `offset += velocity * dt` from the live (drift-modulated) RtxOptions, into
+   * persistent members read by the const getAtmosphereArgs(). MUST be called
+   * exactly once per frame (from updateAtmosphereConstants, alongside the other
+   * per-frame setters); getAtmosphereArgs is called many times per frame and so
+   * cannot integrate. Replaces the former stateless `speed * timeSeconds`, which
+   * mis-scaled/rotated the whole field whenever the weather drift varied wind.
+   */
+  void advanceCloudMotion(float dt);
+
 private:
   void createLutResources(Rc<DxvkContext> ctx);
   void dispatchTransmittanceLut(Rc<DxvkContext> ctx);
@@ -268,7 +281,7 @@ private:
   void dispatchCloudNoise3DBake(Rc<DxvkContext> ctx);  // Stage C: baked at init + on bake-input change
   bool needsCloudNoiseRebake() const;                  // true when a bake input (tile / worley*) changed
   void cacheCloudNoiseBakeInputs();                    // snapshot the current bake inputs after a bake
-  void dispatchCloudHeightLutBake(Rc<DxvkContext> ctx);  // Fork: at init + on cloudColumnShapingEnable change (slide 3 lift)
+  void dispatchCloudHeightLutBake(Rc<DxvkContext> ctx);  // Fork: baked once at init (slide 3 lift)
   // Cloud placement map bake (fork — 2026-06-11, column-shaping rework).
   // At init + on bake-input change (cloudCellSizeKm / cloudNoiseTileKm).
   void dispatchCloudPlacementMapBake(Rc<DxvkContext> ctx);
@@ -369,7 +382,7 @@ private:
 
   // Secondary-ray cloud LUT (fork — 2026-06-10, perf). 256x128 RGBA16F,
   // baked every frame by dispatchCloudSecondaryLut.
-  Resources::Resource m_cloudSecondaryLut;
+  RtxMipmap::Resource m_cloudSecondaryLut;
 
   // Cloud placement map (fork — 2026-06-11, column-shaping rework). 512x512
   // RGBA8, baked at init + on input change by dispatchCloudPlacementMapBake.
@@ -392,6 +405,15 @@ private:
   // flips cloudVoxelShadowsEnable, by which point the setter will have run
   // at least one frame.
   Vector3  m_cameraWorldPosYUpKm   { 0.0f, 0.0f, 0.0f };
+
+  // Unified cloud-motion accumulators (fork — 2026-06-21). Integrated once per
+  // frame by advanceCloudMotion() (offset += velocity * dt) and read by the const
+  // getAtmosphereArgs() into cloudWindOffset / cloudEvolutionOffset* / cloudBoilPhase.
+  // Persistent integration (vs the old stateless speed*timeSeconds) is what lets
+  // the slow weather drift vary wind speed/direction without snapping the field.
+  Vector2  m_cloudAdvectOffset     { 0.0f, 0.0f };  // wind translation (km)
+  Vector3  m_cloudEvolutionOffset  { 0.0f, 0.0f, 0.0f };  // morph scroll (km)
+  float    m_cloudBoilPhase        { 0.0f };  // edge-boil scroll phase (km)
 
   // Cloud history ping-pong (fork). Screen-space RGBA16F (premultiplied
   // radiance, alpha) used by the temporal-smoothing path inside
@@ -450,9 +472,6 @@ private:
   // inputs, re-bake only on actual change.
   float    m_cachedPlacementCellSizeKm = 0.0f;
   float    m_cachedPlacementTileKm     = 0.0f;
-  // Height-LUT re-bake gate: the LUT bakes a different curve family per
-  // column-shaping mode, so a flag flip re-bakes it (cheap 64x128 dispatch).
-  bool     m_cachedHeightLutColumnMode = false;
   bool m_initialized = false;
   bool m_lutsNeedRecompute = true;
 };

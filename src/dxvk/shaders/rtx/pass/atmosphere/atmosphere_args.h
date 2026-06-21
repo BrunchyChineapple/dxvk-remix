@@ -556,6 +556,40 @@ struct AtmosphereArgs {
                                       // reaches full strength [0..~0.5]. Below it the ambient fades
                                       // toward 0 so the soft skirt doesn't read as grey-brown haze.
                                       // 0 = off (ambient at full strength on all samples).
-  float pad_cloudEdge0;               // 16-byte alignment
-  float pad_cloudEdge1;
+  // Independent scale on the physical sun's contribution to volumetric fog
+  // in-scattering (fork — issue #35). NOTE (remixplus-sync union): our retained
+  // rtxdi shaders read this from volumeArgs (volume_args.h); this atmosphereArgs
+  // copy is Kim's and is set by the populator for any of Kim's grafted shader
+  // paths that read cb.atmosphereArgs.*. Reuses the former pad_cloudEdge0 slot.
+  float atmosphereSunVolumetricRadianceScale;
+  float multiScatterStrength; // Kim: global scale on the multiscatter fill term in
+                              // evalAtmosphereRadiance (<1 = warmer sunset). Reuses pad_cloudEdge1.
+
+  // ===== remixplus-sync union additions (2026-06-21) =====
+  // Kim's atmosphere fields grafted onto our struct. Field byte-offsets are
+  // irrelevant (C++ + every shader share this header); only the field set +
+  // 16-byte total alignment + vec3-row alignment matter. Laid out as 4 clean
+  // vec4 rows so sizeof(AtmosphereArgs) stays % 16 == 0.
+  float cloudSkyBleedStrength;   // [0,1+] cloud-color inscatter bled into the visible sky
+                                 // (sampled from the smooth secondary dome LUT). 0 = off. (Kim)
+  float cloudBoilPhase;          // Accumulated edge-boil scroll phase (km); offsets the detail
+                                 // tap so cloud edges churn independently of base shape. (Kim)
+  float cloudEvolutionOffsetX;   // Slow 3D offset added to the base 3D noise sample position
+  float cloudEvolutionOffsetY;   // (field-evolution: clouds form/dissolve in place). (Kim)
+
+  float cloudEvolutionOffsetZ;
+  float cloudSkyAmbientFill;     // [0,1] sky-dome underside fill (clouds reflect open sky from
+                                 // below, bypassing bottom-darkening; bright by day). (Kim)
+  float sunsetSaturation;        // Saturation boost on sky radiance near the horizon. (Kim)
+  float cloudShadowFactorStrength; // pow() contrast on cloud-on-terrain shadow, folded onto the
+                                   // sun radiance in sampleAtmosphereSunLight. (Kim, moved here)
+
+  float cloudEnergyConserve;     // [0,1] 0 = legacy additive dual-lobe, 1 = energy-conserving
+                                 // convex blend in evalNubisCubedSample. (Kim)
+  float cloudMsLobeWeight;       // [0,1] convex weight: forward single-scatter vs multi-scatter. (Kim)
+  uint  cloudLayer2StepFloor;    // Min march steps through the layer-2 echo deck. (Kim)
+  uint  cloudLayer2StepMax;      // Hard cap on echo-deck steps per ray. (Kim)
+
+  vec3  cloudLayer2Color;        // Layer-2 echo-deck base color. (Kim)
+  float pad_cloudLayer2Color0;   // completes the vec4 row
 };

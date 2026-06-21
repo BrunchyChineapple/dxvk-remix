@@ -2279,6 +2279,39 @@ namespace dxvk {
                "optically thin; default 0.30 keeps it from competing visually "
                "with the cumulus deck below.");
 
+    // ===== remixplus-sync union additions (Kim's atmosphere options grafted, 2026-06-21) =====
+    // New option declarations backing the AtmosphereArgs fields grafted in the
+    // union merge. NOTE: atmosphereSunVolumetricRadianceScale and
+    // cloudShadowFactorStrength are intentionally NOT redeclared here — they
+    // already exist (rtx.volumetrics and rtx.atmosphere respectively); the
+    // populator feeds the atmosphereArgs copies from those existing accessors.
+    RTX_OPTION("rtx.atmosphere", float, directionalLightRadianceScale, 1.0f,
+               "Global tuning multiplier on the injected sun/moon distant-light radiance (Kim — sun/moon as real distant lights).");
+    RTX_OPTION("rtx.atmosphere", float, cloudEvolutionSpeed, 0.0015f,
+               "Cloud field-evolution (morph) speed in km/s — clouds form/dissolve in place (Kim).");
+    RTX_OPTION("rtx.atmosphere", float, cloudBoilSpeed, 0.004f,
+               "Cloud edge-boil speed in km/s; churns the high-frequency edge detail (Kim). Needs cloudDetailStrength > 0.");
+    RTX_OPTION("rtx.atmosphere", float, cloudEvolutionVerticalBias, 0.8f,
+               "Fraction of the field-evolution scroll along the volume's vertical axis [0..1] (Kim).");
+    RTX_OPTION("rtx.atmosphere", float, cloudSkyAmbientFill, 0.5f,
+               "How strongly cloud undersides pick up the open sky around them [0..1] (Kim).");
+    RTX_OPTION("rtx.atmosphere", float, cloudSkyBleedStrength, 0.15f,
+               "How strongly clouds tint the surrounding sky [0..1+], via the secondary cloud LUT (Kim).");
+    RTX_OPTION("rtx.atmosphere", float, multiScatterStrength, 1.0f,
+               "Global scale on the atmosphere multiscatter fill term (<1 = warmer sunset) (Kim).");
+    RTX_OPTION("rtx.atmosphere", float, sunsetSaturation, 1.0f,
+               "Saturation boost on sky radiance near the horizon; midday untouched (Kim).");
+    RTX_OPTION("rtx.atmosphere", float, cloudEnergyConserve, 1.0f,
+               "[0,1] Energy conservation of cloud direct lighting. 0 = legacy additive dual-lobe, 1 = convex energy-conserving blend (Kim).");
+    RTX_OPTION("rtx.atmosphere", float, cloudMsLobeWeight, 0.5f,
+               "[0,1] Convex weight between forward single-scatter lobe (1-w) and multi-scatter body fill (w) when cloudEnergyConserve > 0 (Kim).");
+    RTX_OPTION("rtx.atmosphere", uint32_t, cloudLayer2StepFloor, 8,
+               "Minimum ray-march steps through the layer-2 echo deck [2..64] (Kim).");
+    RTX_OPTION("rtx.atmosphere", uint32_t, cloudLayer2StepMax, 32,
+               "Hard cap on layer-2 echo-deck samples per ray [2..128] (Kim).");
+    RTX_OPTION("rtx.atmosphere", Vector3, cloudLayer2Color, Vector3(0.89f, 0.92f, 1.0f),
+               "Base color (albedo) of the layer-2 echo deck, independent of cloudColor (Kim).");
+
     // TODO (REMIX-656): Remove this once we can transition content to new hash
     RTX_OPTION("rtx", bool, logLegacyHashReplacementMatches, false, "");
 

@@ -50,17 +50,16 @@
 // the established binding-then-include layout both consumers use.
 
 // =============================================================================
-// Moon-shadow optical-depth tap (port of atmosphere_sky.slangh:617).
+// Moon-shadow optical-depth tap.
 //
-// The legacy `sampleCloudSunOpticalDepth` lives in atmosphere_sky.slangh which
-// the compute passes do NOT include. Replicate the 2-tap deterministic march
-// here so the cloud-march moon path can call it without pulling in the sky
-// header. Math is byte-identical to the legacy helper (same kTaps=2, same
-// kStepKm=0.8, same `density × stepLen` accumulation form, same near-horizon
-// gate). The legacy `pixelCoord` / `frameIdx` jitter params were removed from
-// the signature because they go unused (the comment block at the legacy
-// definition explains why — Jensen's-inequality bias on the convex exp(-x)
-// shadow estimator).
+// A self-contained 2-tap deterministic march so the cloud-march moon path can
+// compute the sun/moon-direction optical depth without pulling in any sky
+// header. (This was ported from a `sampleCloudSunOpticalDepth` helper that
+// formerly lived in atmosphere_sky.slangh, since removed.) kTaps=2, kStepKm=0.8,
+// `density × stepLen` accumulation, with a near-horizon gate. The original
+// `pixelCoord` / `frameIdx` jitter params were dropped from the signature
+// because they go unused — a deterministic estimate avoids Jensen's-inequality
+// bias on the convex exp(-x) shadow estimator.
 // =============================================================================
 float sampleCloudSunOpticalDepth_local(vec3 cloudHitPos, vec3 sunDir,
                                         float typeLocal, float coverageLocal,
@@ -83,6 +82,36 @@ float sampleCloudSunOpticalDepth_local(vec3 cloudHitPos, vec3 sunDir,
   return opticalDepth * kStepKm;
 }
 
+// Slab-parametric variant (fork — 2026-06-21, echo-deck moon). Identical 2-tap
+// march, but the density taps compute height fraction against an explicit
+// [slabAltitudeKm, slabAltitudeKm + slabThicknessKm] band and apply the slab's
+// own density scale. The args-default helper above keys on layer 1's altitude;
+// at the echo deck's altitude that reads as "above the slab" (zero density), so
+// the deck would self-shadow against nothing. marchEchoDeck calls this so the
+// moon silver-lining shadow tracks the DECK's water, not layer 1's.
+float sampleCloudSunOpticalDepth_localSlab(vec3 cloudHitPos, vec3 sunDir,
+                                           float typeLocal, float coverageLocal,
+                                           float slabAltitudeKm, float slabThicknessKm,
+                                           float slabDensityScale, AtmosphereArgs args) {
+  if (sunDir.y <= 0.01f) return 0.0f;
+
+  const int   kTaps   = 2;
+  const float kStepKm = 0.8f;
+  float opticalDepth  = 0.0f;
+
+  for (int i = 0; i < kTaps; ++i) {
+    vec3 p = cloudHitPos + sunDir * (kStepKm * float(i + 1));
+    float hf = computeCloudHeightFraction(p, args, slabAltitudeKm, slabThicknessKm);
+    float d = sampleCloudDensityTextured(p, hf, typeLocal, coverageLocal,
+                                          slabAltitudeKm, slabThicknessKm, slabDensityScale, args,
+                                          AtmosphereCloudNoise3D, AtmosphereCloudNoise3DSampler,
+                                          AtmosphereCloudPlacementMap);
+    opticalDepth += d;
+  }
+
+  return opticalDepth * kStepKm;
+}
+
 // =============================================================================
 // Static-per-frame shading state shared across both layer marches (and, since
 // the extraction, across both march passes). Built once per thread
@@ -94,6 +123,9 @@ struct CloudShadeContext {
   vec3  skyRadianceWarm;     // Sun-direction sky LUT sample (warm at sunset).
   vec3  skyRadianceCool;     // Anti-sun-horizon sky LUT sample (cool at sunset).
                              // Per-sample blend happens in evalNubisCubedSample.
+  vec3  skyRadianceZenith;   // Overhead sky LUT sample — the sky-dome underside
+                             // fill (bright daytime, dim at sunset). Used by
+                             // evalNubisCubedSample's dome-fill term.
   vec3  combinedMoonDir;
   vec3  combinedMoonDiffuseCoeff;
   vec3  combinedMoonPhaseAmt;
@@ -106,7 +138,7 @@ CloudShadeContext buildCloudShadeContext(AtmosphereArgs args) {
   // ===== Per-ray lighting source radiances =====
   // sunRadiance: args.sunIlluminance is raw user-tuned color (near-white in
   // FNV defaults) -- atmospheric extinction along the sun ray is NOT applied
-  // CPU-side. We mirror the legacy evalClouds path's `airTrans` step here so
+  // CPU-side. We apply that `airTrans` extinction along the sun ray here so
   // the direct term picks up the warm-orange Rayleigh shift at low sun
   // elevation. Without this, result.direct stays white while result.ambient
   // (from the sky-view LUT) reads orange, producing a per-pixel hue mismatch
@@ -120,7 +152,36 @@ CloudShadeContext buildCloudShadeContext(AtmosphereArgs args) {
   // scatter atmosphere color matching the paper's pp. 122/132/171-173 renders.
   vec3 sunDirYUp = normalize(args.sunDirection);
   vec3 airTrans = getAtmosphericTransmittanceForDir(sunDirYUp, args);
-  vec3 sunRadiance = args.sunIlluminance * airTrans;
+  // Day/night gate on ALL of the cloud's daytime (sun-derived) lighting —
+  // both the direct sun term and the sky-ambient terms (fork — issue #33,
+  // extended for the night-brightness / retained-sunset-glow regression).
+  //
+  // Two things kept the clouds sunlit at night: (1) airTrans alone does not
+  // fully extinguish the sun below the horizon, and (2) skyRadianceWarm/Cool
+  // are sampled with the direction's y clamped just above the horizon (see the
+  // max(..., 0.05) below), so the sky-view LUT keeps returning the warm horizon
+  // (orange twilight) color no matter how far the sun has set — leaving clouds
+  // glowing orange at -20deg elevation. The original #33 fix gated only the
+  // direct term, which left that orange ambient as the sole night cloud light.
+  //
+  // Sunset-approach rolloff (fork — 2026-06-20). The upper bound was 0.02, which
+  // held the cloud's daytime lighting at FULL brightness until the geometric
+  // horizon and then crashed to night across [-0.05, 0.02]. That kept the sun +
+  // sky-ambient terms at full strength through the entire low-sun band where
+  // airTrans and the sky-view LUT are at their most saturated orange, so right
+  // before sunset the clouds read as full-brightness, fully-saturated, flat
+  // orange ("neon orange clouds" — worst below sun.y ~0.2, recovering once the
+  // sun is well below the horizon). Widening the upper bound to 0.20 (~11.5deg)
+  // dims the daytime cloud lighting PROGRESSIVELY as the sun descends through
+  // that band (physically: the scene darkens through sunset), so the reddest
+  // light is no longer the brightest. Above 0.20 daytime is unchanged (the good
+  // "golden hour" window is untouched); at the horizon dayFactor ~= 0.2,
+  // reaching 0 at -0.05 where the moon/night terms (nightFactor =
+  // smoothstep(0.02, -0.05, sun.y)) take over. dayFactor and nightFactor are no
+  // longer exact complements in [0.02, 0.20]; the small overlap is a gentle
+  // pre-sunset dim, not a pop.
+  float dayFactor = smoothstep(-0.05f, 0.20f, sunDirYUp.y);
+  vec3 sunRadiance = args.sunIlluminance * airTrans * dayFactor;
 
   vec3 sunDirForAmbient = sunDirYUp;
   sunDirForAmbient.y = max(sunDirForAmbient.y, 0.05f);
@@ -128,7 +189,7 @@ CloudShadeContext buildCloudShadeContext(AtmosphereArgs args) {
   vec3 skyRadianceWarm = sampleSkyAmbientForVolume(sunDirForAmbient, args,
                                                     AtmosphereSkyViewLut,
                                                     AtmosphereCloudSkyTransmittanceLut,
-                                                    AtmosphereSkyViewSampler);
+                                                    AtmosphereSkyViewSampler) * dayFactor;
 
   // Anti-sun horizon sample for the per-sample warm/cool blend (fork —
   // 2026-05-21). Mirrors the sun-direction sample's small y-lift to keep
@@ -139,36 +200,43 @@ CloudShadeContext buildCloudShadeContext(AtmosphereArgs args) {
   // so this sample never reaches the composite.
   vec3 antiSunDir = vec3(-sunDirYUp.x, 0.05f, -sunDirYUp.z);
   antiSunDir = normalize(antiSunDir);
+  // Same dayFactor gate as the warm sample (issue #33): fades the daytime
+  // sky-ambient out at night so it can't keep tinting clouds below the horizon.
   vec3 skyRadianceCool = sampleSkyAmbientForVolume(antiSunDir, args,
                                                     AtmosphereSkyViewLut,
                                                     AtmosphereCloudSkyTransmittanceLut,
-                                                    AtmosphereSkyViewSampler);
+                                                    AtmosphereSkyViewSampler) * dayFactor;
+
+  // Overhead (zenith) sky sample for the sky-dome underside fill (fork —
+  // 2026-06-19, clouds-reflect-sky). This is the bright daytime sky that lights
+  // cloud bottoms from below/around — the term the warm/cool sun-direction
+  // samples above deliberately omit. Dim at sunset, so it self-fades and lets
+  // the warm samples carry the look. Same dayFactor gate as the others.
+  vec3 skyRadianceZenith = sampleSkyAmbientForVolume(vec3(0.0f, 1.0f, 0.0f), args,
+                                                    AtmosphereSkyViewLut,
+                                                    AtmosphereCloudSkyTransmittanceLut,
+                                                    AtmosphereSkyViewSampler) * dayFactor;
 
   // ===== Per-pixel moon-lighting precompute =====
-  // Direct port of evalClouds (atmosphere_sky.slangh:756-884). The Nubis Cubed
-  // sun equations don't model moonlight, so without this block the cloud RT
-  // renders black at night when cloudRenderRTEnable=true. Three contributions
-  // mirror the legacy:
+  // The Nubis Cubed sun equations don't model moonlight, so without this block
+  // the cloud RT renders black at night. Three contributions:
   //   - nightLight (ambient, per-ray): per-moon airglow fill + nightSkyColor.
-  //     Added uncolored at composite time (it's atmospheric airglow, not cloud-
-  //     scatter; matches the legacy `+ nightLight` outside cloudColor's parens).
+  //     Added uncolored at composite time (atmospheric airglow, not cloud-
+  //     scatter, so it sits outside cloudColor's parens).
   //   - moonDiffuseCoeff[mi] / moonPhaseAmt[mi] (directional, per-ray): per-moon
   //     Lambert and HG-phase-gain response gated by phaseGlow / nightFactor /
   //     cloudMoonBrightness, scaled by computeMoonSharedFactor — which ALREADY
   //     folds in atmospheric extinction `getAtmosphericTransmittanceForDir(
-  //     m.direction, args)` for the moon ray, mirroring the C6.4 airTrans
-  //     treatment we just landed for the sun. Split so the phase term can be
-  //     Wrenninge-smoothed across HG-anisotropy octaves in the per-sample loop.
+  //     m.direction, args)` for the moon ray, mirroring the airTrans treatment
+  //     used for the sun. Split so the phase term can be Wrenninge-smoothed
+  //     across HG-anisotropy octaves in the per-sample loop.
   //   - combinedMoonDir / combinedMoonDiffuseCoeff / combinedMoonPhaseAmt
   //     (Lever-4 approximation): one brightness-weighted shadow march along the
   //     combined direction replaces N independent per-moon marches.
   //
   // Smooth twilight transition: nightFactor = smoothstep(0.02, -0.05, sun.y)
-  // ramps from 0 (sun above horizon) to 1 (sun ~3° below horizon). Same gate
-  // the legacy uses, so the day -> night cross-fade on the Nubis-Cubed RT
-  // matches the analytical-evalClouds curve byte-for-byte. No popping at the
-  // moment the cloudRenderRTEnable gate flips the consumer from analytical to
-  // RT either, because both paths use this identical smoothstep.
+  // ramps from 0 (sun above horizon) to 1 (sun ~3° below horizon), giving a
+  // pop-free day -> night cross-fade on the cloud RT.
   vec3 nightLight = vec3(0.0f);
   vec3 moonDiffuseCoeff[MAX_MOONS];
   vec3 moonPhaseAmt[MAX_MOONS];
@@ -191,8 +259,13 @@ CloudShadeContext buildCloudShadeContext(AtmosphereArgs args) {
         float phaseGlow = 0.5f - 0.5f * cos(m.phase * 2.0f * kPi);
 
         // Ambient airglow contribution (uniform across the cloud volume).
+        // Rebase (2026-06-14): the 0.0015 night-radiance scale moved into the
+        // internal kMoonAirglowScale constant so the user-facing knob is an
+        // O(1) "multiple of the calibrated night level" (default 1.0) instead
+        // of a sub-0.01 raw gain. Effective value at the default is unchanged.
+        const float kMoonAirglowScale = 0.0015f;
         vec3 sharedFactorAmbient = computeMoonSharedFactor(m, args, m.color);
-        nightLight += sharedFactorAmbient * args.moonAmbientAirglow
+        nightLight += sharedFactorAmbient * args.moonAmbientAirglow * kMoonAirglowScale
                     * moonDot * phaseGlow * args.cloudMoonBrightness * nightFactor;
 
         // Directional contribution — only above-horizon moons matter.
@@ -200,8 +273,7 @@ CloudShadeContext buildCloudShadeContext(AtmosphereArgs args) {
           // Silver-lining response decomposed: diffuse (Lambert) amount and
           // phase (HG-gain) amount are precomputed here; the HG phase function
           // itself is evaluated per-sample in the march loop below so it can
-          // be Wrenninge-smoothed across multiple anisotropy octaves. See the
-          // matching design note in atmosphere_sky.slangh's evalClouds.
+          // be Wrenninge-smoothed across multiple anisotropy octaves.
           const float kMoonDiffuseGain = args.moonCloudDiffuseGain;
           const float kMoonPhaseGain   = args.moonCloudPhaseGain;
           float moonLambert = saturate(moonDir.y * 0.8f + 0.2f);
@@ -221,14 +293,20 @@ CloudShadeContext buildCloudShadeContext(AtmosphereArgs args) {
       // Night-sky airglow baseline (uncolored, mirrors legacy `* 0.5f`).
       nightLight += args.nightSkyColor * args.nightSkyBrightness * nightFactor * 0.5f;
 
-      // Starlight ambient coupling (fork — mirrors evalClouds in atmosphere_sky.slangh).
+      // Starlight ambient coupling (fork).
       // Adds a faint per-ray ambient lift to cloud body lighting derived from
       // the sky's star contribution so cumulus under starry skies doesn't read
-      // as pitch-black against HDR ~8 stars overhead. starAmbientCouplingStrength
-      // is per-mille by default (0.01); coupled to args.starBrightness so the
+      // as pitch-black against HDR ~8 stars overhead.
+      // Rebase (2026-06-14): kStarCloudCoupling absorbs the night-radiance
+      // scale (and the calibrated reduction from the too-bright 0.03 raw gain)
+      // so starAmbientCouplingStrength is an O(1) "multiple of the calibrated
+      // night level" (default 1.0). This was the single largest UNIFORM night
+      // cloud term (added uncolored to every sample), so it drove most of the
+      // "clouds glow blue at night" read; coupled to args.starBrightness so the
       // lift tracks the user's star slider.
+      const float kStarCloudCoupling = 0.008f;
       nightLight += args.nightSkyColor * args.starBrightness
-                  * args.starAmbientCouplingStrength * nightFactor;
+                  * args.starAmbientCouplingStrength * kStarCloudCoupling * nightFactor;
     }
   }
 
@@ -273,6 +351,7 @@ CloudShadeContext buildCloudShadeContext(AtmosphereArgs args) {
   ctx.sunRadiance              = sunRadiance;
   ctx.skyRadianceWarm          = skyRadianceWarm;
   ctx.skyRadianceCool          = skyRadianceCool;
+  ctx.skyRadianceZenith        = skyRadianceZenith;
   ctx.combinedMoonDir          = combinedMoonDir;
   ctx.combinedMoonDiffuseCoeff = combinedMoonDiffuseCoeff;
   ctx.combinedMoonPhaseAmt     = combinedMoonPhaseAmt;
@@ -449,8 +528,8 @@ void marchCloudSlab(vec3   viewDirYUp,
     NubisCubedLighting lighting = evalNubisCubedSample(
         samplePos, shapeHf, density, columnSpan,
         viewDirYUp, ctx.sunDirYUp, ctx.sunRadiance,
-        ctx.skyRadianceWarm, ctx.skyRadianceCool,
-        args, /*isZUp=*/false);
+        ctx.skyRadianceWarm, ctx.skyRadianceCool, ctx.skyRadianceZenith,
+        args, /*isZUp=*/false, /*dSunOverride=*/-1.0f);
 
     // ===== Per-sample moon direct light =====
     // Same Beer-Lambert single-octave moon shadow march as before. The if-gate
@@ -480,8 +559,7 @@ void marchCloudSlab(vec3   viewDirYUp,
     }
 
     // Composite: cloudColor multiplies all surface-scatter terms; nightLight
-    // is added uncolored. Identical structure to the legacy single-layer march
-    // and the analytical evalClouds in atmosphere_sky.slangh.
+    // is added uncolored, identical to the legacy single-layer march.
     //
     // Thin-sample ambient fade (fork — 2026-06-13). The coverage gate leaves a
     // soft sub-threshold skirt around every silhouette; those thin samples are
@@ -522,11 +600,204 @@ void marchCloudSlab(vec3   viewDirYUp,
 }
 
 // =============================================================================
-// Both-layer march wrapper — the layer-1 + optional layer-2 sequencing that
-// previously lived in cloud_render's main(). Shared so the secondary-ray
-// LUT bake composites the cirrus deck identically. The layer-2 context
-// zeroes the moon coefficients (see the marchCloudSlab block comment for
-// why) and swaps in layer 2's spread knobs via an args copy.
+// Echo-deck march (fork — 2026-06-21, layer-2 rework). A deliberately CHEAP
+// second deck that reuses layer 1's exact density model ("the same cloud
+// slab") at a higher, gapped altitude — the perf-conscious replacement for
+// the old fully-independent layer-2 marchCloudSlab pass (which inherited
+// layer 1's tall-cumulus step floor and tapped the layer-1-only D_sun grid).
+//
+// Three things make it cheaper than a second full slab march, none of which
+// touch layer 1:
+//   * Low step budget. Layer 1's step floor (sampleCount, ~32) is sized for
+//     tall cumulus that fills the slab top-to-bottom; a thinner echo deck
+//     doesn't need it. The floor/cap here are the user-adjustable
+//     cloudLayer2StepFloor / cloudLayer2StepMax (default 8 / 16), so the deck
+//     costs a fraction of a full second pass. Deck cost is ~linear in step
+//     count, so this is the dominant win.
+//   * Analytic sun shadow. evalNubisCubedSample's one remaining voxel-grid tap
+//     (D_sun) is baked over the LAYER-1 slab only, so a deck at a different
+//     altitude reads meaningless residual from it. We pass a cheap analytic
+//     D_sun proxy instead (dSunOverride >= 0) — one fewer texture tap per
+//     dense sample AND no stale-grid artifact.
+//   * No moon path. A thin echo deck contributes no resolvable moonlit silver
+//     lining, so the whole per-sample moon-shadow block is simply absent here
+//     (the old layer-2 path zeroed the moon coefficients to the same end).
+//
+// Everything else is identical to marchCloudSlab on purpose: the same per-
+// column density model (so the deck reads as the same kind of cloud AND keeps
+// the per-column early-out that refunds the placement tap on empty steps), the
+// same coverage/type control-field machinery driven by the deck's own
+// mean / spread / seed knobs (= the "varied echo" — a decorrelated but
+// related cloudscape via cloudLayer2NoiseSeed), and the same Beer-Lambert +
+// aerial-perspective accumulation. The split-march tMin/tMax clamps are
+// dropped — the echo deck never needs the partition experiment.
+// =============================================================================
+void marchEchoDeck(vec3   viewDirYUp,
+                   float  pixelJitter,
+                   float  slabAltitudeKm,
+                   float  slabThicknessKm,
+                   float  slabTypeMean,
+                   float  slabCoverageMean,
+                   float  slabDensityScale,
+                   float  slabNoiseSeedOffset,
+                   CloudShadeContext ctx,
+                   AtmosphereArgs args,
+                   inout vec3  accumColor,
+                   inout float viewTransmittance) {
+  float cloudR = cloudPlanetRadius(args);
+  vec3 planetCenter = vec3(0.0f, -cloudR, 0.0f);
+  float baseRadius = cloudR + slabAltitudeKm;
+  float topRadius  = cloudR + slabAltitudeKm + slabThicknessKm;
+
+  float t0base, t1base, t0top, t1top;
+  if (!intersectSphere(vec3(0.0f), viewDirYUp, planetCenter, baseRadius, t0base, t1base)) return;
+  if (!intersectSphere(vec3(0.0f), viewDirYUp, planetCenter, topRadius,  t0top,  t1top))  return;
+
+  float tEntry = max(t1base, 0.0f);
+  float tExit  = t1top;
+  if (tEntry >= tExit || tExit <= 0.0f) return;
+
+  // Low step budget — the echo deck's headline perf lever, user-adjustable via
+  // cloudLayer2StepFloor / cloudLayer2StepMax (decoupled from layer 1's
+  // cloudViewSamples / cloudViewSamplesMax, and defaulted far lower: 8 / 16).
+  // Honor the same cloudViewStepKm length target as layer 1 (so horizon-grazing
+  // rays still step at a sane density), clamped to the deck's own floor/cap.
+  // kEchoStepHardCap is a GPU-hang backstop, NOT a tuning knob: if the
+  // cloudLayer2Step* CB fields ever read garbage (e.g. a constant-buffer
+  // misalignment), an unclamped step count would spin the march into a device
+  // hang = solid-black frame. Cap well above the option's legitimate max (128)
+  // so it never bites real values but bounds the worst case.
+  const uint kEchoStepHardCap = 256u;
+  uint echoFloor = clamp(args.cloudLayer2StepFloor, 1u, kEchoStepHardCap);
+  uint echoMax   = clamp(max(args.cloudLayer2StepMax, echoFloor), echoFloor, kEchoStepHardCap);
+  uint effSampleCount = echoFloor;
+  if (args.cloudViewStepKm > 0.001f) {
+    uint wanted = uint(ceil((tExit - tEntry) / args.cloudViewStepKm));
+    effSampleCount = clamp(wanted, echoFloor, echoMax);
+  }
+  float stepLen = (tExit - tEntry) / float(effSampleCount);
+
+  // Wrenninge phase-octave constants (used by the per-sample moon block).
+  const float kMsA = 0.5f;
+  const float kMsC = 0.5f;
+
+  // Decouple the moon-shadow extinction from the main slider too. ctx is built
+  // once from the MAIN args (moonBaseSigma = 2 × main cloudDensity); rebuild it
+  // here from the deck's decoupled args.cloudDensity (= args2) so the deck's
+  // moonlit self-shadow tracks the deck's own density, matching the sun path.
+  ctx.moonBaseSigma = 2.0f * args.cloudDensity;
+
+  // Coverage / type control fields — hoisted entry/exit lerp, same structure as
+  // marchCloudSlab. The slabNoiseSeedOffset (cloudLayer2NoiseSeed) shifts the
+  // 2D hash so the deck generates a decorrelated-but-related field at the
+  // same XZ; a seed shift is geometry-free (a position shift would fight the
+  // length()-based spherical altitude math in computeCloudHeightFraction).
+  //
+  // Coverage spread is forced to 0 for the deck (see marchCloudLayers), so the
+  // coverage field collapses to a uniform slabCoverageMean and the coverage taps
+  // below fall out of the per-step blend — that's what removed the coverage
+  // "tiling". Type still varies via the plain single-octave field.
+  vec3 entryPosCF = args.cameraWorldPosYUpKm + viewDirYUp * tEntry;
+  vec3 exitPosCF  = args.cameraWorldPosYUpKm + viewDirYUp * tExit;
+  vec2 entryXZ = vec2(entryPosCF.x, entryPosCF.z);
+  vec2 exitXZ  = vec2(exitPosCF.x,  exitPosCF.z);
+  float typeNoiseEntry     = cloudControlField2D(entryXZ * args.cloudTypeNoiseScale,     200.0f + slabNoiseSeedOffset);
+  float typeNoiseExit      = cloudControlField2D(exitXZ  * args.cloudTypeNoiseScale,     200.0f + slabNoiseSeedOffset);
+  float coverageNoiseEntry = cloudControlField2D(entryXZ * args.cloudCoverageNoiseScale, 250.0f + slabNoiseSeedOffset);
+  float coverageNoiseExit  = cloudControlField2D(exitXZ  * args.cloudCoverageNoiseScale, 250.0f + slabNoiseSeedOffset);
+
+  for (uint i = 0u; i < effSampleCount; ++i) {
+    if (viewTransmittance < 0.01f) break;
+
+    float t = tEntry + stepLen * (float(i) + pixelJitter);
+    vec3 samplePos = args.cameraWorldPosYUpKm + viewDirYUp * t;
+
+    float rayFrac = (float(i) + pixelJitter) / float(effSampleCount);
+    float typeNoise     = mix(typeNoiseEntry,     typeNoiseExit,     rayFrac);
+    float coverageNoise = mix(coverageNoiseEntry, coverageNoiseExit, rayFrac);
+    float typeLocal     = saturate(slabTypeMean     + (typeNoise     - 0.5f) * args.cloudTypeSpread);
+    float coverageLocal = saturate(slabCoverageMean + (coverageNoise - 0.5f) * args.cloudCoverageSpread);
+
+    float hf = computeCloudHeightFraction(samplePos, args, slabAltitudeKm, slabThicknessKm);
+    float shapeHf;
+    float columnSpan;
+    float density = sampleCloudDensityTextured(samplePos, hf, typeLocal, coverageLocal,
+                                                slabAltitudeKm, slabThicknessKm, slabDensityScale,
+                                                args, AtmosphereCloudNoise3D, AtmosphereCloudNoise3DSampler,
+                                                AtmosphereCloudPlacementMap, shapeHf, columnSpan);
+    if (density < 0.001f) continue;
+
+    // Analytic sun-shadow optical depth in place of the layer-1-only D_sun
+    // grid tap: depth grows toward the deck base (1 - shapeHf) and scales with
+    // the deck's own thickness × density. Cheap, artifact-free, and good
+    // enough for a thin deck where the forward-scatter / silver-lining cue
+    // dominates the look anyway. (>= 0, so evalNubisCubedSample skips the grid.)
+    float dSunProxy = (1.0f - shapeHf) * slabThicknessKm * slabDensityScale;
+
+    NubisCubedLighting lighting = evalNubisCubedSample(
+        samplePos, shapeHf, density, columnSpan,
+        viewDirYUp, ctx.sunDirYUp, ctx.sunRadiance,
+        ctx.skyRadianceWarm, ctx.skyRadianceCool, ctx.skyRadianceZenith,
+        args, /*isZUp=*/false, /*dSunOverride=*/dSunProxy);
+
+    // Per-sample moon direct light (fork — 2026-06-21). The echo deck is the
+    // same cloud model as layer 1, so under a bright moon it must catch the
+    // same silver lining / direct scatter — without this the upper deck read
+    // flat while the lower deck was rim-lit. Same Beer-Lambert single-octave
+    // shadow + Wrenninge-smoothed phase as marchCloudSlab, gated to dense night
+    // samples; the shadow tap is the slab-aware variant so the deck self-
+    // shadows against its OWN altitude band (see sampleCloudSunOpticalDepth_
+    // localSlab). The if-gate skips the whole block by day (moon coeffs zero).
+    const float kMoonShadowSkipDensity = 0.05f;
+    vec3 moonDirectLight = vec3(0.0f);
+    if (any((ctx.combinedMoonDiffuseCoeff + ctx.combinedMoonPhaseAmt) > vec3(0.001f))) {
+      float moonOpticalDepth = 0.0f;
+      if (density >= kMoonShadowSkipDensity) {
+        moonOpticalDepth = sampleCloudSunOpticalDepth_localSlab(
+            samplePos, ctx.combinedMoonDir, typeLocal, coverageLocal,
+            slabAltitudeKm, slabThicknessKm, slabDensityScale, args);
+      }
+      float moonShadow = exp(-moonOpticalDepth * ctx.moonBaseSigma);
+      float moonCosTheta = dot(viewDirYUp, ctx.combinedMoonDir);
+      float msMoonAniso  = 0.0f;
+      float octEnergyM   = 1.0f;
+      float octPhaseGM   = args.moonCloudAnisotropy;
+      for (uint oct = 0u; oct < ctx.msOctaveCount; ++oct) {
+        msMoonAniso += octEnergyM * hgPhase(moonCosTheta, octPhaseGM);
+        octEnergyM  *= kMsA;
+        octPhaseGM  *= kMsC;
+      }
+      moonDirectLight = (ctx.combinedMoonDiffuseCoeff
+                       + ctx.combinedMoonPhaseAmt * msMoonAniso) * moonShadow;
+    }
+
+    // Same thin-edge ambient fade + composite as marchCloudSlab. nightLight is
+    // added uncolored so the deck picks up airglow at night like layer 1.
+    float ambientThinFade = args.cloudEdgeAmbientFade > 1e-5f
+                          ? smoothstep(0.0f, args.cloudEdgeAmbientFade, density)
+                          : 1.0f;
+    vec3 sampleColor = args.cloudColor
+                     * (lighting.direct + lighting.ambient * ambientThinFade + moonDirectLight)
+                     + ctx.nightLight;
+
+    float effectiveDensity = density * args.cloudDensity;
+    float stepTransmittance = exp(-effectiveDensity * stepLen);
+    vec3 stepRadiance = sampleColor * (1.0f - stepTransmittance);
+
+    float aerialT_haze = exp(-args.cloudAerialHazePerKm * t);
+    float aerialT_fade = exp(-args.cloudAerialFadePerKm * t);
+    accumColor += stepRadiance * viewTransmittance * aerialT_haze;
+    viewTransmittance *= mix(1.0f, stepTransmittance, aerialT_fade);
+  }
+}
+
+// =============================================================================
+// Both-layer march wrapper — the layer-1 cumulus slab plus the optional
+// layer-2 echo deck. Shared so the secondary-ray LUT bake composites the
+// deck identically. Layer 1 is the full marchCloudSlab; layer 2 is the lean
+// marchEchoDeck (see its header). Front-to-back ordering: layer 1 (lower,
+// nearer) marches first so its residual transmittance composites the higher
+// deck behind it.
 // =============================================================================
 void marchCloudLayers(vec3  viewDirYUp,
                       float pixelJitter,
@@ -546,30 +817,53 @@ void marchCloudLayers(vec3  viewDirYUp,
                  sampleCount, ctx, args,
                  accumColor, viewTransmittance);
 
-  // Layer 2 (optional cirrus deck) — marched after layer 1 so the residual
-  // viewTransmittance composites layer 2 onto layer 1 in front-to-back order
-  // (camera looking up: cumulus near, cirrus far).
+  // Layer 2 echo deck — same slab model at a gapped altitude, marched cheaply.
+  // Reads its own coverage/type spread via an args copy so the shared density
+  // sampler applies the deck's variation; its mean/density/seed come through
+  // marchEchoDeck's slab params directly.
   if (args.cloudLayer2Enable != 0u && viewTransmittance > 0.01f) {
-    CloudShadeContext ctx2 = ctx;
-    ctx2.combinedMoonDiffuseCoeff = vec3(0.0f);
-    ctx2.combinedMoonPhaseAmt     = vec3(0.0f);
-    // Layer 2 reads its own coverage/type spread via an args copy so
-    // sampleCloudDensityTextured uses cirrus-appropriate variation. The
-    // seed offset below shifts the 2D smoothNoise2D hash so layer 2
-    // generates a completely decorrelated coverage/type field at the same
-    // XZ. Position-based shifts would interfere with the spherical
-    // altitude math in computeCloudHeightFraction (length()-based),
-    // pushing samples out of the slab; a seed shift is geometry-free.
     AtmosphereArgs args2 = args;
-    args2.cloudCoverageSpread = args.cloudLayer2CoverageSpread;
+    // Deck coverage spread is forced to 0: the spread amplified the single-
+    // octave Worley coverage lattice into a fine tiled/stippled texture at the
+    // deck's distance (the cells are ~3 km, tiny in angle from far away). With
+    // spread 0 the deck's coverage collapses to a uniform slabCoverageMean
+    // sheet — no coverage field, no tiling. (The cloudLayer2CoverageSpread
+    // option was removed; type spread is still available.)
+    args2.cloudCoverageSpread = 0.0f;
     args2.cloudTypeSpread     = args.cloudLayer2TypeSpread;
-    marchCloudSlab(viewDirYUp, pixelJitter,
-                   args.cloudLayer2Altitude, args.cloudLayer2Thickness,
-                   args.cloudLayer2TypeMean, args.cloudLayer2CoverageMean,
-                   args.cloudLayer2DensityScale,
-                   args.cloudLayer2NoiseSeed,
-                   tMinClamp, tMaxClamp,
-                   sampleCount, ctx2, args2,
-                   accumColor, viewTransmittance);
+    // Decouple the deck's density from the MAIN cloudDensity slider. cloudDensity
+    // is the shared extinction coefficient (used by the march, the lighting
+    // sigma/downTau, and the SDF proxy), so moving the main Density slider
+    // otherwise scaled BOTH decks — most visibly the deck's opacity. Pin the
+    // deck's extinction to a fixed reference equal to cloudDensity's 1.8 default,
+    // so (a) the main slider no longer bleeds into the deck and (b) the deck look
+    // is unchanged at the default main density. The deck's OWN opacity stays on
+    // cloudLayer2DensityScale (the sampler's slabDensityScale). marchEchoDeck
+    // threads args2 through the sampler + lighting + moon path, so this decouples
+    // the deck's density consistently, not just its march extinction. Keep this
+    // matched to cloudDensity's RTX_OPTION default if that ever changes.
+    const float kEchoDeckExtinction = 1.8f;
+    args2.cloudDensity = kEchoDeckExtinction;
+    // The shared lighting evaluator (evalNubisCubedSample, sampleCloudSdf,
+    // sampleDimProfile, the underside down-integral) reads args.cloudThickness
+    // and args.cloudTypeMean DIRECTLY — they don't get the deck's slab params
+    // the way the density sampler does. Left unset, the deck's SDF proxy,
+    // dim profile and underside optical depth would key on layer 1's thickness
+    // and type instead of the deck's own. Point them at the deck's values so
+    // the deck's shape-driven lighting matches its geometry, not layer 1's.
+    // (Coverage already flows through coverageLocal, so it needs no override.)
+    args2.cloudThickness = args.cloudLayer2Thickness;
+    args2.cloudTypeMean  = args.cloudLayer2TypeMean;
+    // Independent deck albedo — the one look knob split out from layer 1 (the
+    // march composite multiplies all scatter terms by args.cloudColor). Defaults
+    // to the same near-white, so this is a no-op until the user tints it.
+    args2.cloudColor     = args.cloudLayer2Color;
+    marchEchoDeck(viewDirYUp, pixelJitter,
+                  args.cloudLayer2Altitude, args.cloudLayer2Thickness,
+                  args.cloudLayer2TypeMean, args.cloudLayer2CoverageMean,
+                  args.cloudLayer2DensityScale,
+                  args.cloudLayer2NoiseSeed,
+                  ctx, args2,
+                  accumColor, viewTransmittance);
   }
 }

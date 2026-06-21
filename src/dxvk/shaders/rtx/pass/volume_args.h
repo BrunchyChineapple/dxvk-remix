@@ -97,6 +97,7 @@ struct VolumeArgs {
 
   float maxAttenuationDistanceForNoAtmosphere;
   uint resetHistory;
+  // Upstream translucent-shadow support for volumetrics.
   uint16_t enableTranslucentShadows;
   uint16_t pad0;
   // Fork: froxel radiance cache temporal antilag sensitivity (0 = disabled). See

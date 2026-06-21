@@ -165,6 +165,7 @@ struct RaytraceArgs {
   EyeArgs eyeArgs;
   AtmosphereArgs atmosphereArgs;
   ShadowTerminatorArgs shadowTerminatorArgs;
+  AtmosphereArgs atmosphereArgs;
 
   Camera renderTargetCamera;
 

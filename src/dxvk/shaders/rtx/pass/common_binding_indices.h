@@ -100,8 +100,8 @@
 // (D_sun) and zenith (D_ambient) at each voxel of a camera-centered tile-
 // wrapped grid. Round-robin baked every 8 frames by
 // cloud_sun_density_grid.comp.slang / cloud_ambient_density_grid.comp.slang.
-// Will feed the Nubis Cubed cloud-lighting rewrite landing in C4-C6 of the
-// 2026-05-12 workstream. No consumer in this commit.
+// Consumed at shade time by the Nubis Cubed cloud-lighting path via
+// sampleDSun / sampleDAmbient.
 #define BINDING_ATMOSPHERE_CLOUD_D_SUN 210
 #define BINDING_ATMOSPHERE_CLOUD_D_AMBIENT 211
 
@@ -121,19 +121,23 @@
 // per direction: rgb = premultiplied cloud radiance, a = view transmittance
 // (same convention as BINDING_ATMOSPHERE_CLOUD_RENDER_RT). Baked once per
 // frame by cloud_secondary_lut.comp.slang; consumed by evalSkyRadiance's
-// NON-primary branch (indirect / PSR / reflection sky-miss) in place of the
-// per-ray analytical evalClouds march. Sampled with the sky-view sampler
-// (REPEAT-U handles the azimuth seam).
+// NON-primary branch (indirect / PSR / reflection sky-miss). Sampled with the
+// sky-view sampler (REPEAT-U handles the azimuth seam).
 #define BINDING_ATMOSPHERE_CLOUD_SECONDARY_LUT 215
 
 // Cloud placement map (fork — 2026-06-11, column-shaping rework). 512x512
 // RGBA8 tiled at cloudNoiseTileKm: R = cluster field (where clouds are, at
 // cloud scale), G = per-cloud top-height jitter, B = base lift. Baked by
 // cloud_placement_map_baker.comp.slang (live re-bake on input change).
-// Drives the per-column cloud model in the density samplers; this common
-// slot serves the analytical evalClouds fallback path in atmosphere_sky.slangh.
-// Sampled with the linear/REPEAT cloud noise sampler.
+// Drives the per-column cloud model in the density samplers (and their
+// shadow-march taps). Sampled with the linear/REPEAT cloud noise sampler.
 #define BINDING_ATMOSPHERE_CLOUD_PLACEMENT_MAP 216
+
+// Fork atmosphere/cloud bindings occupy a contiguous range ABOVE COMMON_MAX_BINDING
+// (which only covers the base common bindings). Expose the range so passes that
+// also bind their own resources (e.g. sparse rendering) can assert no overlap.
+#define BINDING_ATMOSPHERE_MIN                   BINDING_ATMOSPHERE_TRANSMITTANCE_LUT
+#define BINDING_ATMOSPHERE_MAX                   BINDING_ATMOSPHERE_CLOUD_PLACEMENT_MAP
 
 #define COMMON_MAX_BINDING                       BINDING_SAMPLER_READBACK_BUFFER
 #define COMMON_NUM_BINDINGS                      (COMMON_MAX_BINDING + 1)
