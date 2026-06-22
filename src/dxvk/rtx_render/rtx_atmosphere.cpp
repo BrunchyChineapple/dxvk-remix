@@ -24,6 +24,7 @@
 #include "dxvk_context.h"
 #include "rtx_options.h"
 #include "rtx_context.h"
+#include "rtx_global_volumetrics.h"
 #include "rtx_render/rtx_shader_manager.h"
 #include "rtx/pass/common_binding_indices.h"
 #include <rtx_shaders/transmittance_lut.h>
@@ -857,7 +858,7 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.cloudEdgeAmbientFade          = RtxOptions::cloudEdgeAmbientFade();
 
     // Independent sun-only scale for volumetric fog in-scattering (issue #35).
-    args.atmosphereSunVolumetricRadianceScale = RtxOptions::atmosphereSunVolumetricRadianceScale();
+    args.atmosphereSunVolumetricRadianceScale = RtxGlobalVolumetrics::atmosphereSunVolumetricRadianceScale();
   }
 
   // Cloud render camera basis (fork — 2026-05-12, C4). Pushed from

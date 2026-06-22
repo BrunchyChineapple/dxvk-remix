@@ -343,7 +343,7 @@ namespace dxvk {
           RemixGui::DragFloat("Fog Sun Visibility Gain", &fogSunVisibilityGainObject(), 0.05f, 0.0f, 50.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
           // Sun-only counterpart to the gain above (issue #35): scales just the
           // atmosphere sun's fog contribution, leaving scene-light fog untouched.
-          RemixGui::DragFloat("Atmosphere Sun Fog Scale", &RtxOptions::atmosphereSunVolumetricRadianceScaleObject(), 0.05f, 0.0f, 50.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+          RemixGui::DragFloat("Atmosphere Sun Fog Scale", &atmosphereSunVolumetricRadianceScaleObject(), 0.05f, 0.0f, 50.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
           RemixGui::DragFloat("Depth Offset", &depthOffsetObject(), 0.01f, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 
           RemixGui::Separator();
