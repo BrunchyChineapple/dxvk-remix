@@ -1254,6 +1254,14 @@ namespace dxvk {
     // Atmosphere parameters
     RTX_OPTION("rtx.atmosphere", bool, sunDisc, true, "Include the sun itself in the output.");
     RTX_OPTION("rtx.atmosphere", float, sunSize, 0.545f, "Size of sun disc in degrees.");
+    // Fork (Morrowind): decoupled sun shadow softness. 0 = physical (the distant
+    // light's angular half-angle tracks sunSize/2). When > 0 it overrides the
+    // half-angle WITHOUT changing the visible sun disc, so shadow penumbra can be
+    // softened independently of disc size. Degrees; consumed in rtx_fork_atmosphere.
+    RTX_OPTION("rtx.atmosphere", float, sunShadowSoftnessDeg, 0.0f,
+               "Decoupled sun shadow softness in degrees (the distant light's angular half-angle). "
+               "0 = physical: track Sun Size / 2. When > 0 it overrides the half-angle without "
+               "changing the visible sun disc \xe2\x80\x94 larger = softer penumbra.");
     // Morrowind override: sunIntensity is NoSave because the wrapper drives it
     // (sets to 0 in interiors to suppress sun illumination). Routed through the
     // Derived layer so dev-menu sessions don't accidentally bake interior=0 into
