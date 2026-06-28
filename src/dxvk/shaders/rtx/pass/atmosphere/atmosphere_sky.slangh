@@ -1260,6 +1260,7 @@ vec3 evalSkyRadiance(
     // Requires the LUT's mip chain (RtxAtmosphere::dispatchCloudSecondaryLut)
     // and a sampler with mipmapLodMax > 0 (the shared sky-view sampler sets it).
     const float kBleedMip = 4.0f;
+    vec4 bleedCloud = AtmosphereCloudSecondaryLut.SampleLevel(AtmosphereSkyViewSampler, bleedUv, kBleedMip);
     // Fade the bleed out toward the zenith (fork — 2026-06-27, experimental).
     // cloudDomeDirToUv's azimuth (atan2(x,z)) is singular as the ray approaches
     // vertical — all azimuths converge to the pole, so adjacent near-zenith
@@ -1274,7 +1275,6 @@ vec3 evalSkyRadiance(
     const float zenithFade = 1.0f - smoothstep(0.95f, 0.9995f, viewDirYUp.y);
     // bleedCloud.rgb is premultiplied (now wide-blurred) cloud radiance; the blur
     // makes it non-zero in gaps near clouds, so the sky picks up their color.
-    radiance += args.cloudSkyBleedStrength * bleedCloud.rgb;
     radiance += (args.cloudSkyBleedStrength * zenithFade) * bleedCloud.rgb;
   }
 
