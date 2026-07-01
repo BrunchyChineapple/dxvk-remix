@@ -110,7 +110,9 @@ struct AtmosphereArgs {
   float starRotation;       // Sidereal angle, degrees [0, 360]
   float starAxisElevation;  // Celestial pole elevation from horizon, degrees
   float starAxisRotation;   // Celestial pole azimuth, degrees
-  float pad3;               // 16-byte alignment
+  float skyIndirectRadianceScale; // Diffuse-indirect sky radiance multiplier (>=0), applied
+                                  // post-LUT-sample per ray (remixplus sync). Reuses the former
+                                  // pad3 slot so the CB layout is byte-identical.
 
   // ----- Star anti-aliasing + cloud interaction (fork) -----
   //

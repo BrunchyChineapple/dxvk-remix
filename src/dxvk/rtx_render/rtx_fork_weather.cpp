@@ -1,18 +1,18 @@
 // src/dxvk/rtx_render/rtx_fork_weather.cpp
 //
 // Fork-owned file. Full implementation of WeatherBlender: the per-frame lerp
-// pipeline that blends 27 weather params (cloud, atmosphere, sky/moon mood,
+// pipeline that blends 52 weather params (cloud, atmosphere, sky/moon mood,
 // volumetric fog) between named presets over a plugin-specified duration.
 //
 // Reads:
-//   __weather.target       — name of the active target preset (string)
-//   __weather.blend_seconds — blend duration override (float string, default 1.0)
+//   __weather.target       ΓÇö name of the active target preset (string)
+//   __weather.blend_seconds ΓÇö blend duration override (float string, default 1.0)
 //
 // Writes:
 //   Derived layer of each underlying RTX_OPTION via setImmediately()
 //   __weather.current, __weather.previous, __weather.blend_progress (GameStateStore)
 //
-// Dormant when __weather.target is absent or unknown — zero upstream
+// Dormant when __weather.target is absent or unknown ΓÇö zero upstream
 // behavioural change.
 //
 // Task 3 wires update() into the per-frame render loop via
@@ -32,8 +32,10 @@
 #include "../../util/util_string.h" // str::format
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <unordered_set>
@@ -47,6 +49,9 @@ namespace dxvk { namespace fork_weather { namespace {
   // Set by WeatherBlender ctor, cleared by dtor. Only one RtxContext is alive
   // at a time, so at most one WeatherBlender exists during normal operation.
   WeatherBlender* g_activeBlender = nullptr;
+  // Forward decl (defined later in this anonymous namespace); used by the
+  // snapshot-from-live authoring helper.
+  WeatherSnapshot snapshotRenderer();
 
   // --- Math helpers ---
 
@@ -67,100 +72,114 @@ namespace dxvk { namespace fork_weather { namespace {
   }
 
   // Shortest-path angular interpolation (degrees).
-  // 350° → 10°: delta = fmod(10-350+540, 360)-180 = fmod(200,360)-180 = 200-180 = 20°.
+  // 350┬░ ΓåÆ 10┬░: delta = fmod(10-350+540, 360)-180 = fmod(200,360)-180 = 200-180 = 20┬░.
   float lerpAngleDeg(float a, float b, float t) {
     float delta = std::fmod((b - a + 540.0f), 360.0f) - 180.0f;
     return a + delta * t;
   }
 
-  // Per-field lerp from one snapshot to another at parameter t. FIELD ORDER
-  // matches WEATHER_PRESET_FIELD_LIST. cloudWindDirection uses lerpAngleDeg
-  // (shortest-path angular wrap); Vector3 fields use lerpV3; all other floats
-  // use lerp.
+  // Lerp optical extinction (~1/distance) rather than distance, so fog density
+  // ramps perceptually even between presets (linear-in-distance is heavily
+  // back-loaded). Clamped to avoid div-by-zero at the bright end.
+  float lerpExtinction(float a, float b, float t) {
+    const float ea = 1.0f / std::max(a, 1e-4f);
+    const float eb = 1.0f / std::max(b, 1e-4f);
+    return 1.0f / std::max(lerp(ea, eb, t), 1e-4f);
+  }
+
+  // Kind-aware scalar lerp: WK_Angle wraps shortest-path, WK_Extinction lerps in
+  // 1/distance space, everything else is plain linear.
+  float lerpField(float a, float b, float t, WeatherFieldKind kind) {
+    switch (kind) {
+      case WK_Angle:      return lerpAngleDeg(a, b, t);
+      case WK_Extinction: return lerpExtinction(a, b, t);
+      default:            return lerp(a, b, t);
+    }
+  }
+  // Vector3 fields (WK_Color / WK_Vec3) lerp componentwise.
+  Vector3 lerpField(const Vector3& a, const Vector3& b, float t, WeatherFieldKind) {
+    return lerpV3(a, b, t);
+  }
+  // Bool fields (WK_Step): not interpolable; switch at the blend midpoint.
+  bool lerpField(bool a, bool b, float t, WeatherFieldKind) {
+    return (t >= 0.5f) ? b : a;
+  }
+
+  // Per-field lerp from one snapshot to another at parameter t, driven entirely
+  // by WEATHER_PRESET_FIELD_LIST + the per-field kind. No hand-listed fields, so
+  // a field added to the table is interpolated automatically.
   WeatherSnapshot lerpSnapshot(const WeatherSnapshot& a, const WeatherSnapshot& b, float t) {
     WeatherSnapshot out;
-    // Cloud (17)
-    out.cloudDensity            = lerp(a.cloudDensity,            b.cloudDensity,            t);
-    out.cloudCoverageMean       = lerp(a.cloudCoverageMean,       b.cloudCoverageMean,       t);
-    out.cloudCoverageSpread     = lerp(a.cloudCoverageSpread,     b.cloudCoverageSpread,     t);
-    out.cloudCoverageNoiseScale = lerp(a.cloudCoverageNoiseScale, b.cloudCoverageNoiseScale, t);
-    out.cloudTypeMean           = lerp(a.cloudTypeMean,           b.cloudTypeMean,           t);
-    out.cloudTypeSpread         = lerp(a.cloudTypeSpread,         b.cloudTypeSpread,         t);
-    out.cloudTypeNoiseScale     = lerp(a.cloudTypeNoiseScale,     b.cloudTypeNoiseScale,     t);
-    out.cloudAnvilBias          = lerp(a.cloudAnvilBias,          b.cloudAnvilBias,          t);
-    out.cloudColor              = lerpV3(a.cloudColor,            b.cloudColor,              t);
-    out.cloudWindSpeed          = lerp(a.cloudWindSpeed,          b.cloudWindSpeed,          t);
-    out.cloudWindDirection      = lerpAngleDeg(a.cloudWindDirection, b.cloudWindDirection,   t);
-    out.cloudShadowStrength     = lerp(a.cloudShadowStrength,     b.cloudShadowStrength,     t);
-    out.cloudAnisotropy         = lerp(a.cloudAnisotropy,         b.cloudAnisotropy,         t);
-    out.cloudThickness          = lerp(a.cloudThickness,          b.cloudThickness,          t);
-    out.cloudShadowTint         = lerpV3(a.cloudShadowTint,       b.cloudShadowTint,         t);
-    out.cloudShadowTintStrength = lerp(a.cloudShadowTintStrength, b.cloudShadowTintStrength, t);
-    out.cloudSunsetWarmth       = lerp(a.cloudSunsetWarmth,       b.cloudSunsetWarmth,       t);
-    // Atmosphere (3)
-    out.airDensity              = lerp(a.airDensity,              b.airDensity,              t);
-    out.aerosolDensity          = lerp(a.aerosolDensity,          b.aerosolDensity,          t);
-    out.sunIlluminance          = lerpV3(a.sunIlluminance,        b.sunIlluminance,          t);
-    // Sky/moon mood (3)
-    out.nightSkyBrightness      = lerp(a.nightSkyBrightness,      b.nightSkyBrightness,      t);
-    out.moonNeeStrength         = lerp(a.moonNeeStrength,         b.moonNeeStrength,         t);
-    out.moonAtmosphericCouplingStrength = lerp(a.moonAtmosphericCouplingStrength, b.moonAtmosphericCouplingStrength, t);
-    // Volumetric (4)
-    out.transmittanceColor                    = lerpV3(a.transmittanceColor, b.transmittanceColor, t);
-    out.transmittanceMeasurementDistanceMeters = lerp(a.transmittanceMeasurementDistanceMeters, b.transmittanceMeasurementDistanceMeters, t);
-    out.fogDensityReferenceTransmittanceDay   = lerp(a.fogDensityReferenceTransmittanceDay,   b.fogDensityReferenceTransmittanceDay,   t);
-    out.fogDensityReferenceTransmittanceNight = lerp(a.fogDensityReferenceTransmittanceNight, b.fogDensityReferenceTransmittanceNight, t);
-    out.fogDensityReferenceTransmittanceUnderwaterDay   = lerp(a.fogDensityReferenceTransmittanceUnderwaterDay,   b.fogDensityReferenceTransmittanceUnderwaterDay,   t);
-    out.fogDensityReferenceTransmittanceUnderwaterNight = lerp(a.fogDensityReferenceTransmittanceUnderwaterNight, b.fogDensityReferenceTransmittanceUnderwaterNight, t);
-    out.singleScatteringAlbedo                = lerpV3(a.singleScatteringAlbedo, b.singleScatteringAlbedo, t);
-    out.volumetricAnisotropy                  = lerp(a.volumetricAnisotropy, b.volumetricAnisotropy, t);
+#define WEATHER_LERP_FIELD(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) \
+    out.name = lerpField(a.name, b.name, t, kind);
+    WEATHER_PRESET_FIELD_LIST(WEATHER_LERP_FIELD)
+#undef WEATHER_LERP_FIELD
     return out;
   }
 
   // ---------------------------------------------------------------------------
-  // Drift math — sum of incommensurate sines. Cheap, deterministic, smooth.
+  // Drift math ΓÇö sum of incommensurate sines. Cheap, deterministic, smooth.
   //
   // driftNoise1D returns approximately [-1, 1] for any phase. Three inner
   // periods (1.0, 1.527, 0.701) chosen so the sum doesn't repeat for many
   // hours of phase advance.
   //
-  // The two-layer model (fast 30s + slow 300s) is summed in
-  // driftOffsetForField with weights 0.4 / 0.6.
+  // De-pulsed (fork ΓÇö 2026-06-21): the old two-layer model had a fast layer with
+  // base period 30 s, whose dominant inner sine (weight 0.5) was exactly 30 s.
+  // That produced a clearly perceptible whole-sky "breathing" beat every ~30 s ΓÇö
+  // all drift fields share one phase clock, so coverage/density/type all crested
+  // in lockstep. The fast layer is GONE; only the slow (multi-minute) layer
+  // remains, so this subsystem now reads as genuine slow weather change rather
+  // than a rhythm. Local cloud SHAPE change (formation/dissolution, edge boil) is
+  // now owned by the field-evolution system in the cloud taps
+  // (cloudEvolutionSpeed / cloudBoilSpeed), which evolves the field spatially
+  // instead of pulsing a global scalar.
   // ---------------------------------------------------------------------------
 
-  constexpr float kDriftFastPeriodSec = 30.0f;
   constexpr float kDriftSlowPeriodSec = 300.0f;
 
-  float driftNoise1D(float phaseSeconds, float periodSeconds, float fieldSeed) {
-    constexpr float kTwoPi = 6.28318530718f;
-    const float p = phaseSeconds / periodSeconds;
-    return 0.50f * std::sin(kTwoPi * (p / 1.000f) + fieldSeed * 1.000f)
-         + 0.30f * std::sin(kTwoPi * (p / 1.527f) + fieldSeed * 1.731f)
-         + 0.20f * std::sin(kTwoPi * (p / 0.701f) + fieldSeed * 2.331f);
+  float driftNoise1D(double phaseSeconds, float periodSeconds, float fieldSeed) {
+    constexpr double kTwoPi = 6.28318530718;
+    const double p = phaseSeconds / static_cast<double>(periodSeconds);
+    return static_cast<float>(
+        0.50 * std::sin(kTwoPi * (p / 1.000) + fieldSeed * 1.000)
+      + 0.30 * std::sin(kTwoPi * (p / 1.527) + fieldSeed * 1.731)
+      + 0.20 * std::sin(kTwoPi * (p / 0.701) + fieldSeed * 2.331));
   }
 
-  // Per-field two-layer drift offset, normalized to ~[-relativeAmp, +relativeAmp].
-  float driftOffsetForField(int fieldIndex, float phaseSeconds, float relativeAmp) {
+  // Per-field slow drift offset, normalized to ~[-relativeAmp, +relativeAmp].
+  // Slow-layer only (the fast 30 s layer was removed ΓÇö see note above). The slow
+  // layer's shortest inner period is ~210 s (3.5 min), so there is no short-cycle
+  // tell. fieldIndex still seeds the phase so the few remaining fields stay
+  // decorrelated from each other.
+  float driftOffsetForField(int fieldIndex, double phaseSeconds, float relativeAmp) {
     constexpr float kFieldSeedStep = 0.6180f;  // golden-ratio-ish for low correlation
-    const float seedFast = static_cast<float>(fieldIndex) * kFieldSeedStep;
     const float seedSlow = static_cast<float>(fieldIndex) * kFieldSeedStep + 100.0f;
-    const float nFast = driftNoise1D(phaseSeconds, kDriftFastPeriodSec, seedFast);
     const float nSlow = driftNoise1D(phaseSeconds, kDriftSlowPeriodSec, seedSlow);
-    const float nTotal = 0.4f * nFast + 0.6f * nSlow;
-    return nTotal * relativeAmp;
+    return nSlow * relativeAmp;
   }
 
   // ---------------------------------------------------------------------------
-  // Drift field table — 9 of 27 WeatherSnapshot fields drift.
+  // Drift field table ΓÇö weather-SCALE fields only (fork ΓÇö 2026-06-21).
+  //
+  // Trimmed from 9 to 3. The shape-ish fields (cloudDensity, cloudThickness,
+  // cloudTypeMean/Spread, cloudCoverageSpread, cloudAnvilBias) were removed:
+  // drifting them as a GLOBAL scalar is exactly the artificial "whole-sky
+  // breathing" the field-evolution rework replaced ΓÇö those shape changes are now
+  // produced locally and incoherently by cloudEvolutionSpeed / cloudBoilSpeed in
+  // the cloud taps. What remains is the genuinely weather-scale stuff the field
+  // evolution does NOT reproduce: how cloudy the sky is overall (cloudCoverageMean)
+  // and how the wind gusts/shifts (cloudWindSpeed / cloudWindDirection).
   //
   // Color, optical, sky/moon, atmosphere, volumetric, and noise-scale fields
-  // are intentionally excluded (drift would look sickly, break calibration,
-  // or re-tile the cloud field — see spec section "Drift fields").
+  // remain excluded (drift would look sickly, break calibration, or re-tile the
+  // cloud field ΓÇö see spec section "Drift fields"). fieldIndex values are kept at
+  // their original numbers so each field's noise seed is unchanged.
   //
   // amplitudeMode:
-  //   Proportional — final delta is delta_table * intensity * field_value
+  //   Proportional ΓÇö final delta is delta_table * intensity * field_value
   //                  (relativeAmp interpreted as fraction of midpoint)
-  //   AbsoluteDeg  — final delta is delta_table * intensity, applied as
+  //   AbsoluteDeg  ΓÇö final delta is delta_table * intensity, applied as
   //                  degrees with modulo-360 wrap (used for cloudWindDirection)
   //
   // clampMin / clampMax: post-modulation clamp. -kInf / +kInf disables a side.
@@ -189,25 +208,20 @@ namespace dxvk { namespace fork_weather { namespace {
   static const DriftFieldEntry kDriftTable[] = {
     // name                    idx  mode                       relAmp   min     max
     { "cloudCoverageMean",      0,   DriftMode::Proportional,   0.15f,   0.0f,   1.0f,    DRIFT_FIELD_ACCESSORS(cloudCoverageMean)   },
-    { "cloudCoverageSpread",    1,   DriftMode::Proportional,   0.25f,   0.0f,   1.0f,    DRIFT_FIELD_ACCESSORS(cloudCoverageSpread) },
-    { "cloudTypeMean",          2,   DriftMode::Proportional,   0.10f,   0.0f,   1.0f,    DRIFT_FIELD_ACCESSORS(cloudTypeMean)       },
-    { "cloudTypeSpread",        3,   DriftMode::Proportional,   0.20f,   0.0f,   1.0f,    DRIFT_FIELD_ACCESSORS(cloudTypeSpread)     },
-    { "cloudDensity",           4,   DriftMode::Proportional,   0.10f,   0.0f,   kInf,    DRIFT_FIELD_ACCESSORS(cloudDensity)        },
-    { "cloudThickness",         5,   DriftMode::Proportional,   0.08f,   0.0f,   kInf,    DRIFT_FIELD_ACCESSORS(cloudThickness)      },
     { "cloudWindSpeed",         6,   DriftMode::Proportional,   0.30f,   0.0f,   kInf,    DRIFT_FIELD_ACCESSORS(cloudWindSpeed)      },
     { "cloudWindDirection",     7,   DriftMode::AbsoluteDeg,   10.0f,   -kInf,  kInf,    DRIFT_FIELD_ACCESSORS(cloudWindDirection)  },
-    { "cloudAnvilBias",         8,   DriftMode::Proportional,   0.15f,   0.0f,   kInf,    DRIFT_FIELD_ACCESSORS(cloudAnvilBias)      },
   };
 
   static constexpr int kDriftFieldCount = static_cast<int>(sizeof(kDriftTable) / sizeof(kDriftTable[0]));
-  static_assert(kDriftFieldCount == 9, "Drift table must have exactly 9 entries (per spec)");
+  static_assert(kDriftFieldCount == 3, "Drift table must have exactly 3 weather-scale entries "
+                "(de-pulsed 2026-06-21: shape fields moved to field evolution)");
 
   // ---------------------------------------------------------------------------
-  // applyDriftToSnapshot — mutate interp in place by adding per-field drift
+  // applyDriftToSnapshot ΓÇö mutate interp in place by adding per-field drift
   // offsets. intensity scales the entire modulation; intensity == 0 short-
   // circuits and leaves interp untouched.
   // ---------------------------------------------------------------------------
-  void applyDriftToSnapshot(WeatherSnapshot& interp, float phaseSeconds, float intensity) {
+  void applyDriftToSnapshot(WeatherSnapshot& interp, double phaseSeconds, float intensity) {
     if (intensity <= 0.0f) {
       return;
     }
@@ -266,439 +280,430 @@ namespace dxvk { namespace fork_weather { namespace {
     fork_game_state::GameStateStore::get().set(key, std::move(value));
   }
 
-  // --- Preset name validation ---
-  //
-  // KEEP IN SYNC WITH readPresetValues below: every name listed here must
-  // also have a branch in readPresetValues, and vice versa. Adding a new
-  // preset requires editing both lists and the DECLARE_ALL_WEATHER_PRESETS
-  // macro in rtx_fork_weather.h.
+  // ---------------------------------------------------------------------------
+  // Preset table machinery (generated from WEATHER_PRESET_FIELD_LIST). Collapses
+  // the former ~300-line readPresetValues + isKnownPresetName string cascade and
+  // also drives the generated ImGui panel.
+  // ---------------------------------------------------------------------------
+
+  enum WeatherPresetIdx {
+    WP_clear, WP_partlyCloudy, WP_overcast, WP_hazy, WP_foggy, WP_drizzle,
+    WP_rainstorm, WP_thunderstorm, WP_snow, WP_blizzard, WP_sandstorm, WP_smoggy,
+    WP_COUNT
+  };
+
+  // Type- and kind-dispatched widget helpers, matching the main panel's design
+  // language: float -> DragFloat, bool -> Checkbox, Vector3 -> ColorEdit3 swatch
+  // for WK_Color (click to open a picker) else DragFloat3 for radiometric vectors
+  // (e.g. sun illuminance, which carries magnitude, not a 0-1 color).
+  bool weatherDrag(const char* l, RtxOption<float>* o, float st, float mn, float mx, const char* fmt, ImGuiSliderFlags fl, WeatherFieldKind) {
+    return RemixGui::DragFloat(l, o, st, mn, mx, fmt, fl);
+  }
+  bool weatherDrag(const char* l, RtxOption<Vector3>* o, float st, float mn, float mx, const char* fmt, ImGuiSliderFlags fl, WeatherFieldKind kind) {
+    if (kind == WK_Color) {
+      // HDR/float picker for radiometric values that exceed 1 (e.g. sun
+      // illuminance); float-entry picker for sub-unit coefficient colors like the
+      // sky scattering tint (~0.005-0.05, where an 8-bit 0-255 swatch is useless);
+      // plain 0-1 swatch for normal colors (cloud / sky / night tints).
+      ImGuiColorEditFlags cflags = 0;
+      if (mx > 1.5f)      cflags = ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR;
+      else if (mx < 1.0f) cflags = ImGuiColorEditFlags_Float;
+      return RemixGui::ColorEdit3(l, o, cflags);
+    }
+    return RemixGui::DragFloat3(l, o, st, mn, mx, fmt, fl);
+  }
+  bool weatherDrag(const char* l, RtxOption<bool>* o, float, float, float, const char*, ImGuiSliderFlags, WeatherFieldKind) {
+    return RemixGui::Checkbox(l, o);  // numeric/format args ignored for bool fields
+  }
+
+  // weatherRenderSlider_<field>(presetIdx, flags): renders this field's slider
+  // bound to RtxOptions::<preset>_<field>Object(), range/format baked from the
+  // field table. The 12 preset cases are written once; the field table generates
+  // one such function per field.
+#define WEATHER_RENDER_SLIDER_FN(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt)                               \
+  void weatherRenderSlider_##name(int p, ImGuiSliderFlags fl) {                                                       \
+    switch (p) {                                                                                                      \
+      case WP_clear:        weatherDrag(lbl, &RtxOptions::clear_##name##Object(),        st, mn, mx, fmt, fl, kind); break; \
+      case WP_partlyCloudy: weatherDrag(lbl, &RtxOptions::partlyCloudy_##name##Object(), st, mn, mx, fmt, fl, kind); break; \
+      case WP_overcast:     weatherDrag(lbl, &RtxOptions::overcast_##name##Object(),     st, mn, mx, fmt, fl, kind); break; \
+      case WP_hazy:         weatherDrag(lbl, &RtxOptions::hazy_##name##Object(),         st, mn, mx, fmt, fl, kind); break; \
+      case WP_foggy:        weatherDrag(lbl, &RtxOptions::foggy_##name##Object(),        st, mn, mx, fmt, fl, kind); break; \
+      case WP_drizzle:      weatherDrag(lbl, &RtxOptions::drizzle_##name##Object(),      st, mn, mx, fmt, fl, kind); break; \
+      case WP_rainstorm:    weatherDrag(lbl, &RtxOptions::rainstorm_##name##Object(),    st, mn, mx, fmt, fl, kind); break; \
+      case WP_thunderstorm: weatherDrag(lbl, &RtxOptions::thunderstorm_##name##Object(), st, mn, mx, fmt, fl, kind); break; \
+      case WP_snow:         weatherDrag(lbl, &RtxOptions::snow_##name##Object(),         st, mn, mx, fmt, fl, kind); break; \
+      case WP_blizzard:     weatherDrag(lbl, &RtxOptions::blizzard_##name##Object(),     st, mn, mx, fmt, fl, kind); break; \
+      case WP_sandstorm:    weatherDrag(lbl, &RtxOptions::sandstorm_##name##Object(),    st, mn, mx, fmt, fl, kind); break; \
+      case WP_smoggy:       weatherDrag(lbl, &RtxOptions::smoggy_##name##Object(),       st, mn, mx, fmt, fl, kind); break; \
+      default: break;                                                                                                \
+    }                                                                                                                \
+  }
+  WEATHER_PRESET_FIELD_LIST(WEATHER_RENDER_SLIDER_FN)
+#undef WEATHER_RENDER_SLIDER_FN
+
+  // weatherSetPresetField_<field>(presetIdx, snapshot): writes snapshot.<field>
+  // into RtxOptions::<preset>_<field>Object() (Derived layer). Drives the
+  // copy-from / snapshot-from-live authoring buttons.
+#define WEATHER_SET_PRESET_FN(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt)                 \
+  void weatherSetPresetField_##name(int p, const WeatherSnapshot& s) {                               \
+    switch (p) {                                                                                     \
+      case WP_clear:        RtxOptions::clear_##name##Object().setImmediately(s.name);        break; \
+      case WP_partlyCloudy: RtxOptions::partlyCloudy_##name##Object().setImmediately(s.name); break; \
+      case WP_overcast:     RtxOptions::overcast_##name##Object().setImmediately(s.name);     break; \
+      case WP_hazy:         RtxOptions::hazy_##name##Object().setImmediately(s.name);         break; \
+      case WP_foggy:        RtxOptions::foggy_##name##Object().setImmediately(s.name);        break; \
+      case WP_drizzle:      RtxOptions::drizzle_##name##Object().setImmediately(s.name);      break; \
+      case WP_rainstorm:    RtxOptions::rainstorm_##name##Object().setImmediately(s.name);    break; \
+      case WP_thunderstorm: RtxOptions::thunderstorm_##name##Object().setImmediately(s.name); break; \
+      case WP_snow:         RtxOptions::snow_##name##Object().setImmediately(s.name);         break; \
+      case WP_blizzard:     RtxOptions::blizzard_##name##Object().setImmediately(s.name);     break; \
+      case WP_sandstorm:    RtxOptions::sandstorm_##name##Object().setImmediately(s.name);    break; \
+      case WP_smoggy:       RtxOptions::smoggy_##name##Object().setImmediately(s.name);       break; \
+      default: break;                                                                                \
+    }                                                                                                \
+  }
+  WEATHER_PRESET_FIELD_LIST(WEATHER_SET_PRESET_FN)
+#undef WEATHER_SET_PRESET_FN
+
+  // Per-field conf-line value formatter (type-dispatched on the snapshot member).
+  std::string weatherFmtConf(float v)          { char b[48]; std::snprintf(b, sizeof(b), "%.4f", v); return b; }
+  std::string weatherFmtConf(bool v)           { return v ? "True" : "False"; }
+  std::string weatherFmtConf(const Vector3& v) { char b[96]; std::snprintf(b, sizeof(b), "%.4f, %.4f, %.4f", v.x, v.y, v.z); return b; }
+#define WEATHER_CONF_FN(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) \
+  std::string weatherConf_##name(const WeatherSnapshot& s) { return weatherFmtConf(s.name); }
+  WEATHER_PRESET_FIELD_LIST(WEATHER_CONF_FN)
+#undef WEATHER_CONF_FN
+  // Per-field descriptor consumed by the generated ImGui panel.
+  typedef void (*WeatherSliderFn)(int presetIdx, ImGuiSliderFlags flags);
+  struct WeatherFieldDesc {
+    const char*      name;
+    WeatherFieldKind kind;
+    const char*      group;
+    const char*      section;
+    const char*      label;
+    WeatherSliderFn  renderSlider;
+    void (*setPresetField)(int presetIdx, const WeatherSnapshot& s);
+    std::string (*formatValue)(const WeatherSnapshot& s);
+  };
+#define WEATHER_FIELD_DESC(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) \
+  { #name, kind, grp, sec, lbl, &weatherRenderSlider_##name, &weatherSetPresetField_##name, &weatherConf_##name },
+  const WeatherFieldDesc kFieldDescs[] = { WEATHER_PRESET_FIELD_LIST(WEATHER_FIELD_DESC) };
+#undef WEATHER_FIELD_DESC
+  constexpr int kFieldCount = static_cast<int>(sizeof(kFieldDescs) / sizeof(kFieldDescs[0]));
+
+  // Per-preset readers: fill a WeatherSnapshot from RtxOptions::<preset>_<field>().
+  // One function per preset, each generated from the field table; the only
+  // per-preset literal is the option-name prefix.
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::clear_##name();
+  WeatherSnapshot readPreset_clear()        { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::partlyCloudy_##name();
+  WeatherSnapshot readPreset_partlyCloudy() { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::overcast_##name();
+  WeatherSnapshot readPreset_overcast()     { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::hazy_##name();
+  WeatherSnapshot readPreset_hazy()         { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::foggy_##name();
+  WeatherSnapshot readPreset_foggy()        { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::drizzle_##name();
+  WeatherSnapshot readPreset_drizzle()      { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::rainstorm_##name();
+  WeatherSnapshot readPreset_rainstorm()    { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::thunderstorm_##name();
+  WeatherSnapshot readPreset_thunderstorm() { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::snow_##name();
+  WeatherSnapshot readPreset_snow()         { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::blizzard_##name();
+  WeatherSnapshot readPreset_blizzard()     { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::sandstorm_##name();
+  WeatherSnapshot readPreset_sandstorm()    { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+#define WRF(type, name, def, kind, grp, sec, lbl, mn, mx, st, fmt) s.name = RtxOptions::smoggy_##name();
+  WeatherSnapshot readPreset_smoggy()       { WeatherSnapshot s; WEATHER_PRESET_FIELD_LIST(WRF) return s; }
+#undef WRF
+
+  struct WeatherPresetDesc { const char* name; int idx; WeatherSnapshot (*read)(); };
+  const WeatherPresetDesc kPresetDescs[] = {
+    { "clear",        WP_clear,        &readPreset_clear        },
+    { "partlyCloudy", WP_partlyCloudy, &readPreset_partlyCloudy },
+    { "overcast",     WP_overcast,     &readPreset_overcast     },
+    { "hazy",         WP_hazy,         &readPreset_hazy         },
+    { "foggy",        WP_foggy,        &readPreset_foggy        },
+    { "drizzle",      WP_drizzle,      &readPreset_drizzle      },
+    { "rainstorm",    WP_rainstorm,    &readPreset_rainstorm    },
+    { "thunderstorm", WP_thunderstorm, &readPreset_thunderstorm },
+    { "snow",         WP_snow,         &readPreset_snow         },
+    { "blizzard",     WP_blizzard,     &readPreset_blizzard     },
+    { "sandstorm",    WP_sandstorm,    &readPreset_sandstorm    },
+    { "smoggy",       WP_smoggy,       &readPreset_smoggy       },
+  };
+  static_assert(sizeof(kPresetDescs) / sizeof(kPresetDescs[0]) == WP_COUNT,
+                "kPresetDescs size must match WP_COUNT");
 
   bool isKnownPresetName(const std::string& name) {
-    return name == "clear"
-        || name == "partlyCloudy"
-        || name == "overcast"
-        || name == "hazy"
-        || name == "foggy"
-        || name == "drizzle"
-        || name == "rainstorm"
-        || name == "thunderstorm"
-        || name == "snow"
-        || name == "blizzard"
-        || name == "sandstorm"
-        || name == "smoggy";
+    for (const auto& p : kPresetDescs) { if (name == p.name) return true; }
+    return false;
   }
-
-  // ---------------------------------------------------------------------------
-  // readPresetValues — dispatch by name to the appropriate per-preset getters.
-  //
-  // Returns false when the preset name is unknown (caller treats blender as
-  // dormant). Each branch reads all 27 fields from RtxOptions::<preset>_<field>.
-  //
-  // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 4 sites:
-  // lerpSnapshot, readPresetValues' 12 branches, snapshotRenderer,
-  // writeBlendedToDerivedLayer). All four must stay in sync if a field
-  // is added.
-  //
-  // KEEP NAME LIST IN SYNC WITH isKnownPresetName above: every preset that
-  // passes validation there must have a branch here.
-  // ---------------------------------------------------------------------------
   bool readPresetValues(const std::string& name, WeatherSnapshot& out) {
-    if (name == "clear") {
-      // Cloud (17)
-      out.cloudDensity               = RtxOptions::clear_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::clear_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::clear_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::clear_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::clear_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::clear_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::clear_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::clear_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::clear_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::clear_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::clear_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::clear_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::clear_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::clear_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::clear_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::clear_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::clear_cloudSunsetWarmth();
-      // Atmosphere (3)
-      out.airDensity                 = RtxOptions::clear_airDensity();
-      out.aerosolDensity             = RtxOptions::clear_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::clear_sunIlluminance();
-      // Sky/moon mood (3)
-      out.nightSkyBrightness         = RtxOptions::clear_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::clear_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::clear_moonAtmosphericCouplingStrength();
-      // Volumetric (4)
-      out.transmittanceColor                = RtxOptions::clear_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::clear_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::clear_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::clear_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::clear_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::clear_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::clear_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::clear_volumetricAnisotropy();
-    } else if (name == "partlyCloudy") {
-      out.cloudDensity               = RtxOptions::partlyCloudy_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::partlyCloudy_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::partlyCloudy_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::partlyCloudy_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::partlyCloudy_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::partlyCloudy_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::partlyCloudy_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::partlyCloudy_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::partlyCloudy_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::partlyCloudy_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::partlyCloudy_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::partlyCloudy_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::partlyCloudy_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::partlyCloudy_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::partlyCloudy_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::partlyCloudy_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::partlyCloudy_cloudSunsetWarmth();
-      out.airDensity                 = RtxOptions::partlyCloudy_airDensity();
-      out.aerosolDensity             = RtxOptions::partlyCloudy_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::partlyCloudy_sunIlluminance();
-      out.nightSkyBrightness         = RtxOptions::partlyCloudy_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::partlyCloudy_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::partlyCloudy_moonAtmosphericCouplingStrength();
-      out.transmittanceColor                = RtxOptions::partlyCloudy_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::partlyCloudy_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::partlyCloudy_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::partlyCloudy_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::partlyCloudy_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::partlyCloudy_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::partlyCloudy_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::partlyCloudy_volumetricAnisotropy();
-    } else if (name == "overcast") {
-      out.cloudDensity               = RtxOptions::overcast_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::overcast_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::overcast_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::overcast_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::overcast_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::overcast_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::overcast_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::overcast_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::overcast_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::overcast_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::overcast_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::overcast_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::overcast_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::overcast_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::overcast_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::overcast_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::overcast_cloudSunsetWarmth();
-      out.airDensity                 = RtxOptions::overcast_airDensity();
-      out.aerosolDensity             = RtxOptions::overcast_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::overcast_sunIlluminance();
-      out.nightSkyBrightness         = RtxOptions::overcast_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::overcast_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::overcast_moonAtmosphericCouplingStrength();
-      out.transmittanceColor                = RtxOptions::overcast_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::overcast_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::overcast_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::overcast_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::overcast_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::overcast_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::overcast_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::overcast_volumetricAnisotropy();
-    } else if (name == "hazy") {
-      out.cloudDensity               = RtxOptions::hazy_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::hazy_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::hazy_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::hazy_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::hazy_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::hazy_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::hazy_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::hazy_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::hazy_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::hazy_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::hazy_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::hazy_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::hazy_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::hazy_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::hazy_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::hazy_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::hazy_cloudSunsetWarmth();
-      out.airDensity                 = RtxOptions::hazy_airDensity();
-      out.aerosolDensity             = RtxOptions::hazy_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::hazy_sunIlluminance();
-      out.nightSkyBrightness         = RtxOptions::hazy_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::hazy_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::hazy_moonAtmosphericCouplingStrength();
-      out.transmittanceColor                = RtxOptions::hazy_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::hazy_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::hazy_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::hazy_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::hazy_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::hazy_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::hazy_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::hazy_volumetricAnisotropy();
-    } else if (name == "foggy") {
-      out.cloudDensity               = RtxOptions::foggy_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::foggy_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::foggy_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::foggy_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::foggy_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::foggy_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::foggy_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::foggy_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::foggy_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::foggy_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::foggy_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::foggy_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::foggy_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::foggy_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::foggy_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::foggy_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::foggy_cloudSunsetWarmth();
-      out.airDensity                 = RtxOptions::foggy_airDensity();
-      out.aerosolDensity             = RtxOptions::foggy_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::foggy_sunIlluminance();
-      out.nightSkyBrightness         = RtxOptions::foggy_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::foggy_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::foggy_moonAtmosphericCouplingStrength();
-      out.transmittanceColor                = RtxOptions::foggy_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::foggy_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::foggy_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::foggy_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::foggy_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::foggy_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::foggy_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::foggy_volumetricAnisotropy();
-    } else if (name == "drizzle") {
-      out.cloudDensity               = RtxOptions::drizzle_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::drizzle_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::drizzle_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::drizzle_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::drizzle_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::drizzle_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::drizzle_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::drizzle_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::drizzle_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::drizzle_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::drizzle_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::drizzle_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::drizzle_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::drizzle_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::drizzle_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::drizzle_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::drizzle_cloudSunsetWarmth();
-      out.airDensity                 = RtxOptions::drizzle_airDensity();
-      out.aerosolDensity             = RtxOptions::drizzle_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::drizzle_sunIlluminance();
-      out.nightSkyBrightness         = RtxOptions::drizzle_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::drizzle_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::drizzle_moonAtmosphericCouplingStrength();
-      out.transmittanceColor                = RtxOptions::drizzle_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::drizzle_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::drizzle_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::drizzle_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::drizzle_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::drizzle_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::drizzle_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::drizzle_volumetricAnisotropy();
-    } else if (name == "rainstorm") {
-      out.cloudDensity               = RtxOptions::rainstorm_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::rainstorm_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::rainstorm_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::rainstorm_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::rainstorm_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::rainstorm_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::rainstorm_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::rainstorm_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::rainstorm_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::rainstorm_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::rainstorm_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::rainstorm_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::rainstorm_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::rainstorm_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::rainstorm_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::rainstorm_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::rainstorm_cloudSunsetWarmth();
-      out.airDensity                 = RtxOptions::rainstorm_airDensity();
-      out.aerosolDensity             = RtxOptions::rainstorm_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::rainstorm_sunIlluminance();
-      out.nightSkyBrightness         = RtxOptions::rainstorm_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::rainstorm_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::rainstorm_moonAtmosphericCouplingStrength();
-      out.transmittanceColor                = RtxOptions::rainstorm_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::rainstorm_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::rainstorm_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::rainstorm_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::rainstorm_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::rainstorm_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::rainstorm_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::rainstorm_volumetricAnisotropy();
-    } else if (name == "thunderstorm") {
-      out.cloudDensity               = RtxOptions::thunderstorm_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::thunderstorm_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::thunderstorm_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::thunderstorm_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::thunderstorm_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::thunderstorm_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::thunderstorm_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::thunderstorm_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::thunderstorm_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::thunderstorm_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::thunderstorm_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::thunderstorm_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::thunderstorm_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::thunderstorm_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::thunderstorm_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::thunderstorm_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::thunderstorm_cloudSunsetWarmth();
-      out.airDensity                 = RtxOptions::thunderstorm_airDensity();
-      out.aerosolDensity             = RtxOptions::thunderstorm_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::thunderstorm_sunIlluminance();
-      out.nightSkyBrightness         = RtxOptions::thunderstorm_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::thunderstorm_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::thunderstorm_moonAtmosphericCouplingStrength();
-      out.transmittanceColor                = RtxOptions::thunderstorm_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::thunderstorm_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::thunderstorm_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::thunderstorm_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::thunderstorm_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::thunderstorm_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::thunderstorm_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::thunderstorm_volumetricAnisotropy();
-    } else if (name == "snow") {
-      out.cloudDensity               = RtxOptions::snow_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::snow_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::snow_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::snow_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::snow_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::snow_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::snow_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::snow_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::snow_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::snow_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::snow_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::snow_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::snow_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::snow_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::snow_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::snow_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::snow_cloudSunsetWarmth();
-      out.airDensity                 = RtxOptions::snow_airDensity();
-      out.aerosolDensity             = RtxOptions::snow_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::snow_sunIlluminance();
-      out.nightSkyBrightness         = RtxOptions::snow_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::snow_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::snow_moonAtmosphericCouplingStrength();
-      out.transmittanceColor                = RtxOptions::snow_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::snow_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::snow_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::snow_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::snow_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::snow_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::snow_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::snow_volumetricAnisotropy();
-    } else if (name == "blizzard") {
-      out.cloudDensity               = RtxOptions::blizzard_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::blizzard_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::blizzard_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::blizzard_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::blizzard_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::blizzard_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::blizzard_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::blizzard_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::blizzard_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::blizzard_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::blizzard_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::blizzard_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::blizzard_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::blizzard_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::blizzard_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::blizzard_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::blizzard_cloudSunsetWarmth();
-      out.airDensity                 = RtxOptions::blizzard_airDensity();
-      out.aerosolDensity             = RtxOptions::blizzard_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::blizzard_sunIlluminance();
-      out.nightSkyBrightness         = RtxOptions::blizzard_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::blizzard_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::blizzard_moonAtmosphericCouplingStrength();
-      out.transmittanceColor                = RtxOptions::blizzard_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::blizzard_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::blizzard_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::blizzard_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::blizzard_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::blizzard_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::blizzard_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::blizzard_volumetricAnisotropy();
-    } else if (name == "sandstorm") {
-      out.cloudDensity               = RtxOptions::sandstorm_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::sandstorm_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::sandstorm_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::sandstorm_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::sandstorm_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::sandstorm_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::sandstorm_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::sandstorm_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::sandstorm_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::sandstorm_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::sandstorm_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::sandstorm_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::sandstorm_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::sandstorm_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::sandstorm_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::sandstorm_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::sandstorm_cloudSunsetWarmth();
-      out.airDensity                 = RtxOptions::sandstorm_airDensity();
-      out.aerosolDensity             = RtxOptions::sandstorm_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::sandstorm_sunIlluminance();
-      out.nightSkyBrightness         = RtxOptions::sandstorm_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::sandstorm_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::sandstorm_moonAtmosphericCouplingStrength();
-      out.transmittanceColor                = RtxOptions::sandstorm_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::sandstorm_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::sandstorm_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::sandstorm_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::sandstorm_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::sandstorm_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::sandstorm_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::sandstorm_volumetricAnisotropy();
-    } else if (name == "smoggy") {
-      out.cloudDensity               = RtxOptions::smoggy_cloudDensity();
-      out.cloudCoverageMean          = RtxOptions::smoggy_cloudCoverageMean();
-      out.cloudCoverageSpread        = RtxOptions::smoggy_cloudCoverageSpread();
-      out.cloudCoverageNoiseScale    = RtxOptions::smoggy_cloudCoverageNoiseScale();
-      out.cloudTypeMean              = RtxOptions::smoggy_cloudTypeMean();
-      out.cloudTypeSpread            = RtxOptions::smoggy_cloudTypeSpread();
-      out.cloudTypeNoiseScale        = RtxOptions::smoggy_cloudTypeNoiseScale();
-      out.cloudAnvilBias             = RtxOptions::smoggy_cloudAnvilBias();
-      out.cloudColor                 = RtxOptions::smoggy_cloudColor();
-      out.cloudWindSpeed             = RtxOptions::smoggy_cloudWindSpeed();
-      out.cloudWindDirection         = RtxOptions::smoggy_cloudWindDirection();
-      out.cloudShadowStrength        = RtxOptions::smoggy_cloudShadowStrength();
-      out.cloudAnisotropy            = RtxOptions::smoggy_cloudAnisotropy();
-      out.cloudThickness             = RtxOptions::smoggy_cloudThickness();
-      out.cloudShadowTint            = RtxOptions::smoggy_cloudShadowTint();
-      out.cloudShadowTintStrength    = RtxOptions::smoggy_cloudShadowTintStrength();
-      out.cloudSunsetWarmth          = RtxOptions::smoggy_cloudSunsetWarmth();
-      out.airDensity                 = RtxOptions::smoggy_airDensity();
-      out.aerosolDensity             = RtxOptions::smoggy_aerosolDensity();
-      out.sunIlluminance             = RtxOptions::smoggy_sunIlluminance();
-      out.nightSkyBrightness         = RtxOptions::smoggy_nightSkyBrightness();
-      out.moonNeeStrength            = RtxOptions::smoggy_moonNeeStrength();
-      out.moonAtmosphericCouplingStrength = RtxOptions::smoggy_moonAtmosphericCouplingStrength();
-      out.transmittanceColor                = RtxOptions::smoggy_transmittanceColor();
-      out.transmittanceMeasurementDistanceMeters = RtxOptions::smoggy_transmittanceMeasurementDistanceMeters();
-      out.fogDensityReferenceTransmittanceDay   = RtxOptions::smoggy_fogDensityReferenceTransmittanceDay();
-      out.fogDensityReferenceTransmittanceNight = RtxOptions::smoggy_fogDensityReferenceTransmittanceNight();
-      out.fogDensityReferenceTransmittanceUnderwaterDay   = RtxOptions::smoggy_fogDensityReferenceTransmittanceUnderwaterDay();
-      out.fogDensityReferenceTransmittanceUnderwaterNight = RtxOptions::smoggy_fogDensityReferenceTransmittanceUnderwaterNight();
-      out.singleScatteringAlbedo            = RtxOptions::smoggy_singleScatteringAlbedo();
-      out.volumetricAnisotropy              = RtxOptions::smoggy_volumetricAnisotropy();
-    } else {
-      return false;  // Unknown preset name.
-    }
-    return true;
+    for (const auto& p : kPresetDescs) { if (name == p.name) { out = p.read(); return true; } }
+    return false;  // Unknown preset name -> caller treats blender as dormant.
+  }
+  int presetIndexForName(const std::string& name) {
+    for (const auto& p : kPresetDescs) { if (name == p.name) return p.idx; }
+    return -1;
   }
 
   // ---------------------------------------------------------------------------
-  // snapshotRenderer — reads current live renderer RTX_OPTION values.
+  // Authoring helpers (copy-from / snapshot-from-live / export-to-conf).
+  // ---------------------------------------------------------------------------
+  void copyPresetToPreset(int srcIdx, int dstIdx) {
+    if (srcIdx < 0 || dstIdx < 0 || srcIdx >= WP_COUNT || dstIdx >= WP_COUNT || srcIdx == dstIdx) return;
+    WeatherSnapshot s = kPresetDescs[srcIdx].read();
+    for (const auto& d : kFieldDescs) { d.setPresetField(dstIdx, s); }
+  }
+  void snapshotLiveToPreset(int dstIdx) {
+    if (dstIdx < 0 || dstIdx >= WP_COUNT) return;
+    WeatherSnapshot s = snapshotRenderer();
+    for (const auto& d : kFieldDescs) { d.setPresetField(dstIdx, s); }
+  }
+  std::string exportPresetToConf(int idx) {
+    if (idx < 0 || idx >= WP_COUNT) return std::string();
+    WeatherSnapshot s = kPresetDescs[idx].read();
+    const char* pname = kPresetDescs[idx].name;
+    std::string out;
+    for (const auto& d : kFieldDescs) {
+      // Full config key = category + "." + option name, and the option name is
+      // itself preset-prefixed (e.g. rtx.weather.preset.foggy.foggy_cloudDensity).
+      out += "rtx.weather.preset.";
+      out += pname; out += "."; out += pname; out += "_"; out += d.name; out += " = ";
+      out += d.formatValue(s); out += "\n";
+    }
+    return out;
+  }
+  // Case-insensitive substring filter for the panel search box.
+  bool matchesFilter(const char* label, const char* filter) {
+    if (!filter || !filter[0]) return true;
+    std::string l(label), f(filter);
+    std::transform(l.begin(), l.end(), l.begin(), [](unsigned char ch){ return (char)std::tolower(ch); });
+    std::transform(f.begin(), f.end(), f.begin(), [](unsigned char ch){ return (char)std::tolower(ch); });
+    return l.find(f) != std::string::npos;
+  }
+
+  // Tooltip text for each weather field, mirrored from the underlying LIVE option's
+  // RTX_OPTION description (getDescription) so tooltips match the canonical docs and
+  // stay in sync automatically -- no hand-copied strings. (The per-preset copies only
+  // carry a generic auto-description, so we read the global option's text instead.)
+  const char* weatherFieldTooltip(const char* name) {
+    if (std::strcmp(name, "cloudDensity") == 0) return RtxOptions::cloudDensityObject().getDescription();
+    if (std::strcmp(name, "cloudCoverageMean") == 0) return RtxOptions::cloudCoverageMeanObject().getDescription();
+    if (std::strcmp(name, "cloudCoverageSpread") == 0) return RtxOptions::cloudCoverageSpreadObject().getDescription();
+    if (std::strcmp(name, "cloudCoverageNoiseScale") == 0) return RtxOptions::cloudCoverageNoiseScaleObject().getDescription();
+    if (std::strcmp(name, "cloudTypeMean") == 0) return RtxOptions::cloudTypeMeanObject().getDescription();
+    if (std::strcmp(name, "cloudTypeSpread") == 0) return RtxOptions::cloudTypeSpreadObject().getDescription();
+    if (std::strcmp(name, "cloudTypeNoiseScale") == 0) return RtxOptions::cloudTypeNoiseScaleObject().getDescription();
+    if (std::strcmp(name, "cloudColor") == 0) return RtxOptions::cloudColorObject().getDescription();
+    if (std::strcmp(name, "cloudWindSpeed") == 0) return RtxOptions::cloudWindSpeedObject().getDescription();
+    if (std::strcmp(name, "cloudWindDirection") == 0) return RtxOptions::cloudWindDirectionObject().getDescription();
+    if (std::strcmp(name, "cloudShadowStrength") == 0) return RtxOptions::cloudShadowStrengthObject().getDescription();
+    if (std::strcmp(name, "cloudThickness") == 0) return RtxOptions::cloudThicknessObject().getDescription();
+    if (std::strcmp(name, "cloudUndersideLightSigma") == 0) return RtxOptions::cloudUndersideLightSigmaObject().getDescription();
+    if (std::strcmp(name, "cloudBottomDarkening") == 0) return RtxOptions::cloudBottomDarkeningObject().getDescription();
+    if (std::strcmp(name, "cloudAerialFadePerKm") == 0) return RtxOptions::cloudAerialFadePerKmObject().getDescription();
+    if (std::strcmp(name, "cloudAerialHazePerKm") == 0) return RtxOptions::cloudAerialHazePerKmObject().getDescription();
+    if (std::strcmp(name, "airDensity") == 0) return RtxOptions::airDensityObject().getDescription();
+    if (std::strcmp(name, "aerosolDensity") == 0) return RtxOptions::aerosolDensityObject().getDescription();
+    if (std::strcmp(name, "sunIlluminance") == 0) return RtxOptions::sunIlluminanceObject().getDescription();
+    if (std::strcmp(name, "rayleighScattering") == 0) return RtxOptions::rayleighScatteringObject().getDescription();
+    if (std::strcmp(name, "skyIndirectRadianceScale") == 0) return RtxOptions::skyIndirectRadianceScaleObject().getDescription();
+    if (std::strcmp(name, "nightSkyBrightness") == 0) return RtxOptions::nightSkyBrightnessObject().getDescription();
+    if (std::strcmp(name, "nightSkyColor") == 0) return RtxOptions::nightSkyColorObject().getDescription();
+    if (std::strcmp(name, "moonNeeStrength") == 0) return RtxOptions::moonNeeStrengthObject().getDescription();
+    if (std::strcmp(name, "moonAtmosphericCouplingStrength") == 0) return RtxOptions::moonAtmosphericCouplingStrengthObject().getDescription();
+    if (std::strcmp(name, "transmittanceColor") == 0) return RtxGlobalVolumetrics::transmittanceColorObject().getDescription();
+    if (std::strcmp(name, "transmittanceMeasurementDistanceMeters") == 0) return RtxGlobalVolumetrics::transmittanceMeasurementDistanceMetersObject().getDescription();
+    if (std::strcmp(name, "singleScatteringAlbedo") == 0) return RtxGlobalVolumetrics::singleScatteringAlbedoObject().getDescription();
+    if (std::strcmp(name, "volumetricAnisotropy") == 0) return RtxGlobalVolumetrics::anisotropyObject().getDescription();
+    if (std::strcmp(name, "fogSunVisibilityGain") == 0) return RtxGlobalVolumetrics::fogSunVisibilityGainObject().getDescription();
+    if (std::strcmp(name, "volumetricConsumerGain") == 0) return RtxGlobalVolumetrics::volumetricConsumerGainObject().getDescription();
+    if (std::strcmp(name, "enableHeterogeneousFog") == 0) return RtxGlobalVolumetrics::enableHeterogeneousFogObject().getDescription();
+    if (std::strcmp(name, "noiseFieldDensityScale") == 0) return RtxGlobalVolumetrics::noiseFieldDensityScaleObject().getDescription();
+    if (std::strcmp(name, "noiseFieldDensityExponent") == 0) return RtxGlobalVolumetrics::noiseFieldDensityExponentObject().getDescription();
+    if (std::strcmp(name, "noiseFieldInitialFrequencyPerMeter") == 0) return RtxGlobalVolumetrics::noiseFieldInitialFrequencyPerMeterObject().getDescription();
+    if (std::strcmp(name, "noiseFieldLacunarity") == 0) return RtxGlobalVolumetrics::noiseFieldLacunarityObject().getDescription();
+    if (std::strcmp(name, "noiseFieldGain") == 0) return RtxGlobalVolumetrics::noiseFieldGainObject().getDescription();
+    if (std::strcmp(name, "noiseFieldTimeScale") == 0) return RtxGlobalVolumetrics::noiseFieldTimeScaleObject().getDescription();
+    if (std::strcmp(name, "noiseFieldSubStepSizeMeters") == 0) return RtxGlobalVolumetrics::noiseFieldSubStepSizeMetersObject().getDescription();
+    if (std::strcmp(name, "froxelMaxDistanceMeters") == 0) return RtxGlobalVolumetrics::froxelMaxDistanceMetersObject().getDescription();
+    if (std::strcmp(name, "enableFogRemap") == 0) return RtxGlobalVolumetrics::enableFogRemapObject().getDescription();
+    if (std::strcmp(name, "enableFogColorRemap") == 0) return RtxGlobalVolumetrics::enableFogColorRemapObject().getDescription();
+    if (std::strcmp(name, "enableFogMaxDistanceRemap") == 0) return RtxGlobalVolumetrics::enableFogMaxDistanceRemapObject().getDescription();
+    if (std::strcmp(name, "fogRemapMaxDistanceMinMeters") == 0) return RtxGlobalVolumetrics::fogRemapMaxDistanceMinMetersObject().getDescription();
+    if (std::strcmp(name, "fogRemapMaxDistanceMaxMeters") == 0) return RtxGlobalVolumetrics::fogRemapMaxDistanceMaxMetersObject().getDescription();
+    if (std::strcmp(name, "fogRemapTransmittanceMeasurementDistanceMinMeters") == 0) return RtxGlobalVolumetrics::fogRemapTransmittanceMeasurementDistanceMinMetersObject().getDescription();
+    if (std::strcmp(name, "fogRemapTransmittanceMeasurementDistanceMaxMeters") == 0) return RtxGlobalVolumetrics::fogRemapTransmittanceMeasurementDistanceMaxMetersObject().getDescription();
+    if (std::strcmp(name, "fogRemapColorMultiscatteringScale") == 0) return RtxGlobalVolumetrics::fogRemapColorMultiscatteringScaleObject().getDescription();
+    if (std::strcmp(name, "enableTranslucentShadows") == 0) return RtxGlobalVolumetrics::enableTranslucentShadowsObject().getDescription();
+    if (std::strcmp(name, "depthOffset") == 0) return RtxGlobalVolumetrics::depthOffsetObject().getDescription();
+    if (std::strcmp(name, "noiseFieldOctaves") == 0) return RtxGlobalVolumetrics::noiseFieldOctavesObject().getDescription();
+    if (std::strcmp(name, "atmosphereSunFogScale") == 0) return RtxOptions::atmosphereSunVolumetricRadianceScaleObject().getDescription();
+    return "";
+  }
+  // True if any field in this (group[, section]) matches the filter.
+  bool sectionHasMatch(const char* group, const char* section, const char* filter) {
+    for (int k = 0; k < kFieldCount; ++k) {
+      const WeatherFieldDesc& d = kFieldDescs[k];
+      if (std::strcmp(d.group, group) != 0) continue;
+      if (section && std::strcmp(d.section, section) != 0) continue;
+      if (matchesFilter(d.label, filter)) return true;
+    }
+    return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Derived "Fog Density" / "Fog Tint" controls (fork).
+  //
+  // The raw volumetric model is a transmittance pair (colour + measurement
+  // distance) where THICKER fog means a SHORTER distance, and the fog's apparent
+  // colour comes from single-scattering albedo rather than the transmittance
+  // colour. Both fight intuition. These two derived widgets sit on top of the raw
+  // sliders and present the familiar mental model:
+  //   Fog Density  0..1   -> transmittanceMeasurementDistanceMeters, exp-mapped
+  //                          so shorter distance = denser (0 = clear, 1 = whiteout).
+  //   Fog Tint     colour -> singleScatteringAlbedo (the colour fog scatters).
+  // The raw sliders remain below for power users; both views read/write the same
+  // option objects via get()/setDeferred(), so they stay in lockstep.
+  // ---------------------------------------------------------------------------
+  constexpr float kFogVisMinM = 10.0f;    // maps to density 1.0 (whiteout)
+  constexpr float kFogVisMaxM = 2000.0f;  // maps to density 0.0 (clear)
+
+  float fogDistanceToDensity(float distM) {
+    const float d = std::min(std::max(distM, kFogVisMinM), kFogVisMaxM);
+    return saturate(std::log(kFogVisMaxM / d) / std::log(kFogVisMaxM / kFogVisMinM));
+  }
+  float fogDensityToDistance(float density) {
+    return kFogVisMaxM * std::pow(kFogVisMinM / kFogVisMaxM, saturate(density));
+  }
+
+  // Per-preset RtxOption pointer accessors for the two underlying fog options the
+  // derived widgets drive. Same option objects the raw sliders bind to.
+#define WEATHER_PRESET_OBJPTR(FIELD, TYPE, FN)                                   \
+  RtxOption<TYPE>* FN(int p) {                                                   \
+    switch (p) {                                                                 \
+      case WP_clear:        return &RtxOptions::clear_##FIELD##Object();         \
+      case WP_partlyCloudy: return &RtxOptions::partlyCloudy_##FIELD##Object();  \
+      case WP_overcast:     return &RtxOptions::overcast_##FIELD##Object();      \
+      case WP_hazy:         return &RtxOptions::hazy_##FIELD##Object();          \
+      case WP_foggy:        return &RtxOptions::foggy_##FIELD##Object();         \
+      case WP_drizzle:      return &RtxOptions::drizzle_##FIELD##Object();       \
+      case WP_rainstorm:    return &RtxOptions::rainstorm_##FIELD##Object();     \
+      case WP_thunderstorm: return &RtxOptions::thunderstorm_##FIELD##Object();  \
+      case WP_snow:         return &RtxOptions::snow_##FIELD##Object();          \
+      case WP_blizzard:     return &RtxOptions::blizzard_##FIELD##Object();      \
+      case WP_sandstorm:    return &RtxOptions::sandstorm_##FIELD##Object();     \
+      case WP_smoggy:       return &RtxOptions::smoggy_##FIELD##Object();        \
+      default:              return nullptr;                                      \
+    }                                                                            \
+  }
+  WEATHER_PRESET_OBJPTR(transmittanceMeasurementDistanceMeters, float,   presetFogDistanceObj)
+  WEATHER_PRESET_OBJPTR(singleScatteringAlbedo,                 Vector3, presetFogTintObj)
+#undef WEATHER_PRESET_OBJPTR
+
+  // Renders the derived Fog Density + Fog Tint widgets for one preset, honoring
+  // the panel's name filter. Returns true if it rendered anything.
+  bool renderDerivedFogControls(int presetIdx, const char* filter) {
+    RtxOption<float>*   distObj = presetFogDistanceObj(presetIdx);
+    RtxOption<Vector3>* tintObj = presetFogTintObj(presetIdx);
+    if (!distObj || !tintObj) {
+      return false;
+    }
+
+    bool rendered = false;
+    if (matchesFilter("Fog Density", filter)) {
+      float density = fogDistanceToDensity(distObj->get());
+      if (ImGui::SliderFloat("Fog Density", &density, 0.0f, 1.0f, "%.2f")) {
+        distObj->setDeferred(fogDensityToDistance(density));
+      }
+      RemixGui::SetTooltipToLastWidgetOnHover(
+        "Intuitive thickness dial. 0 = clear, 1 = whiteout (~10 m visibility). "
+        "Drives Transmittance Distance below (shorter distance = denser fog).");
+      rendered = true;
+    }
+    if (matchesFilter("Fog Tint", filter)) {
+      RemixGui::ColorEdit3("Fog Tint", tintObj);
+      RemixGui::SetTooltipToLastWidgetOnHover(
+        "The colour the fog scatters (single-scattering albedo). This, not "
+        "Transmittance Color, is what tints the fog you actually see.");
+      rendered = true;
+    }
+    return rendered;
+  }
+
+  // Renders the per-preset editor in the main panel's design language: nested
+  // TreeNodes (group -> section), default-open, ColorEdit swatches for colors.
+  // Generated from the field table, so new fields appear automatically. With a
+  // filter active, matching trees auto-open and empty ones are hidden.
+  void renderPresetEditor(int presetIdx, const char* filter, ImGuiSliderFlags fl) {
+    const bool filtering = filter && filter[0];
+
+    for (int gi = 0; gi < kFieldCount; ++gi) {
+      const char* group = kFieldDescs[gi].group;
+      bool groupSeen = false;
+      for (int k = 0; k < gi; ++k) {
+        if (std::strcmp(kFieldDescs[k].group, group) == 0) { groupSeen = true; break; }
+      }
+      if (groupSeen) continue;
+      if (!sectionHasMatch(group, nullptr, filter)) continue;
+
+      ImGui::SetNextItemOpen(true, filtering ? ImGuiCond_Always : ImGuiCond_Once);
+      if (!ImGui::TreeNode(group)) continue;
+
+      for (int si = 0; si < kFieldCount; ++si) {
+        if (std::strcmp(kFieldDescs[si].group, group) != 0) continue;
+        const char* section = kFieldDescs[si].section;
+        bool sectionSeen = false;
+        for (int k = 0; k < si; ++k) {
+          if (std::strcmp(kFieldDescs[k].group, group) == 0 &&
+              std::strcmp(kFieldDescs[k].section, section) == 0) { sectionSeen = true; break; }
+        }
+        if (sectionSeen) continue;
+        if (!sectionHasMatch(group, section, filter)) continue;
+
+        ImGui::SetNextItemOpen(true, filtering ? ImGuiCond_Always : ImGuiCond_Once);
+        if (!ImGui::TreeNode(section)) continue;
+        // Friendly derived controls ride at the top of Volumetric Fog -> Medium,
+        // above the raw transmittance sliders they remap.
+        if (std::strcmp(group, "Volumetric Fog") == 0 && std::strcmp(section, "Medium") == 0) {
+          if (renderDerivedFogControls(presetIdx, filter)) {
+            ImGui::Separator();
+          }
+        }
+        for (int fi = 0; fi < kFieldCount; ++fi) {
+          const WeatherFieldDesc& d = kFieldDescs[fi];
+          if (std::strcmp(d.group, group) != 0 || std::strcmp(d.section, section) != 0) continue;
+          if (!matchesFilter(d.label, filter)) continue;
+          ImGui::PushID(fi);
+          d.renderSlider(presetIdx, fl);
+          const char* tip = weatherFieldTooltip(d.name);
+          if (tip && tip[0]) { RemixGui::SetTooltipToLastWidgetOnHover(tip); }
+          ImGui::PopID();
+        }
+        ImGui::TreePop();
+      }
+      ImGui::TreePop();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // snapshotRenderer ΓÇö reads current live renderer RTX_OPTION values.
   //
   // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 4 sites).
   // Cloud fields: RtxOptions::xxx()
@@ -709,7 +714,7 @@ namespace dxvk { namespace fork_weather { namespace {
   // ---------------------------------------------------------------------------
   WeatherSnapshot snapshotRenderer() {
     WeatherSnapshot s;
-    // Cloud (17)
+    // Cloud (16)
     s.cloudDensity               = RtxOptions::cloudDensity();
     s.cloudCoverageMean          = RtxOptions::cloudCoverageMean();
     s.cloudCoverageSpread        = RtxOptions::cloudCoverageSpread();
@@ -717,44 +722,136 @@ namespace dxvk { namespace fork_weather { namespace {
     s.cloudTypeMean              = RtxOptions::cloudTypeMean();
     s.cloudTypeSpread            = RtxOptions::cloudTypeSpread();
     s.cloudTypeNoiseScale        = RtxOptions::cloudTypeNoiseScale();
-    s.cloudAnvilBias             = RtxOptions::cloudAnvilBias();
     s.cloudColor                 = RtxOptions::cloudColor();
     s.cloudWindSpeed             = RtxOptions::cloudWindSpeed();
     s.cloudWindDirection         = RtxOptions::cloudWindDirection();
     s.cloudShadowStrength        = RtxOptions::cloudShadowStrength();
-    s.cloudAnisotropy            = RtxOptions::cloudAnisotropy();
     s.cloudThickness             = RtxOptions::cloudThickness();
+    // Cloud look (fork — retained through remixplus table-driven rework)
+    s.cloudAnvilBias             = RtxOptions::cloudAnvilBias();
+    s.cloudAnisotropy            = RtxOptions::cloudAnisotropy();
     s.cloudShadowTint            = RtxOptions::cloudShadowTint();
     s.cloudShadowTintStrength    = RtxOptions::cloudShadowTintStrength();
     s.cloudSunsetWarmth          = RtxOptions::cloudSunsetWarmth();
-    // Atmosphere (3)
+    s.cloudUndersideLightSigma = RtxOptions::cloudUndersideLightSigma();
+    s.cloudBottomDarkening     = RtxOptions::cloudBottomDarkening();
+    s.cloudAerialFadePerKm     = RtxOptions::cloudAerialFadePerKm();
+    s.cloudAerialHazePerKm     = RtxOptions::cloudAerialHazePerKm();
+    // Atmosphere (5)
     s.airDensity                 = RtxOptions::airDensity();
     s.aerosolDensity             = RtxOptions::aerosolDensity();
     s.sunIlluminance             = RtxOptions::sunIlluminance();
-    // Sky/moon mood (3)
+    s.rayleighScattering         = RtxOptions::rayleighScattering();
+    s.skyIndirectRadianceScale   = RtxOptions::skyIndirectRadianceScale();
+    // Sky/moon mood (4)
     s.nightSkyBrightness         = RtxOptions::nightSkyBrightness();
+    s.nightSkyColor              = RtxOptions::nightSkyColor();
     s.moonNeeStrength            = RtxOptions::moonNeeStrength();
     s.moonAtmosphericCouplingStrength = RtxOptions::moonAtmosphericCouplingStrength();
-    // Volumetric (4) — class is RtxGlobalVolumetrics
+    // Volumetric (27) ΓÇö class is RtxGlobalVolumetrics
     s.transmittanceColor                     = RtxGlobalVolumetrics::transmittanceColor();
     s.transmittanceMeasurementDistanceMeters = RtxGlobalVolumetrics::transmittanceMeasurementDistanceMeters();
+    // Fog density decoupling (fork §-6/§-9): the live renderer holds ONE above-water and ONE
+    // underwater reference transmittance (already collapsed by sun elevation on write); seed both
+    // Day and Night snapshot fields from the same live value so a snapshot-from-live round-trips.
     s.fogDensityReferenceTransmittanceDay   = RtxGlobalVolumetrics::fogDensityReferenceTransmittance();
     s.fogDensityReferenceTransmittanceNight = RtxGlobalVolumetrics::fogDensityReferenceTransmittance();
     s.fogDensityReferenceTransmittanceUnderwaterDay   = RtxGlobalVolumetrics::fogDensityReferenceTransmittanceUnderwater();
     s.fogDensityReferenceTransmittanceUnderwaterNight = RtxGlobalVolumetrics::fogDensityReferenceTransmittanceUnderwater();
     s.singleScatteringAlbedo                 = RtxGlobalVolumetrics::singleScatteringAlbedo();
     s.volumetricAnisotropy                   = RtxGlobalVolumetrics::anisotropy();
+    // Volumetric appearance (fork - full set)
+    s.fogSunVisibilityGain = RtxGlobalVolumetrics::fogSunVisibilityGain();
+    s.volumetricConsumerGain = RtxGlobalVolumetrics::volumetricConsumerGain();
+    s.enableHeterogeneousFog = RtxGlobalVolumetrics::enableHeterogeneousFog();
+    s.noiseFieldDensityScale = RtxGlobalVolumetrics::noiseFieldDensityScale();
+    s.noiseFieldDensityExponent = RtxGlobalVolumetrics::noiseFieldDensityExponent();
+    s.noiseFieldInitialFrequencyPerMeter = RtxGlobalVolumetrics::noiseFieldInitialFrequencyPerMeter();
+    s.noiseFieldLacunarity = RtxGlobalVolumetrics::noiseFieldLacunarity();
+    s.noiseFieldGain = RtxGlobalVolumetrics::noiseFieldGain();
+    s.noiseFieldTimeScale = RtxGlobalVolumetrics::noiseFieldTimeScale();
+    s.noiseFieldSubStepSizeMeters = RtxGlobalVolumetrics::noiseFieldSubStepSizeMeters();
+    s.froxelMaxDistanceMeters = RtxGlobalVolumetrics::froxelMaxDistanceMeters();
+    s.enableFogRemap = RtxGlobalVolumetrics::enableFogRemap();
+    s.enableFogColorRemap = RtxGlobalVolumetrics::enableFogColorRemap();
+    s.enableFogMaxDistanceRemap = RtxGlobalVolumetrics::enableFogMaxDistanceRemap();
+    s.fogRemapMaxDistanceMinMeters = RtxGlobalVolumetrics::fogRemapMaxDistanceMinMeters();
+    s.fogRemapMaxDistanceMaxMeters = RtxGlobalVolumetrics::fogRemapMaxDistanceMaxMeters();
+    s.fogRemapTransmittanceMeasurementDistanceMinMeters = RtxGlobalVolumetrics::fogRemapTransmittanceMeasurementDistanceMinMeters();
+    s.fogRemapTransmittanceMeasurementDistanceMaxMeters = RtxGlobalVolumetrics::fogRemapTransmittanceMeasurementDistanceMaxMeters();
+    s.fogRemapColorMultiscatteringScale = RtxGlobalVolumetrics::fogRemapColorMultiscatteringScale();
+    s.enableTranslucentShadows = RtxGlobalVolumetrics::enableTranslucentShadows();
+    s.atmosphereSunFogScale    = RtxOptions::atmosphereSunVolumetricRadianceScale();
+    s.depthOffset              = RtxGlobalVolumetrics::depthOffset();
+    s.noiseFieldOctaves        = static_cast<float>(RtxGlobalVolumetrics::noiseFieldOctaves());
     return s;
   }
 
   // ---------------------------------------------------------------------------
-  // writeBlendedToDerivedLayer — writes each field of interp to the Derived
+  // writeBlendedToDerivedLayer ΓÇö writes each field of interp to the Derived
   // layer of its underlying RTX_OPTION via setImmediately().
   //
   // FIELD ORDER matches WEATHER_PRESET_FIELD_LIST exactly (same 4 sites).
   // ---------------------------------------------------------------------------
+  // --- Write gate (fork) ----------------------------------------------------
+  // A weather param IDENTICAL across all 12 presets is not a weather
+  // differentiator, so force-writing it every frame would needlessly clobber a
+  // game's own config for that option. weatherVaries_<field>() reports whether a
+  // field actually differs between presets; the new volumetric-appearance writes
+  // are gated on it (recomputed each frame so editor tuning takes effect).
+  bool weatherNeq(float a, float b) { return a != b; }
+  bool weatherNeq(bool a, bool b)   { return a != b; }
+  bool weatherNeq(const Vector3& a, const Vector3& b) { return a.x != b.x || a.y != b.y || a.z != b.z; }
+#define WVARIES(name)                                          \
+  bool weatherVaries_##name() {                                \
+    const auto v0 = RtxOptions::clear_##name();                \
+    return weatherNeq(RtxOptions::partlyCloudy_##name(), v0)   \
+        || weatherNeq(RtxOptions::overcast_##name(),     v0)   \
+        || weatherNeq(RtxOptions::hazy_##name(),         v0)   \
+        || weatherNeq(RtxOptions::foggy_##name(),        v0)   \
+        || weatherNeq(RtxOptions::drizzle_##name(),      v0)   \
+        || weatherNeq(RtxOptions::rainstorm_##name(),    v0)   \
+        || weatherNeq(RtxOptions::thunderstorm_##name(), v0)   \
+        || weatherNeq(RtxOptions::snow_##name(),         v0)   \
+        || weatherNeq(RtxOptions::blizzard_##name(),     v0)   \
+        || weatherNeq(RtxOptions::sandstorm_##name(),    v0)   \
+        || weatherNeq(RtxOptions::smoggy_##name(),       v0);  \
+  }
+  WVARIES(fogSunVisibilityGain)
+  WVARIES(volumetricConsumerGain)
+  WVARIES(enableHeterogeneousFog)
+  WVARIES(noiseFieldDensityScale)
+  WVARIES(noiseFieldDensityExponent)
+  WVARIES(noiseFieldInitialFrequencyPerMeter)
+  WVARIES(noiseFieldLacunarity)
+  WVARIES(noiseFieldGain)
+  WVARIES(noiseFieldTimeScale)
+  WVARIES(noiseFieldSubStepSizeMeters)
+  WVARIES(froxelMaxDistanceMeters)
+  WVARIES(enableFogRemap)
+  WVARIES(enableFogColorRemap)
+  WVARIES(enableFogMaxDistanceRemap)
+  WVARIES(fogRemapMaxDistanceMinMeters)
+  WVARIES(fogRemapMaxDistanceMaxMeters)
+  WVARIES(fogRemapTransmittanceMeasurementDistanceMinMeters)
+  WVARIES(fogRemapTransmittanceMeasurementDistanceMaxMeters)
+  WVARIES(fogRemapColorMultiscatteringScale)
+  WVARIES(enableTranslucentShadows)
+  WVARIES(atmosphereSunFogScale)
+  WVARIES(depthOffset)
+  WVARIES(noiseFieldOctaves)
+  WVARIES(cloudUndersideLightSigma)
+  WVARIES(cloudBottomDarkening)
+  WVARIES(cloudAerialFadePerKm)
+  WVARIES(cloudAerialHazePerKm)
+  WVARIES(moonNeeStrength)
+  WVARIES(moonAtmosphericCouplingStrength)
+  WVARIES(rayleighScattering)
+  WVARIES(nightSkyColor)
+  WVARIES(skyIndirectRadianceScale)
+#undef WVARIES
   void writeBlendedToDerivedLayer(const WeatherSnapshot& interp) {
-    // Cloud (17)
+    // Cloud (16)
     RtxOptions::cloudDensityObject().setImmediately(interp.cloudDensity);
     RtxOptions::cloudCoverageMeanObject().setImmediately(interp.cloudCoverageMean);
     RtxOptions::cloudCoverageSpreadObject().setImmediately(interp.cloudCoverageSpread);
@@ -762,33 +859,46 @@ namespace dxvk { namespace fork_weather { namespace {
     RtxOptions::cloudTypeMeanObject().setImmediately(interp.cloudTypeMean);
     RtxOptions::cloudTypeSpreadObject().setImmediately(interp.cloudTypeSpread);
     RtxOptions::cloudTypeNoiseScaleObject().setImmediately(interp.cloudTypeNoiseScale);
-    RtxOptions::cloudAnvilBiasObject().setImmediately(interp.cloudAnvilBias);
     RtxOptions::cloudColorObject().setImmediately(interp.cloudColor);
-    // cloudWindSpeed and cloudWindDirection are game-driven per-frame from the
-    // wrapper (Morrowind wind state). Skip them here so the blender doesn't
-    // overwrite the wrapper's SetConfigVariable writes.
+    // cloudWindSpeed / cloudWindDirection are game-driven per-frame from the wrapper
+    // (Morrowind wind state); the blender must NOT overwrite them (fork — retained
+    // through the remixplus table-driven rework, which otherwise writes them here).
     // RtxOptions::cloudWindSpeedObject().setImmediately(interp.cloudWindSpeed);
     // RtxOptions::cloudWindDirectionObject().setImmediately(interp.cloudWindDirection);
     RtxOptions::cloudShadowStrengthObject().setImmediately(interp.cloudShadowStrength);
-    RtxOptions::cloudAnisotropyObject().setImmediately(interp.cloudAnisotropy);
     RtxOptions::cloudThicknessObject().setImmediately(interp.cloudThickness);
+    // Cloud look (fork — retained through remixplus rework; written ungated as HEAD did)
+    RtxOptions::cloudAnvilBiasObject().setImmediately(interp.cloudAnvilBias);
+    RtxOptions::cloudAnisotropyObject().setImmediately(interp.cloudAnisotropy);
     RtxOptions::cloudShadowTintObject().setImmediately(interp.cloudShadowTint);
     RtxOptions::cloudShadowTintStrengthObject().setImmediately(interp.cloudShadowTintStrength);
     RtxOptions::cloudSunsetWarmthObject().setImmediately(interp.cloudSunsetWarmth);
-    // Atmosphere (3)
+    if (weatherVaries_cloudUndersideLightSigma()) RtxOptions::cloudUndersideLightSigmaObject().setImmediately(interp.cloudUndersideLightSigma);
+    if (weatherVaries_cloudBottomDarkening())     RtxOptions::cloudBottomDarkeningObject().setImmediately(interp.cloudBottomDarkening);
+    if (weatherVaries_cloudAerialFadePerKm())     RtxOptions::cloudAerialFadePerKmObject().setImmediately(interp.cloudAerialFadePerKm);
+    if (weatherVaries_cloudAerialHazePerKm())     RtxOptions::cloudAerialHazePerKmObject().setImmediately(interp.cloudAerialHazePerKm);
+    // Atmosphere (5); rayleighScattering (daytime sky colour) and skyIndirectRadianceScale
+    // (sky light) are neutral in every preset today, so gate them to avoid clobbering
+    // the game's own sky tint / sky-fill brightness.
     RtxOptions::airDensityObject().setImmediately(interp.airDensity);
     RtxOptions::aerosolDensityObject().setImmediately(interp.aerosolDensity);
     RtxOptions::sunIlluminanceObject().setImmediately(interp.sunIlluminance);
-    // Sky/moon mood (3)
+    if (weatherVaries_rayleighScattering())       RtxOptions::rayleighScatteringObject().setImmediately(interp.rayleighScattering);
+    if (weatherVaries_skyIndirectRadianceScale()) RtxOptions::skyIndirectRadianceScaleObject().setImmediately(interp.skyIndirectRadianceScale);
+    // Sky/moon mood (4); nightSkyBrightness varies, so always write. nightSkyColor
+    // and the two moon
+    // gains are 1.0 in every preset today, so gate them like the other invariant
+    // fields to avoid clobbering a game's own moon config when they don't differ.
     RtxOptions::nightSkyBrightnessObject().setImmediately(interp.nightSkyBrightness);
-    RtxOptions::moonNeeStrengthObject().setImmediately(interp.moonNeeStrength);
-    RtxOptions::moonAtmosphericCouplingStrengthObject().setImmediately(interp.moonAtmosphericCouplingStrength);
-    // Volumetric (4) — class is RtxGlobalVolumetrics
+    if (weatherVaries_nightSkyColor())                   RtxOptions::nightSkyColorObject().setImmediately(interp.nightSkyColor);
+    if (weatherVaries_moonNeeStrength())                 RtxOptions::moonNeeStrengthObject().setImmediately(interp.moonNeeStrength);
+    if (weatherVaries_moonAtmosphericCouplingStrength()) RtxOptions::moonAtmosphericCouplingStrengthObject().setImmediately(interp.moonAtmosphericCouplingStrength);
+    // Volumetric (27) ΓÇö class is RtxGlobalVolumetrics
     RtxGlobalVolumetrics::transmittanceColorObject().setImmediately(interp.transmittanceColor);
     RtxGlobalVolumetrics::transmittanceMeasurementDistanceMetersObject().setImmediately(interp.transmittanceMeasurementDistanceMeters);
-    // Time-of-day fog density: collapse per-weather Day/Night reference transmittance
-    // by sun elevation (deg above horizon). Night at/below -5 deg, full day at/above
-    // +10 deg, smooth twilight blend between. sunElevation is game-driven by the wrapper.
+    // Time-of-day fog density (fork §-6): collapse per-weather Day/Night reference transmittance
+    // by sun elevation (deg above horizon). Night at/below -5 deg, full day at/above +10 deg,
+    // smooth twilight blend between. sunElevation is game-driven by the wrapper.
     {
       const float sunElevDeg = RtxOptions::sunElevation();
       const float todDayFactor = saturate((sunElevDeg + 5.0f) / 15.0f);
@@ -796,9 +906,8 @@ namespace dxvk { namespace fork_weather { namespace {
                                                  interp.fogDensityReferenceTransmittanceDay, todDayFactor);
       RtxGlobalVolumetrics::fogDensityReferenceTransmittanceObject().setImmediately(collapsedFogDensityRefT);
     }
-    // §-9: per-weather underwater fog density, now with its OWN Day/Night split collapsed by sun
-    // elevation (same todDayFactor curve as the above-water density). Written to its own global Derived
-    // layer; the shader selects it per-froxel below the water plane.
+    // §-9: per-weather underwater fog density with its OWN Day/Night split, same collapse curve.
+    // Written to its own global Derived layer; the shader selects it per-froxel below the water plane.
     {
       const float sunElevDegUw = RtxOptions::sunElevation();
       const float todDayFactorUw = saturate((sunElevDegUw + 5.0f) / 15.0f);
@@ -808,6 +917,30 @@ namespace dxvk { namespace fork_weather { namespace {
     }
     RtxGlobalVolumetrics::singleScatteringAlbedoObject().setImmediately(interp.singleScatteringAlbedo);
     RtxGlobalVolumetrics::anisotropyObject().setImmediately(interp.volumetricAnisotropy);
+    // Volumetric appearance (fork - full set)
+    if (weatherVaries_fogSunVisibilityGain()) RtxGlobalVolumetrics::fogSunVisibilityGainObject().setImmediately(interp.fogSunVisibilityGain);
+    if (weatherVaries_volumetricConsumerGain()) RtxGlobalVolumetrics::volumetricConsumerGainObject().setImmediately(interp.volumetricConsumerGain);
+    if (weatherVaries_enableHeterogeneousFog()) RtxGlobalVolumetrics::enableHeterogeneousFogObject().setImmediately(interp.enableHeterogeneousFog);
+    if (weatherVaries_noiseFieldDensityScale()) RtxGlobalVolumetrics::noiseFieldDensityScaleObject().setImmediately(interp.noiseFieldDensityScale);
+    if (weatherVaries_noiseFieldDensityExponent()) RtxGlobalVolumetrics::noiseFieldDensityExponentObject().setImmediately(interp.noiseFieldDensityExponent);
+    if (weatherVaries_noiseFieldInitialFrequencyPerMeter()) RtxGlobalVolumetrics::noiseFieldInitialFrequencyPerMeterObject().setImmediately(interp.noiseFieldInitialFrequencyPerMeter);
+    if (weatherVaries_noiseFieldLacunarity()) RtxGlobalVolumetrics::noiseFieldLacunarityObject().setImmediately(interp.noiseFieldLacunarity);
+    if (weatherVaries_noiseFieldGain()) RtxGlobalVolumetrics::noiseFieldGainObject().setImmediately(interp.noiseFieldGain);
+    if (weatherVaries_noiseFieldTimeScale()) RtxGlobalVolumetrics::noiseFieldTimeScaleObject().setImmediately(interp.noiseFieldTimeScale);
+    if (weatherVaries_noiseFieldSubStepSizeMeters()) RtxGlobalVolumetrics::noiseFieldSubStepSizeMetersObject().setImmediately(interp.noiseFieldSubStepSizeMeters);
+    if (weatherVaries_froxelMaxDistanceMeters()) RtxGlobalVolumetrics::froxelMaxDistanceMetersObject().setImmediately(interp.froxelMaxDistanceMeters);
+    if (weatherVaries_enableFogRemap()) RtxGlobalVolumetrics::enableFogRemapObject().setImmediately(interp.enableFogRemap);
+    if (weatherVaries_enableFogColorRemap()) RtxGlobalVolumetrics::enableFogColorRemapObject().setImmediately(interp.enableFogColorRemap);
+    if (weatherVaries_enableFogMaxDistanceRemap()) RtxGlobalVolumetrics::enableFogMaxDistanceRemapObject().setImmediately(interp.enableFogMaxDistanceRemap);
+    if (weatherVaries_fogRemapMaxDistanceMinMeters()) RtxGlobalVolumetrics::fogRemapMaxDistanceMinMetersObject().setImmediately(interp.fogRemapMaxDistanceMinMeters);
+    if (weatherVaries_fogRemapMaxDistanceMaxMeters()) RtxGlobalVolumetrics::fogRemapMaxDistanceMaxMetersObject().setImmediately(interp.fogRemapMaxDistanceMaxMeters);
+    if (weatherVaries_fogRemapTransmittanceMeasurementDistanceMinMeters()) RtxGlobalVolumetrics::fogRemapTransmittanceMeasurementDistanceMinMetersObject().setImmediately(interp.fogRemapTransmittanceMeasurementDistanceMinMeters);
+    if (weatherVaries_fogRemapTransmittanceMeasurementDistanceMaxMeters()) RtxGlobalVolumetrics::fogRemapTransmittanceMeasurementDistanceMaxMetersObject().setImmediately(interp.fogRemapTransmittanceMeasurementDistanceMaxMeters);
+    if (weatherVaries_fogRemapColorMultiscatteringScale()) RtxGlobalVolumetrics::fogRemapColorMultiscatteringScaleObject().setImmediately(interp.fogRemapColorMultiscatteringScale);
+    if (weatherVaries_enableTranslucentShadows()) RtxGlobalVolumetrics::enableTranslucentShadowsObject().setImmediately(interp.enableTranslucentShadows);
+    if (weatherVaries_atmosphereSunFogScale())    RtxOptions::atmosphereSunVolumetricRadianceScaleObject().setImmediately(interp.atmosphereSunFogScale);
+    if (weatherVaries_depthOffset())              RtxGlobalVolumetrics::depthOffsetObject().setImmediately(interp.depthOffset);
+    if (weatherVaries_noiseFieldOctaves())        RtxGlobalVolumetrics::noiseFieldOctavesObject().setImmediately(static_cast<uint32_t>(interp.noiseFieldOctaves + 0.5f));
   }
 
 } } }  // namespace dxvk::fork_weather::(anonymous)
@@ -819,7 +952,7 @@ namespace dxvk { namespace fork_weather { namespace {
 namespace dxvk { namespace fork_weather {
 
   // ---------------------------------------------------------------------------
-  // WeatherBlender ctor/dtor — maintain the file-scoped active-blender pointer.
+  // WeatherBlender ctor/dtor ΓÇö maintain the file-scoped active-blender pointer.
   // ---------------------------------------------------------------------------
   WeatherBlender::WeatherBlender() {
     g_activeBlender = this;
@@ -832,7 +965,7 @@ namespace dxvk { namespace fork_weather {
   }
 
   // ---------------------------------------------------------------------------
-  // update — per-frame entry point.
+  // update ΓÇö per-frame entry point.
   //
   // Lifecycle:
   //  1. Advance clock.
@@ -854,7 +987,7 @@ namespace dxvk { namespace fork_weather {
       return;
     }
 
-    // Drift state advance — happens on every non-paused frame, regardless of
+    // Drift state advance ΓÇö happens on every non-paused frame, regardless of
     // whether the blender is dormant. Smoothing reads raw values from
     // GameStateStore, low-pass-filters toward them with tau = 1.0s, then
     // advances the phase. Negative raw values are clamped to 0 at read time.
@@ -909,8 +1042,8 @@ namespace dxvk { namespace fork_weather {
       } else {
         // Mid-blend retarget: capture the partially-blended state.
         // Lerp logic lives in lerpSnapshot (anonymous namespace).
-        float currentT = saturate(
-          (m_currentTimeSec - m_blendStartTimeSec) / std::max(0.001f, m_blendDurationSec));
+        float currentT = saturate(static_cast<float>(
+          (m_currentTimeSec - m_blendStartTimeSec) / std::max(0.001f, m_blendDurationSec)));
 
         WeatherSnapshot oldTargetValues;
         readPresetValues(m_targetPresetName, oldTargetValues);
@@ -926,7 +1059,7 @@ namespace dxvk { namespace fork_weather {
     }
 
     // Step 5: compute interpolation parameter.
-    float t = saturate((m_currentTimeSec - m_blendStartTimeSec) / m_blendDurationSec);
+    float t = saturate(static_cast<float>((m_currentTimeSec - m_blendStartTimeSec) / m_blendDurationSec));
 
     // Step 6 + 7.
     applyBlendedValues(t);
@@ -934,177 +1067,86 @@ namespace dxvk { namespace fork_weather {
   }
 
   // ---------------------------------------------------------------------------
-  // showImguiSettings — full ImGui weather-preset panel.
+  // showImguiSettings ΓÇö full ImGui weather-preset panel.
   //
   // Layout:
-  //  1. Combo — 13 entries: "(none / dormant)" + 12 preset names.
-  //  2. Float slider — Blend Duration (sec), 0–600.
-  //  3. "Apply Preset" button — writes __weather.blend_seconds and
+  //  1. Combo ΓÇö 13 entries: "(none / dormant)" + 12 preset names.
+  //  2. Float slider ΓÇö Blend Duration (sec), 0ΓÇô600.
+  //  3. "Apply Preset" button ΓÇö writes __weather.blend_seconds and
   //     __weather.target to GameStateStore.
   //  4. Separator.
   //  5. "Pause Weather Blender" checkbox (m_paused), with tooltip.
   //  6. Read-only state display (current / target / previous / blend progress).
-  //  7. "Tune Preset Defaults" collapsing tree — per-preset slider blocks.
+  //  7. "Tune Preset Defaults" collapsing tree ΓÇö per-preset slider blocks.
   // ---------------------------------------------------------------------------
   void WeatherBlender::showImguiSettings() {
-    constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
 
-    // ---- 1. Preset selection combo (13 entries: dormant + 12 named) ----
-    static const char* kPresetNames[] = {
+    static const char* kPresetNamesUI[] = {
       "(none / dormant)",
       "clear", "partlyCloudy", "overcast", "hazy", "foggy", "drizzle",
       "rainstorm", "thunderstorm", "snow", "blizzard", "sandstorm", "smoggy"
     };
-    constexpr int kPresetCount = static_cast<int>(IM_ARRAYSIZE(kPresetNames));
+    constexpr int kPresetCountUI = static_cast<int>(IM_ARRAYSIZE(kPresetNamesUI));
 
-    // The combo represents user INTENT (what gets applied when the user hits
-    // the Apply button), not live blender state. Live state appears in the
-    // read-only display below. Force-syncing s_selectedIndex from
-    // m_targetPresetName every frame defeats ImGui::Combo's user input --
-    // the user's pick gets clobbered before the next frame renders. Leave
-    // s_selectedIndex purely user-driven; it persists across frames via static.
+    // ---- Transition controls (what the blender plays) ----
     static int s_selectedIndex = 0;
-    ImGui::Combo("Target Preset", &s_selectedIndex, kPresetNames, kPresetCount);
-
-    // ---- 2. Blend Duration slider ----
+    ImGui::Combo("Target Preset", &s_selectedIndex, kPresetNamesUI, kPresetCountUI);
     static float s_blendDuration = 30.0f;
     ImGui::SliderFloat("Blend Duration (sec)", &s_blendDuration, 0.0f, 600.0f, "%.1f");
-
-    // ---- 3. Apply Preset button ----
     if (ImGui::Button("Apply Preset")) {
-      // Write blend_seconds as float string.
       char durBuf[32];
       std::snprintf(durBuf, sizeof(durBuf), "%.6f", s_blendDuration);
       fork_game_state::GameStateStore::get().set("__weather.blend_seconds", durBuf);
-
-      // Write target preset name (empty string for dormant).
-      const char* targetName = (s_selectedIndex == 0) ? "" : kPresetNames[s_selectedIndex];
+      const char* targetName = (s_selectedIndex == 0) ? "" : kPresetNamesUI[s_selectedIndex];
       fork_game_state::GameStateStore::get().set("__weather.target", targetName);
     }
 
-    // ---- 4. Separator ----
-    ImGui::Separator();
-
-    // ---- 5. Pause checkbox ----
     ImGui::Checkbox("Pause Weather Blender", &m_paused);
     RemixGui::SetTooltipToLastWidgetOnHover(
       "When checked, the blender stops writing to RTX_OPTIONs. "
       "Manual edits to the underlying sliders persist undisturbed.");
 
-    // ---- 6. Read-only state display ----
-    // "Current" shows the dominant preset (target if t > 0.5 else previous),
-    // matching the publishStateToGameStateStore convention so the in-game
-    // readout agrees with what plugins read back from __weather.current.
     {
       float currentT = 0.0f;
       if (!m_targetPresetName.empty() && m_blendDurationSec > 0.001f) {
-        currentT = saturate((m_currentTimeSec - m_blendStartTimeSec) / m_blendDurationSec);
+        currentT = saturate(static_cast<float>((m_currentTimeSec - m_blendStartTimeSec) / m_blendDurationSec));
       }
-
       const std::string& dominantName = (currentT > 0.5f) ? m_targetPresetName : m_previousPresetName;
       const char* currentDisplay  = m_targetPresetName.empty()   ? "(dormant)" : dominantName.c_str();
       const char* targetDisplay   = m_targetPresetName.empty()   ? "(dormant)" : m_targetPresetName.c_str();
       const char* previousDisplay = m_previousPresetName.empty() ? "(dormant)" : m_previousPresetName.c_str();
-
-      ImGui::TextDisabled("Current: %s", currentDisplay);
-      ImGui::TextDisabled("Target: %s",  targetDisplay);
-      ImGui::TextDisabled("Previous: %s", previousDisplay);
-      ImGui::TextDisabled("Blend progress: %.3f", currentT);
+      ImGui::TextDisabled("Current: %s    Target: %s    Previous: %s    Blend: %.3f",
+                          currentDisplay, targetDisplay, previousDisplay, currentT);
     }
 
-    // ---- 7. Tune Preset Defaults tree ----
-    if (ImGui::TreeNode("Tune Preset Defaults")) {
-      // Combo for the preset to tune (12 entries, no dormant option).
-      static const char* kTunePresetNames[] = {
-        "clear", "partlyCloudy", "overcast", "hazy", "foggy", "drizzle",
-        "rainstorm", "thunderstorm", "snow", "blizzard", "sandstorm", "smoggy"
-      };
-      constexpr int kTuneCount = static_cast<int>(IM_ARRAYSIZE(kTunePresetNames));
-      static int s_tuneIndex = 0;
-      ImGui::Combo("Preset to Tune", &s_tuneIndex, kTunePresetNames, kTuneCount);
-
-      // Macro: expand 27 DragFloat / DragFloat3 calls for a given preset name,
-      // grouped into the same section structure as the main Clouds tree.
-      // Uses the RtxOptions::<presetName>_<fieldName>Object() accessor pattern.
-#define WEATHER_PRESET_SLIDERS(P)                                                                                                                          \
-      ImGui::TextDisabled("Coverage & Shape");                                                                                                             \
-      RemixGui::DragFloat("Coverage",                   &RtxOptions::P##_cloudCoverageMeanObject(),          0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
-      RemixGui::DragFloat("Coverage Spread",            &RtxOptions::P##_cloudCoverageSpreadObject(),        0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
-      RemixGui::DragFloat("Coverage Patch Size",        &RtxOptions::P##_cloudCoverageNoiseScaleObject(),    0.0001f,0.0001f,0.01f,   "%.4f", sliderFlags); \
-      RemixGui::DragFloat("Cloud Type",                 &RtxOptions::P##_cloudTypeMeanObject(),              0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
-      RemixGui::DragFloat("Type Spread",                &RtxOptions::P##_cloudTypeSpreadObject(),            0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
-      RemixGui::DragFloat("Type Patch Size",            &RtxOptions::P##_cloudTypeNoiseScaleObject(),        0.0001f,0.0001f,0.0034f, "%.4f", sliderFlags); \
-      RemixGui::DragFloat("Anvil Spread",               &RtxOptions::P##_cloudAnvilBiasObject(),             0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
-      ImGui::Separator(); ImGui::TextDisabled("Look");                                                                                                     \
-      RemixGui::DragFloat("Density",                    &RtxOptions::P##_cloudDensityObject(),               0.05f,  0.0f,   10.0f,   "%.2f", sliderFlags); \
-      RemixGui::DragFloat("Depth",                      &RtxOptions::P##_cloudThicknessObject(),             0.05f,  0.0f,   10.0f,   "%.2f", sliderFlags); \
-      RemixGui::DragFloat3("Color",                     &RtxOptions::P##_cloudColorObject(),                 0.01f,  0.0f,   1.5f,    "%.2f", sliderFlags); \
-      ImGui::Separator(); ImGui::TextDisabled("Wind");                                                                                                     \
-      RemixGui::DragFloat("Wind Speed",                 &RtxOptions::P##_cloudWindSpeedObject(),             0.005f, 0.0f,   1.0f,    "%.3f", sliderFlags); \
-      RemixGui::DragFloat("Wind Direction",             &RtxOptions::P##_cloudWindDirectionObject(),         1.0f,   0.0f,   360.0f,  "%.1f\xc2\xb0", sliderFlags); \
-      ImGui::Separator(); ImGui::TextDisabled("Lighting");                                                                                                 \
-      RemixGui::DragFloat("Anisotropy",                 &RtxOptions::P##_cloudAnisotropyObject(),            0.01f, -1.0f,   1.0f,    "%.2f", sliderFlags); \
-      RemixGui::DragFloat("Ground Shadow",              &RtxOptions::P##_cloudShadowStrengthObject(),        0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
-      RemixGui::DragFloat3("Shadow Tint",               &RtxOptions::P##_cloudShadowTintObject(),            0.01f,  0.0f,   1.0f,    "%.2f", sliderFlags); \
-      RemixGui::DragFloat("Shadow Tint Strength",       &RtxOptions::P##_cloudShadowTintStrengthObject(),    0.05f,  0.0f,   2.0f,    "%.2f", sliderFlags); \
-      RemixGui::DragFloat("Sunset Warmth",              &RtxOptions::P##_cloudSunsetWarmthObject(),          0.05f,  0.0f,   2.0f,    "%.2f", sliderFlags); \
-      ImGui::Separator(); ImGui::TextDisabled("Atmosphere");                                                                                               \
-      RemixGui::DragFloat("Air Density",                &RtxOptions::P##_airDensityObject(),                 0.05f,  0.0f,   5.0f,    "%.2f", sliderFlags); \
-      RemixGui::DragFloat("Aerosol Density",            &RtxOptions::P##_aerosolDensityObject(),             0.05f,  0.0f,   5.0f,    "%.2f", sliderFlags); \
-      RemixGui::DragFloat3("Sun Illuminance",           &RtxOptions::P##_sunIlluminanceObject(),             0.5f,   0.0f,   100.0f,  "%.1f", sliderFlags); \
-      ImGui::Separator(); ImGui::TextDisabled("Sky & Moon Mood");                                                                                          \
-      RemixGui::DragFloat("Night Sky Brightness",       &RtxOptions::P##_nightSkyBrightnessObject(),         0.001f, 0.0f,   1.0f,    "%.3f", sliderFlags); \
-      RemixGui::DragFloat("Moon NEE Strength",          &RtxOptions::P##_moonNeeStrengthObject(),            0.05f,  0.0f,   10.0f,   "%.2f", sliderFlags); \
-      RemixGui::DragFloat("Moon Atm Coupling",          &RtxOptions::P##_moonAtmosphericCouplingStrengthObject(), 0.05f, 0.0f, 10.0f, "%.2f", sliderFlags); \
-      ImGui::Separator(); ImGui::TextDisabled("Volumetric Fog");                                                                                           \
-      RemixGui::DragFloat3("Transmittance Color",       &RtxOptions::P##_transmittanceColorObject(),         0.005f, 0.0f,   1.0f,    "%.3f", sliderFlags); \
-      RemixGui::DragFloat("Transmittance Distance (m)", &RtxOptions::P##_transmittanceMeasurementDistanceMetersObject(), 5.0f, 1.0f, 2000.0f, "%.0f", sliderFlags); \
-      RemixGui::DragFloat("Fog Density Ref T (Day)",   &RtxOptions::P##_fogDensityReferenceTransmittanceDayObject(),   0.005f, 0.004f, 0.996f, "%.3f", sliderFlags); \
-      RemixGui::DragFloat("Fog Density Ref T (Night)", &RtxOptions::P##_fogDensityReferenceTransmittanceNightObject(), 0.005f, 0.004f, 0.996f, "%.3f", sliderFlags); \
-      RemixGui::DragFloat("Fog Density Ref T (Underwater Day)",   &RtxOptions::P##_fogDensityReferenceTransmittanceUnderwaterDayObject(),   0.005f, 0.004f, 0.996f, "%.3f", sliderFlags); \
-      RemixGui::DragFloat("Fog Density Ref T (Underwater Night)", &RtxOptions::P##_fogDensityReferenceTransmittanceUnderwaterNightObject(), 0.005f, 0.004f, 0.996f, "%.3f", sliderFlags); \
-      RemixGui::DragFloat3("Single Scattering Albedo",  &RtxOptions::P##_singleScatteringAlbedoObject(),     0.005f, 0.0f,   1.0f,    "%.3f", sliderFlags); \
-      RemixGui::DragFloat("Volumetric Anisotropy",      &RtxOptions::P##_volumetricAnisotropyObject(),       0.01f, -1.0f,   1.0f,    "%.2f", sliderFlags)
-
-      const char* tunePreset = kTunePresetNames[s_tuneIndex];
-      if      (tunePreset == std::string("clear"))         { WEATHER_PRESET_SLIDERS(clear); }
-      else if (tunePreset == std::string("partlyCloudy"))  { WEATHER_PRESET_SLIDERS(partlyCloudy); }
-      else if (tunePreset == std::string("overcast"))      { WEATHER_PRESET_SLIDERS(overcast); }
-      else if (tunePreset == std::string("hazy"))          { WEATHER_PRESET_SLIDERS(hazy); }
-      else if (tunePreset == std::string("foggy"))         { WEATHER_PRESET_SLIDERS(foggy); }
-      else if (tunePreset == std::string("drizzle"))       { WEATHER_PRESET_SLIDERS(drizzle); }
-      else if (tunePreset == std::string("rainstorm"))     { WEATHER_PRESET_SLIDERS(rainstorm); }
-      else if (tunePreset == std::string("thunderstorm"))  { WEATHER_PRESET_SLIDERS(thunderstorm); }
-      else if (tunePreset == std::string("snow"))          { WEATHER_PRESET_SLIDERS(snow); }
-      else if (tunePreset == std::string("blizzard"))      { WEATHER_PRESET_SLIDERS(blizzard); }
-      else if (tunePreset == std::string("sandstorm"))     { WEATHER_PRESET_SLIDERS(sandstorm); }
-      else if (tunePreset == std::string("smoggy"))        { WEATHER_PRESET_SLIDERS(smoggy); }
-
-#undef WEATHER_PRESET_SLIDERS
-
-      ImGui::TreePop();
-    }
-
-    // ---- Cloud Drift sub-tree ----
     ImGui::Separator();
-    if (ImGui::TreeNode("Cloud Drift")) {
-      // Read raw values from GameStateStore so the sliders show the current
-      // plugin-or-dev-menu-written intent, not the smoothed internal state.
-      // (The smoothed values are read-only and shown below.)
+
+    // The full per-preset editor lives in a separate pop-out window (toggled
+    // here) so this inline panel stays focused on driving weather transitions.
+    if (ImGui::Button(m_editorWindowOpen ? "Close Preset Editor" : "Open Preset Editor")) {
+      m_editorWindowOpen = !m_editorWindowOpen;
+    }
+    RemixGui::SetTooltipToLastWidgetOnHover(
+      "Opens the full per-preset editor (all settings + authoring tools) in a "
+      "separate, movable window.");
+
+    // ---- Weather Variation (slow preset-scale wander; API: __weather.drift_*) ----
+    ImGui::Separator();
+    if (ImGui::TreeNode("Weather Variation")) {
+      ImGui::TextDisabled("Slow preset-scale wander of coverage + wind. "
+                          "Field motion lives in Atmosphere -> Clouds -> Cloud Motion.");
       float driftSpeed     = readFloatFromGameStateStore("__weather.drift_speed",     1.0f);
       float driftIntensity = readFloatFromGameStateStore("__weather.drift_intensity", 1.0f);
 
-      bool changedSpeed     = ImGui::SliderFloat("Drift speed multiplier",     &driftSpeed,     0.0f, 4.0f, "%.2f");
+      bool changedSpeed     = ImGui::SliderFloat("Variation speed",     &driftSpeed,     0.0f, 4.0f, "%.2f");
       RemixGui::SetTooltipToLastWidgetOnHover(
-        "Scales how fast the drift evolves. 0 = drift frozen. "
-        "Recommended values per preset: clear 0.6, overcast 0.7, "
-        "thunderstorm 2.0. Smoothed with tau = 1.0s.");
+        "Scales how fast the weather variation evolves. 0 = frozen. Smoothed with "
+        "tau = 1.0s. (API key: __weather.drift_speed.)");
 
-      bool changedIntensity = ImGui::SliderFloat("Drift intensity multiplier", &driftIntensity, 0.0f, 3.0f, "%.2f");
+      bool changedIntensity = ImGui::SliderFloat("Variation intensity", &driftIntensity, 0.0f, 3.0f, "%.2f");
       RemixGui::SetTooltipToLastWidgetOnHover(
-        "Scales how big the drift swings are around the preset midpoint. "
-        "0 = drift fully off. Recommended values per preset: clear 0.5, "
-        "overcast 0.7, thunderstorm 1.6.");
+        "Scales how big the variation swings are around the preset midpoint. "
+        "0 = fully off. (API key: __weather.drift_intensity.)");
 
       if (changedSpeed) {
         char buf[32];
@@ -1117,32 +1159,133 @@ namespace dxvk { namespace fork_weather {
         fork_game_state::GameStateStore::get().set("__weather.drift_intensity", buf);
       }
 
-      ImGui::Text("Drift phase:        %.2f s",  m_driftPhaseSeconds);
+      ImGui::Text("Variation phase:     %.2f s",  m_driftPhaseSeconds);
       ImGui::Text("Speed (smoothed):    %.3f",   m_driftSpeedSmoothed);
       ImGui::Text("Intensity (smoothed):%.3f",   m_driftIntensitySmoothed);
 
-      if (ImGui::Button("Reset drift to defaults")) {
+      if (ImGui::Button("Reset to defaults")) {
         fork_game_state::GameStateStore::get().set("__weather.drift_speed",     "1.0");
         fork_game_state::GameStateStore::get().set("__weather.drift_intensity", "1.0");
       }
       ImGui::SameLine();
-      if (ImGui::Button("Disable drift")) {
+      if (ImGui::Button("Disable variation")) {
         fork_game_state::GameStateStore::get().set("__weather.drift_intensity", "0.0");
       }
 
       ImGui::TreePop();
     }
   }
-
   // ---------------------------------------------------------------------------
-  // snapshotCurrentValues — delegates to the free helper.
+  // renderEditorWindow ΓÇö the pop-out per-preset editor (separate movable window,
+  // toggled from showImguiSettings). Holds the full field set grouped into
+  // collapsible sections, plus the authoring tools.
+  // ---------------------------------------------------------------------------
+  void WeatherBlender::renderEditorWindow() {
+    if (!m_editorWindowOpen) {
+      return;
+    }
+    constexpr ImGuiSliderFlags sliderFlags = ImGuiSliderFlags_AlwaysClamp;
+
+    ImGui::SetNextWindowSize(ImVec2(440.0f, 640.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Weather Preset Editor", &m_editorWindowOpen)) {
+      ImGui::End();
+      return;
+    }
+
+    static const char* kEditNames[] = {
+      "clear", "partlyCloudy", "overcast", "hazy", "foggy", "drizzle",
+      "rainstorm", "thunderstorm", "snow", "blizzard", "sandstorm", "smoggy"
+    };
+    constexpr int kEditCount = static_cast<int>(IM_ARRAYSIZE(kEditNames));
+    static int s_editIndex = 0;
+
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::Combo("Editing Preset", &s_editIndex, kEditNames, kEditCount);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Use Active")) {
+      int idx = presetIndexForName(m_targetPresetName);
+      if (idx >= 0) { s_editIndex = idx; }
+    }
+    RemixGui::SetTooltipToLastWidgetOnHover(
+      "Point the editor at whatever preset the blender is currently targeting.");
+
+    static char s_filter[64] = "";
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputTextWithHint("##weatherFilter", "filter settings by name...", s_filter, sizeof(s_filter));
+
+    if (ImGui::TreeNode("Authoring tools")) {
+      bool pinned = m_pinnedForTuning;
+      if (ImGui::Checkbox("Pin & Freeze for Tuning", &pinned)) {
+        if (pinned) {
+          // Entering tuning: snap to this preset, freeze variation, remembering the
+          // prior drift intensity so we can restore it on exit (non-destructive).
+          m_savedDriftIntensity = readFloatFromGameStateStore("__weather.drift_intensity", 1.0f);
+          fork_game_state::GameStateStore::get().set("__weather.blend_seconds", "0.0");
+          fork_game_state::GameStateStore::get().set("__weather.target", kEditNames[s_editIndex]);
+          fork_game_state::GameStateStore::get().set("__weather.drift_intensity", "0.0");
+        } else {
+          // Leaving tuning: restore the variation intensity we froze.
+          char buf[32];
+          std::snprintf(buf, sizeof(buf), "%.6f", m_savedDriftIntensity);
+          fork_game_state::GameStateStore::get().set("__weather.drift_intensity", buf);
+        }
+        m_pinnedForTuning = pinned;
+      }
+      RemixGui::SetTooltipToLastWidgetOnHover(
+        "Snap the blender to this preset (0 s blend) and freeze variation so edits show "
+        "on a held image. Unchecking restores the previous variation intensity.");
+
+      // While pinned, keep the held image on whatever preset is being edited, so
+      // changing the Editing Preset combo above re-snaps the frozen view to it
+      // (blend is already 0 s, so the switch is instant).
+      static int s_appliedPinIndex = -1;
+      if (m_pinnedForTuning) {
+        if (s_editIndex != s_appliedPinIndex) {
+          fork_game_state::GameStateStore::get().set("__weather.target", kEditNames[s_editIndex]);
+          s_appliedPinIndex = s_editIndex;
+        }
+      } else {
+        s_appliedPinIndex = -1;
+      }
+
+      static int s_copyFrom = 0;
+      ImGui::SetNextItemWidth(160.0f);
+      ImGui::Combo("##copyFrom", &s_copyFrom, kEditNames, kEditCount);
+      ImGui::SameLine();
+      if (ImGui::Button("Copy Into Edited")) { copyPresetToPreset(s_copyFrom, s_editIndex); }
+      RemixGui::SetTooltipToLastWidgetOnHover(
+        "Copy every value from the chosen preset into the one being edited.");
+
+      if (ImGui::Button("Snapshot Live -> Preset")) { snapshotLiveToPreset(s_editIndex); }
+      RemixGui::SetTooltipToLastWidgetOnHover(
+        "Capture the current live renderer values into this preset. Tune the real "
+        "atmosphere/volumetrics with the blender dormant, then capture.");
+
+      if (ImGui::Button("Copy as user.conf lines")) {
+        ImGui::SetClipboardText(exportPresetToConf(s_editIndex).c_str());
+      }
+      RemixGui::SetTooltipToLastWidgetOnHover(
+        "Optional: copies this preset as rtx.weather.preset.* lines to the clipboard. "
+        "The dev menu's Save Settings already persists edits to the modder config; use "
+        "this only to move values into a specific game's user.conf.");
+
+      ImGui::TreePop();
+    }
+
+    ImGui::Separator();
+    renderPresetEditor(s_editIndex, s_filter, sliderFlags);
+
+    ImGui::End();
+  }
+  // ---------------------------------------------------------------------------
+  // snapshotCurrentValues ΓÇö delegates to the free helper.
   // ---------------------------------------------------------------------------
   WeatherSnapshot WeatherBlender::snapshotCurrentValues() const {
     return snapshotRenderer();
   }
 
   // ---------------------------------------------------------------------------
-  // applyBlendedValues — lerp prev snapshot toward target at t, write to
+  // applyBlendedValues ΓÇö lerp prev snapshot toward target at t, write to
   // Derived layer.
   //
   // Lerp logic lives in lerpSnapshot (anonymous namespace). This member
@@ -1160,11 +1303,13 @@ namespace dxvk { namespace fork_weather {
   }
 
   // ---------------------------------------------------------------------------
-  // publishStateToGameStateStore — writes blend progress state.
+  // publishStateToGameStateStore ΓÇö writes blend progress state.
   // ---------------------------------------------------------------------------
   void WeatherBlender::publishStateToGameStateStore(float t) const {
-    writeToGameStateStore("__weather.current",
-      (t > 0.5f) ? m_targetPresetName : m_previousPresetName);
+    // __weather.current = the destination the blender is targeting, matching the
+    // documented contract (was previously the dominant-half preset, which made
+    // plugins see the old preset for the first half of every transition).
+    writeToGameStateStore("__weather.current", m_targetPresetName);
     writeToGameStateStore("__weather.previous", m_previousPresetName);
 
     char buf[32];
@@ -1183,7 +1328,7 @@ namespace dxvk { namespace fork_hooks {
   // Per-frame weather preset blender update. Reads __weather.target and
   // __weather.blend_seconds from the GameStateStore and writes blended weather
   // params to the Derived layer of their underlying RTX_OPTIONs. Dormant when
-  // no target is set — zero behavioural change vs upstream.
+  // no target is set ΓÇö zero behavioural change vs upstream.
   //
   // Real implementation lands in Task 3 (wires WeatherBlender into RtxContext
   // per-frame and resolves m_weatherBlender). For now, both args are unused.
@@ -1203,6 +1348,9 @@ namespace dxvk { namespace fork_hooks {
         b->showImguiSettings();
         ImGui::TreePop();
       }
+      // Pop-out editor window: drawn every frame the panel renders, so it stays
+      // open regardless of whether the tree above is expanded.
+      b->renderEditorWindow();
     }
   }
 

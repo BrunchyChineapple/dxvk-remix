@@ -1,10 +1,10 @@
 #pragma once
 
-// rtx_fork_weather.h — fork-owned weather preset declarations.
-// Defines 324 RTX_OPTIONs (12 presets x 27 fields) under the
+// rtx_fork_weather.h Î“Ã‡Ã¶ fork-owned weather preset declarations.
+// Defines 732 RTX_OPTIONs (12 presets x 61 fields) under the
 // rtx.weather.preset.<presetName> namespace.
 //
-// Field bucket breakdown: 17 cloud + 3 atmosphere + 3 sky/moon mood + 4 volumetric.
+// Field bucket breakdown: 16 cloud + 5 atmosphere + 4 sky/moon mood + 27 volumetric.
 //
 // Usage: invoke DECLARE_ALL_WEATHER_PRESETS() inside the RtxOptions struct body
 // (see rtx_options.h). The macro expands all 12 preset declarations inline.
@@ -20,47 +20,111 @@
 #include "../../util/util_vector.h"
 
 // ---------------------------------------------------------------------------
-// Field-list X-macro — single source of truth for the 27 weather fields.
-// Consumed by DECLARE_WEATHER_PRESET (via the per-preset binders) and also
-// available for Task 2 (WeatherSnapshot struct member declaration).
-// Expands to: X(type, name, defaultValue), one entry per field.
+// WeatherFieldKind - per-field blend/widget classifier (see field table below).
+// Consumed from the descriptor table onward; an ignorable column for the
+// WeatherSnapshot (61 fields) member generator.
 // ---------------------------------------------------------------------------
-#define WEATHER_PRESET_FIELD_LIST(X)                                                               \
-  /* Cloud (17) */                                                                                 \
-  X(float,   cloudDensity,                              1.0f)                                      \
-  X(float,   cloudCoverageMean,                         0.5f)                                      \
-  X(float,   cloudCoverageSpread,                       0.2f)                                      \
-  X(float,   cloudCoverageNoiseScale,                   0.0033f)                                   \
-  X(float,   cloudTypeMean,                             0.5f)                                      \
-  X(float,   cloudTypeSpread,                           0.2f)                                      \
-  X(float,   cloudTypeNoiseScale,                       0.0034f)                                   \
-  X(float,   cloudAnvilBias,                            0.3f)                                      \
-  X(Vector3, cloudColor,                                Vector3(0.89f, 0.92f, 1.0f))               \
-  X(float,   cloudWindSpeed,                            0.02f)                                     \
-  X(float,   cloudWindDirection,                        45.0f)                                     \
-  X(float,   cloudShadowStrength,                       1.0f)                                      \
-  X(float,   cloudAnisotropy,                           0.6f)                                      \
-  X(float,   cloudThickness,                            3.05f)                                     \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))              \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                      \
-  X(float,   cloudSunsetWarmth,                         0.95f)                                     \
-  /* Atmosphere (3) */                                                                             \
-  X(float,   airDensity,                                1.0f)                                      \
-  X(float,   aerosolDensity,                            1.0f)                                      \
-  X(Vector3, sunIlluminance,                            Vector3(20.0f, 20.0f, 20.0f))              \
-  /* Sky/moon mood (3) */                                                                          \
-  X(float,   nightSkyBrightness,                        0.008f)                                    \
-  X(float,   moonNeeStrength,                           1.0f)                                      \
-  X(float,   moonAtmosphericCouplingStrength,           1.0f)                                      \
-  /* Volumetric (8); volumetricAnisotropy avoids clash with cloudAnisotropy */                     \
-  X(Vector3, transmittanceColor,                        Vector3(0.999f, 0.999f, 0.999f))           \
-  X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                    \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.70f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.85f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.40f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.40f)                            \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))           \
-  X(float,   volumetricAnisotropy,                      0.0f)
+namespace dxvk { namespace fork_weather {
+  enum WeatherFieldKind {
+    WK_Scalar,      // plain float, linear lerp
+    WK_Angle,       // degrees, shortest-path angular lerp
+    WK_Extinction,  // optical distance; lerp in 1/distance space
+    WK_Color,       // Vector3 tint; componentwise lerp
+    WK_Vec3,        // Vector3 radiometric; componentwise lerp
+    WK_Step,        // non-interpolated (bool/enum); switch at blend midpoint
+  };
+} }
+
+// ---------------------------------------------------------------------------
+// Field table X-macro - THE single source of truth for the 61 weather fields
+// (16 cloud + 5 atmosphere + 4 sky/moon mood + 27 volumetric). Every consumer
+// (WeatherSnapshot members, the per-field descriptor table, the generated
+// ImGui panel, and the blend/read/write loops) is driven from here, so a field
+// added here propagates everywhere with no second site to keep in sync.
+//
+// Each row expands to:
+//   X(type, name, defaultValue, kind, group, section, label, min, max, step, fmt)
+//     type/name/defaultValue - C++ type, member name, NEUTRAL default
+//     kind                   - WeatherFieldKind (blend math + widget type)
+//     group                  - top-level panel tab ("Clouds", "Atmosphere", ...)
+//     section                - subsection header within the group
+//     label                  - ImGui widget label
+//     min/max/step/fmt       - slider range, drag step, printf format
+//
+// UI metadata (group/section/label/range/fmt) is lifted verbatim from the old
+// WEATHER_PRESET_SLIDERS macro so the regenerated panel matches today's ranges.
+// Consumers needing only a subset (e.g. the snapshot member generator) still
+// take all 11 args and ignore the rest.
+// ---------------------------------------------------------------------------
+#define WEATHER_PRESET_FIELD_LIST(X) \
+  /* Cloud (16) */ \
+  X(float,   cloudDensity,                       1.0f,                            WK_Scalar,     "Clouds",         "Look",             "Density",                    0.0f,    10.0f,   0.05f,   "%.2f") \
+  X(float,   cloudCoverageMean,                  0.5f,                            WK_Scalar,     "Clouds",         "Coverage & Shape", "Coverage",                   0.0f,    1.0f,    0.01f,   "%.2f") \
+  X(float,   cloudCoverageSpread,                0.2f,                            WK_Scalar,     "Clouds",         "Coverage & Shape", "Coverage Spread",            0.0f,    1.0f,    0.01f,   "%.2f") \
+  X(float,   cloudCoverageNoiseScale,            0.0033f,                         WK_Scalar,     "Clouds",         "Coverage & Shape", "Coverage Patch Size",        0.0001f, 0.01f,   0.0001f, "%.4f") \
+  X(float,   cloudTypeMean,                      0.5f,                            WK_Scalar,     "Clouds",         "Coverage & Shape", "Cloud Type",                 0.0f,    1.0f,    0.01f,   "%.2f") \
+  X(float,   cloudTypeSpread,                    0.2f,                            WK_Scalar,     "Clouds",         "Coverage & Shape", "Type Spread",                0.0f,    1.0f,    0.01f,   "%.2f") \
+  X(float,   cloudTypeNoiseScale,                0.0034f,                         WK_Scalar,     "Clouds",         "Coverage & Shape", "Type Patch Size",            0.0001f, 0.0034f, 0.0001f, "%.4f") \
+  X(Vector3, cloudColor,                         Vector3(0.89f, 0.92f, 1.0f),     WK_Color,      "Clouds",         "Look",             "Color",                      0.0f,    1.5f,    0.01f,   "%.2f") \
+  X(float,   cloudWindSpeed,                     0.02f,                           WK_Scalar,     "Clouds",         "Wind",             "Wind Speed",                 0.0f,    1.0f,    0.005f,  "%.3f") \
+  X(float,   cloudWindDirection,                 45.0f,                           WK_Angle,      "Clouds",         "Wind",             "Wind Direction",             0.0f,    360.0f,  1.0f,    "%.1f\xc2\xb0") \
+  X(float,   cloudShadowStrength,                1.0f,                            WK_Scalar,     "Clouds",         "Lighting",         "Ground Shadow",              0.0f,    1.0f,    0.01f,   "%.2f") \
+  X(float,   cloudThickness,                     3.05f,                           WK_Scalar,     "Clouds",         "Look",             "Depth",                      0.0f,    10.0f,   0.05f,   "%.2f") \
+  X(float, cloudUndersideLightSigma, 0.12f, WK_Scalar, "Clouds", "Lighting", "Underside Shading", 0.0f, 1.0f, 0.01f,  "%.2f") \
+  X(float, cloudBottomDarkening,     1.0f,  WK_Scalar, "Clouds", "Lighting", "Bottom Darkening",  0.0f, 1.0f, 0.01f,  "%.2f") \
+  X(float, cloudAerialFadePerKm,     0.15f, WK_Scalar, "Clouds", "Distance", "Horizon Fade",      0.0f, 1.0f, 0.005f, "%.3f") \
+  X(float, cloudAerialHazePerKm,     0.05f, WK_Scalar, "Clouds", "Distance", "Distance Haze",     0.0f, 1.0f, 0.005f, "%.3f") \
+  /* Cloud look (fork — retained through remixplus table-driven rework) */ \
+  X(float,   cloudAnvilBias,                     0.3f,                            WK_Scalar,     "Clouds",         "Coverage & Shape", "Anvil Spread",               0.0f,    1.0f,    0.01f,   "%.2f") \
+  X(float,   cloudAnisotropy,                    0.6f,                            WK_Scalar,     "Clouds",         "Lighting",         "Anisotropy",                -1.0f,    1.0f,    0.01f,   "%.2f") \
+  X(Vector3, cloudShadowTint,                    Vector3(0.55f, 0.65f, 0.85f),    WK_Color,      "Clouds",         "Lighting",         "Shadow Tint",                0.0f,    1.0f,    0.01f,   "%.2f") \
+  X(float,   cloudShadowTintStrength,            1.0f,                            WK_Scalar,     "Clouds",         "Lighting",         "Shadow Tint Strength",       0.0f,    2.0f,    0.05f,   "%.2f") \
+  X(float,   cloudSunsetWarmth,                  0.95f,                           WK_Scalar,     "Clouds",         "Lighting",         "Sunset Warmth",              0.0f,    2.0f,    0.05f,   "%.2f") \
+  /* Atmosphere (5) */ \
+  X(float,   airDensity,                         1.0f,                            WK_Scalar,     "Atmosphere",     "Atmosphere",       "Air",                        0.0f,    5.0f,    0.05f,   "%.2f") \
+  X(float,   aerosolDensity,                     1.0f,                            WK_Scalar,     "Atmosphere",     "Atmosphere",       "Dust",                       0.0f,    5.0f,    0.05f,   "%.2f") \
+  X(Vector3, sunIlluminance,                     Vector3(20.0f, 20.0f, 20.0f),    WK_Color,      "Atmosphere",     "Atmosphere",       "Sun Illuminance",            0.0f,    100.0f,  0.5f,    "%.1f") \
+  X(Vector3, rayleighScattering,                 Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f), WK_Color, "Atmosphere",     "Atmosphere",       "Air Color (Base)",           0.0f,    0.05f,   0.0005f, "%.4f") \
+  X(float,   skyIndirectRadianceScale,           1.0f,                            WK_Scalar,     "Atmosphere",     "Atmosphere",       "Sky Indirect Scale",         0.0f,    20.0f,   0.01f,   "%.2f") \
+  /* Sky/moon mood (4) */ \
+  X(float,   nightSkyBrightness,                 0.008f,                          WK_Scalar,     "Sky & Moon",     "Sky & Moon",       "Night Sky Brightness",       0.0f,    1.0f,    0.001f,  "%.3f") \
+  X(Vector3, nightSkyColor,                      Vector3(0.15f, 0.2f, 0.4f),      WK_Color,      "Sky & Moon",     "Sky & Moon",       "Night Sky Color",            0.0f,    1.0f,    0.005f,  "%.3f") \
+  X(float,   moonNeeStrength,                    1.0f,                            WK_Scalar,     "Sky & Moon",     "Sky & Moon",       "NEE Strength",               0.0f,    10.0f,   0.05f,   "%.2f") \
+  X(float,   moonAtmosphericCouplingStrength,    1.0f,                            WK_Scalar,     "Sky & Moon",     "Sky & Moon",       "Atmospheric Coupling",       0.0f,    10.0f,   0.05f,   "%.2f") \
+  /* Volumetric (27); volumetricAnisotropy avoids clash with the old cloudAnisotropy */ \
+  X(Vector3, transmittanceColor,                 Vector3(0.999f, 0.999f, 0.999f), WK_Color,      "Volumetric Fog", "Medium",           "Transmittance Color",        0.0f,    1.0f,    0.005f,  "%.3f") \
+  X(float,   transmittanceMeasurementDistanceMeters, 200.0f,                      WK_Extinction, "Volumetric Fog", "Medium",           "Transmittance Measurement Distance", 1.0f, 2000.0f, 5.0f,  "%.0f") \
+  X(Vector3, singleScatteringAlbedo,             Vector3(0.999f, 0.999f, 0.999f), WK_Color,      "Volumetric Fog", "Medium",           "Single Scattering Albedo",   0.0f,    1.0f,    0.005f,  "%.3f") \
+  /* Volumetric appearance (fork - full set) */ \
+  X(float, fogSunVisibilityGain, 1.0f, WK_Scalar, "Volumetric Fog", "Medium", "Fog Sun Visibility Gain", 0.0f, 4.0f, 0.05f, "%.2f") \
+  X(float, volumetricConsumerGain, 0.008f, WK_Scalar, "Volumetric Fog", "Medium", "Fog Brightness Gain", 0.0f, 0.05f, 0.0005f, "%.4f") \
+  X(bool, enableHeterogeneousFog, false, WK_Step, "Volumetric Fog", "Heterogeneous", "Enable Heterogeneous Fog", 0.0f, 1.0f, 1.0f, "%.0f") \
+  X(float, noiseFieldDensityScale, 1.0f, WK_Scalar, "Volumetric Fog", "Heterogeneous", "Noise Field Density Scale", 0.0f, 5.0f, 0.05f, "%.2f") \
+  X(float, noiseFieldDensityExponent, 2.0f, WK_Scalar, "Volumetric Fog", "Heterogeneous", "Noise Field Density Exponent", 0.1f, 8.0f, 0.05f, "%.2f") \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f, WK_Scalar, "Volumetric Fog", "Heterogeneous", "Noise Field Initial Frequency", 0.1f, 64.0f, 0.1f, "%.2f") \
+  X(float, noiseFieldLacunarity, 2.0f, WK_Scalar, "Volumetric Fog", "Heterogeneous", "Noise Field Lacunarity", 0.1f, 4.0f, 0.05f, "%.2f") \
+  X(float, noiseFieldGain, 0.5f, WK_Scalar, "Volumetric Fog", "Heterogeneous", "Noise Field Gain", 0.0f, 1.0f, 0.01f, "%.2f") \
+  X(float, noiseFieldTimeScale, 0.5f, WK_Scalar, "Volumetric Fog", "Heterogeneous", "Noise Field Time Scale", 0.0f, 4.0f, 0.05f, "%.2f") \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f, WK_Scalar, "Volumetric Fog", "Heterogeneous", "Noise Field Substep Size", 0.5f, 50.0f, 0.5f, "%.1f") \
+  X(float, froxelMaxDistanceMeters, 20.0f, WK_Scalar, "Volumetric Fog", "Reach", "Froxel Max Distance", 1.0f, 200.0f, 1.0f, "%.0f") \
+  X(bool, enableFogRemap, false, WK_Step, "Volumetric Fog", "Fog Remap", "Enable Legacy Fog Remapping", 0.0f, 1.0f, 1.0f, "%.0f") \
+  X(bool, enableFogColorRemap, false, WK_Step, "Volumetric Fog", "Fog Remap", "Enable Fog Color Remapping", 0.0f, 1.0f, 1.0f, "%.0f") \
+  X(bool, enableFogMaxDistanceRemap, true, WK_Step, "Volumetric Fog", "Fog Remap", "Enable Fog Max Distance Remapping", 0.0f, 1.0f, 1.0f, "%.0f") \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f, WK_Scalar, "Volumetric Fog", "Fog Remap", "Legacy Max Distance Min", 0.0f, 200.0f, 0.5f, "%.1f") \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f, WK_Scalar, "Volumetric Fog", "Fog Remap", "Legacy Max Distance Max", 0.0f, 500.0f, 1.0f, "%.1f") \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f, WK_Scalar, "Volumetric Fog", "Fog Remap", "Remapped Transmittance Measurement Distance Min", 1.0f, 500.0f, 1.0f, "%.1f") \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f, WK_Scalar, "Volumetric Fog", "Fog Remap", "Remapped Transmittance Measurement Distance Max", 1.0f, 2000.0f, 5.0f, "%.0f") \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f, WK_Scalar, "Volumetric Fog", "Fog Remap", "Color Multiscattering Scale", 0.0f, 2.0f, 0.01f, "%.2f") \
+  X(bool,  enableTranslucentShadows, false, WK_Step,   "Volumetric Fog", "Medium",        "Enable Translucent Shadows", 0.0f, 1.0f,  1.0f,  "%.0f") \
+  X(float, atmosphereSunFogScale,    1.0f,  WK_Scalar, "Volumetric Fog", "Medium",        "Atmosphere Sun Fog Scale", 0.0f, 50.0f, 0.05f, "%.2f") \
+  X(float, depthOffset,              0.5f,  WK_Scalar, "Volumetric Fog", "Medium",        "Depth Offset",        0.0f, 1.0f,  0.01f, "%.2f") \
+  X(float, noiseFieldOctaves,        2.0f,  WK_Scalar, "Volumetric Fog", "Heterogeneous", "Noise Field Number of Octaves", 1.0f, 8.0f,  1.0f,  "%.0f") \
+  /* Fog density decoupling (fork §-6/§-9 — day/night + underwater split, collapsed by sun elevation in applyBlendedValues) */ \
+  X(float,   fogDensityReferenceTransmittanceDay,             0.70f, WK_Scalar, "Volumetric Fog", "Medium", "Fog Density Ref T (Day)",              0.004f, 0.996f, 0.005f, "%.3f") \
+  X(float,   fogDensityReferenceTransmittanceNight,           0.85f, WK_Scalar, "Volumetric Fog", "Medium", "Fog Density Ref T (Night)",            0.004f, 0.996f, 0.005f, "%.3f") \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.40f, WK_Scalar, "Volumetric Fog", "Medium", "Fog Density Ref T (Underwater Day)",   0.004f, 0.996f, 0.005f, "%.3f") \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.40f, WK_Scalar, "Volumetric Fog", "Medium", "Fog Density Ref T (Underwater Night)", 0.004f, 0.996f, 0.005f, "%.3f") \
+  X(float,   volumetricAnisotropy,               0.0f,                            WK_Scalar,     "Volumetric Fog", "Medium",           "Anisotropy",                -1.0f,    1.0f,    0.01f,   "%.2f")
 
 // ---------------------------------------------------------------------------
 // Per-field RTX_OPTION generator. Takes the preset name plus the X-macro's
@@ -96,107 +160,161 @@
 #define WEATHER_PRESET_BIND_smoggy(type, name, def)        WEATHER_PRESET_RTX_OPTION_FOR(smoggy,        type, name, def);
 
 // ---------------------------------------------------------------------------
-// Per-preset value X-macros — one per archetype, 27 fields each, in the same
+// Per-preset value X-macros (61 fields each)  // Î“Ã‡Ã¶ one per archetype, 52 fields each, in the same
 // order as WEATHER_PRESET_FIELD_LIST. Fields not explicitly tuned use the
-// neutral default from WEATHER_PRESET_FIELD_LIST.
-// Field order: cloudDensity, cloudCoverageMean, cloudCoverageSpread,
-//   cloudCoverageNoiseScale, cloudTypeMean, cloudTypeSpread,
-//   cloudTypeNoiseScale, cloudAnvilBias, cloudColor,
-//   cloudWindSpeed, cloudWindDirection, cloudShadowStrength, cloudAnisotropy,
-//   cloudThickness, cloudShadowTint, cloudShadowTintStrength,
-//   cloudSunsetWarmth, airDensity, aerosolDensity, sunIlluminance,
-//   nightSkyBrightness, moonNeeStrength, moonAtmosphericCouplingStrength,
-//   transmittanceColor, transmittanceMeasurementDistanceMeters,
-//   singleScatteringAlbedo, volumetricAnisotropy.
+// neutral default from WEATHER_PRESET_FIELD_LIST, which is also the canonical
+// field order Î“Ã‡Ã¶ see that macro above rather than duplicating the list here.
 // ---------------------------------------------------------------------------
 
-// clear — Morrowind: defined cumulus cells over blue sky, ~30-40% coverage
+// clear Î“Ã‡Ã¶ sunny, crisp, low haze
 #define WEATHER_PRESET_VALUES_clear(X)                                                                 \
-  X(float,   cloudDensity,                              1.4f)                                          \
-  X(float,   cloudCoverageMean,                         0.50f)                                         \
-  X(float,   cloudCoverageSpread,                       0.20f)                                         \
+  X(float,   cloudDensity,                              0.4f)                                          \
+  X(float,   cloudCoverageMean,                         0.10f)                                         \
+  X(float,   cloudCoverageSpread,                       0.10f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
-  X(float,   cloudTypeMean,                             0.45f)                                         \
-  X(float,   cloudTypeSpread,                           0.30f)                                         \
+  X(float,   cloudTypeMean,                             0.6f)                                          \
+  X(float,   cloudTypeSpread,                           0.3f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(Vector3, cloudColor,                                Vector3(0.95f, 0.97f, 1.00f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.0f)                                          \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
   X(float,   cloudThickness,                            2.0f)                                          \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         0.95f)                                         \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
   X(float,   airDensity,                                0.95f)                                         \
-  X(float,   aerosolDensity,                            0.5f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(22.0f, 22.0f, 22.0f))                  \
+  X(float,   aerosolDensity,                            0.7f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(20.0f, 20.0f, 20.0f))                  \
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.999f, 0.999f, 0.999f))               \
-  X(float,   transmittanceMeasurementDistanceMeters,    1500.0f)                                       \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.80f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.945f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.35f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.35f)                                 \
+  X(float,   transmittanceMeasurementDistanceMeters,    1000.0f)                                       \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
-  X(float,   volumetricAnisotropy,                      0.0f)
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.0f) \
+  X(float,   cloudAnvilBias,                            0.3f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         0.95f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.80f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.945f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.35f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.35f)
 
-// partlyCloudy — Morrowind "Cloudy": dense coverage approaching overcast levels
+// partlyCloudy Î“Ã‡Ã¶ light scattered clouds
 #define WEATHER_PRESET_VALUES_partlyCloudy(X)                                                          \
-  X(float,   cloudDensity,                              1.7f)                                          \
-  X(float,   cloudCoverageMean,                         0.62f)                                         \
-  X(float,   cloudCoverageSpread,                       0.18f)                                         \
+  X(float,   cloudDensity,                              0.9f)                                          \
+  X(float,   cloudCoverageMean,                         0.30f)                                         \
+  X(float,   cloudCoverageSpread,                       0.20f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
   X(float,   cloudTypeMean,                             0.5f)                                          \
   X(float,   cloudTypeSpread,                           0.3f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(Vector3, cloudColor,                                Vector3(0.92f, 0.95f, 1.00f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.05f)                                         \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
-  X(float,   cloudThickness,                            2.8f)                                          \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         0.95f)                                         \
+  X(float,   cloudThickness,                            2.5f)                                          \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
   X(float,   airDensity,                                1.0f)                                          \
-  X(float,   aerosolDensity,                            0.9f)                                          \
+  X(float,   aerosolDensity,                            1.0f)                                          \
   X(Vector3, sunIlluminance,                            Vector3(19.0f, 19.0f, 19.0f))                  \
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.998f, 0.998f, 0.998f))               \
-  X(float,   transmittanceMeasurementDistanceMeters,    600.0f)                                        \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.72f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.94f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.33f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.33f)                                 \
+  X(float,   transmittanceMeasurementDistanceMeters,    800.0f)                                        \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
-  X(float,   volumetricAnisotropy,                      0.05f)
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.05f) \
+  X(float,   cloudAnvilBias,                            0.3f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         0.95f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.72f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.94f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.33f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.33f)
 
-// overcast — solid sky cover, the canonical thick-deck reference
+// overcast Î“Ã‡Ã¶ current default look
 #define WEATHER_PRESET_VALUES_overcast(X)                                                              \
-  X(float,   cloudDensity,                              2.0f)                                          \
-  X(float,   cloudCoverageMean,                         0.75f)                                         \
-  X(float,   cloudCoverageSpread,                       0.14f)                                         \
+  X(float,   cloudDensity,                              1.8f)                                          \
+  X(float,   cloudCoverageMean,                         0.64f)                                         \
+  X(float,   cloudCoverageSpread,                       0.16f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
   X(float,   cloudTypeMean,                             0.5f)                                          \
   X(float,   cloudTypeSpread,                           0.2f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(Vector3, cloudColor,                                Vector3(0.89f, 0.92f, 1.00f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.10f)                                         \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
   X(float,   cloudThickness,                            3.05f)                                         \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         0.95f)                                         \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
   X(float,   airDensity,                                1.0f)                                          \
   X(float,   aerosolDensity,                            1.1f)                                          \
   X(Vector3, sunIlluminance,                            Vector3(15.0f, 15.0f, 15.0f))                  \
@@ -205,32 +323,62 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.995f, 0.995f, 0.995f))               \
   X(float,   transmittanceMeasurementDistanceMeters,    500.0f)                                        \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.80f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.30f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.30f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.999f, 0.999f, 0.999f))               \
-  X(float,   volumetricAnisotropy,                      0.05f)
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.05f) \
+  X(float,   cloudAnvilBias,                            0.3f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         0.95f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.80f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.30f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.30f)
 
-// hazy — warm summer haze with broken cumulus
+// hazy Î“Ã‡Ã¶ warm summer haze
 #define WEATHER_PRESET_VALUES_hazy(X)                                                                  \
-  X(float,   cloudDensity,                              1.3f)                                          \
-  X(float,   cloudCoverageMean,                         0.50f)                                         \
+  X(float,   cloudDensity,                              1.0f)                                          \
+  X(float,   cloudCoverageMean,                         0.40f)                                         \
   X(float,   cloudCoverageSpread,                       0.20f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
-  X(float,   cloudTypeMean,                             0.45f)                                         \
-  X(float,   cloudTypeSpread,                           0.30f)                                         \
+  X(float,   cloudTypeMean,                             0.4f)                                          \
+  X(float,   cloudTypeSpread,                           0.3f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(Vector3, cloudColor,                                Vector3(0.92f, 0.91f, 0.88f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.10f)                                         \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
   X(float,   cloudThickness,                            2.5f)                                          \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         1.10f)                                         \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
   X(float,   airDensity,                                1.1f)                                          \
   X(float,   aerosolDensity,                            1.5f)                                          \
   X(Vector3, sunIlluminance,                            Vector3(17.0f, 16.0f, 14.0f))                  \
@@ -239,48 +387,106 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.985f, 0.97f, 0.94f))                 \
   X(float,   transmittanceMeasurementDistanceMeters,    250.0f)                                        \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.65f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.85f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.32f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.32f)                                 \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.98f, 0.96f))                  \
-  X(float,   volumetricAnisotropy,                      0.30f)
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.30f) \
+  X(float,   cloudAnvilBias,                            0.3f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         1.10f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.65f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.85f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.32f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.32f)
 
-// foggy — Morrowind: thick ground fog + overcast cloud layer above
+// foggy Î“Ã‡Ã¶ the headline fog preset
 #define WEATHER_PRESET_VALUES_foggy(X)                                                                 \
-  X(float,   cloudDensity,                              1.4f)                                          \
-  X(float,   cloudCoverageMean,                         0.75f)                                         \
-  X(float,   cloudCoverageSpread,                       0.10f)                                         \
+  X(float,   cloudDensity,                              0.6f)                                          \
+  X(float,   cloudCoverageMean,                         0.30f)                                         \
+  X(float,   cloudCoverageSpread,                       0.20f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
   X(float,   cloudTypeMean,                             0.2f)                                          \
   X(float,   cloudTypeSpread,                           0.2f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(Vector3, cloudColor,                                Vector3(0.85f, 0.88f, 0.92f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.05f)                                         \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
-  X(float,   cloudThickness,                            3.0f)                                          \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         0.50f)                                         \
-  X(float,   airDensity,                                1.5f)                                          \
-  X(float,   aerosolDensity,                            4.0f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(8.0f, 8.0f, 8.0f))                     \
+  X(float,   cloudThickness,                            2.0f)                                          \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
+  X(float,   airDensity,                                1.2f)                                          \
+  X(float,   aerosolDensity,                            2.0f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(10.0f, 10.0f, 10.0f))                  \
   X(float,   nightSkyBrightness,                        0.012f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.90f, 0.92f, 0.95f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    40.0f)                                         \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.40f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.89f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.22f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.22f)                            \
+  X(Vector3, transmittanceColor,                        Vector3(0.92f, 0.94f, 0.96f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    80.0f)                                         \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 0.99f))                  \
-  X(float,   volumetricAnisotropy,                      0.15f)
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.0f) \
+  X(float,   cloudAnvilBias,                            0.3f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         0.50f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.40f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.89f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.22f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.22f)
 
-// drizzle — light rain, medium fog
+// drizzle Î“Ã‡Ã¶ light rain, medium fog
 #define WEATHER_PRESET_VALUES_drizzle(X)                                                               \
   X(float,   cloudDensity,                              1.4f)                                          \
   X(float,   cloudCoverageMean,                         0.60f)                                         \
@@ -289,16 +495,18 @@
   X(float,   cloudTypeMean,                             0.3f)                                          \
   X(float,   cloudTypeSpread,                           0.3f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(Vector3, cloudColor,                                Vector3(0.78f, 0.82f, 0.88f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.20f)                                         \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
   X(float,   cloudThickness,                            3.0f)                                          \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         0.50f)                                         \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
   X(float,   airDensity,                                1.1f)                                          \
   X(float,   aerosolDensity,                            1.5f)                                          \
   X(Vector3, sunIlluminance,                            Vector3(11.0f, 12.0f, 14.0f))                  \
@@ -307,14 +515,42 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.95f, 0.96f, 0.97f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                        \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.70f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.28f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.28f)                                 \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.98f, 0.98f, 0.99f))                  \
-  X(float,   volumetricAnisotropy,                      0.10f)
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.10f) \
+  X(float,   cloudAnvilBias,                            0.3f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         0.50f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.70f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.28f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.28f)
 
-// rainstorm — heavy clouds, dim sun, dense fog
+// rainstorm Î“Ã‡Ã¶ heavy clouds, dim sun, dense fog
 #define WEATHER_PRESET_VALUES_rainstorm(X)                                                             \
   X(float,   cloudDensity,                              2.5f)                                          \
   X(float,   cloudCoverageMean,                         0.80f)                                         \
@@ -323,16 +559,18 @@
   X(float,   cloudTypeMean,                             0.4f)                                          \
   X(float,   cloudTypeSpread,                           0.3f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(Vector3, cloudColor,                                Vector3(0.65f, 0.68f, 0.75f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.40f)                                         \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
   X(float,   cloudThickness,                            4.0f)                                          \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         0.20f)                                         \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
   X(float,   airDensity,                                1.0f)                                          \
   X(float,   aerosolDensity,                            1.4f)                                          \
   X(Vector3, sunIlluminance,                            Vector3(7.0f, 8.0f, 10.0f))                    \
@@ -341,14 +579,42 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.85f, 0.88f, 0.92f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    100.0f)                                        \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.95f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.25f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.97f, 0.97f, 0.98f))                  \
-  X(float,   volumetricAnisotropy,                      0.10f)
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.10f) \
+  X(float,   cloudAnvilBias,                            0.3f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         0.20f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.95f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.25f)
 
-// thunderstorm — heaviest, bruised tone (retuned 2026-05-09 by in-game
+// thunderstorm Î“Ã‡Ã¶ heaviest, bruised tone (retuned 2026-05-09 by in-game
 // tuning against the post-FAST-noise + temporal-smoother + Jensen-revert
 // pipeline at cloudAltitude=1.5 km, cloudCurvature=0.38)
 #define WEATHER_PRESET_VALUES_thunderstorm(X)                                                          \
@@ -359,16 +625,18 @@
   X(float,   cloudTypeMean,                             0.54f)                                         \
   X(float,   cloudTypeSpread,                           0.28f)                                         \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.7f)                                          \
   X(Vector3, cloudColor,                                Vector3(0.61f, 0.63f, 0.69f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.44f)                                         \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
   X(float,   cloudThickness,                            4.13f)                                         \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         0.21f)                                         \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
   X(float,   airDensity,                                1.0f)                                          \
   X(float,   aerosolDensity,                            1.3f)                                          \
   X(Vector3, sunIlluminance,                            Vector3(4.0f, 4.0f, 6.0f))                     \
@@ -377,14 +645,42 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.75f, 0.78f, 0.82f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    60.0f)                                         \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.50f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.89f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.22f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.22f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.95f, 0.95f, 0.97f))                  \
-  X(float,   volumetricAnisotropy,                      0.0f)
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.0f) \
+  X(float,   cloudAnvilBias,                            0.7f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         0.21f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.50f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.89f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.22f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.22f)
 
-// snow — medium clouds, cool fog, snow particles
+// snow Î“Ã‡Ã¶ medium clouds, cool fog, snow particles
 #define WEATHER_PRESET_VALUES_snow(X)                                                                  \
   X(float,   cloudDensity,                              1.8f)                                          \
   X(float,   cloudCoverageMean,                         0.65f)                                         \
@@ -393,16 +689,18 @@
   X(float,   cloudTypeMean,                             0.4f)                                          \
   X(float,   cloudTypeSpread,                           0.3f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(Vector3, cloudColor,                                Vector3(0.95f, 0.97f, 1.00f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.20f)                                         \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
   X(float,   cloudThickness,                            3.0f)                                          \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         0.30f)                                         \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
   X(float,   airDensity,                                1.0f)                                          \
   X(float,   aerosolDensity,                            1.3f)                                          \
   X(Vector3, sunIlluminance,                            Vector3(12.0f, 13.0f, 14.0f))                  \
@@ -411,14 +709,42 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.97f, 0.98f, 0.99f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    250.0f)                                        \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.55f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.70f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.30f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.30f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 0.99f))                  \
-  X(float,   volumetricAnisotropy,                      0.0f)
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.0f) \
+  X(float,   cloudAnvilBias,                            0.3f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         0.30f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.70f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.30f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.30f)
 
-// blizzard — whiteout, severe visibility loss
+// blizzard Î“Ã‡Ã¶ whiteout, severe visibility loss
 #define WEATHER_PRESET_VALUES_blizzard(X)                                                              \
   X(float,   cloudDensity,                              3.0f)                                          \
   X(float,   cloudCoverageMean,                         0.95f)                                         \
@@ -427,16 +753,18 @@
   X(float,   cloudTypeMean,                             0.5f)                                          \
   X(float,   cloudTypeSpread,                           0.2f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(Vector3, cloudColor,                                Vector3(0.92f, 0.96f, 1.00f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.50f)                                         \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
   X(float,   cloudThickness,                            4.5f)                                          \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         0.10f)                                         \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
   X(float,   airDensity,                                1.0f)                                          \
   X(float,   aerosolDensity,                            1.6f)                                          \
   X(Vector3, sunIlluminance,                            Vector3(6.0f, 7.0f, 8.0f))                     \
@@ -445,48 +773,106 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.92f, 0.95f, 0.98f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    50.0f)                                         \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.40f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.45f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.20f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.20f)                                 \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.99f, 0.99f, 1.00f))                  \
-  X(float,   volumetricAnisotropy,                      0.0f)
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.0f) \
+  X(float,   cloudAnvilBias,                            0.3f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         0.10f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.40f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.45f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.20f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.20f)
 
-// sandstorm — Morrowind Ash/Blight: full cloud deck, heavy red-brown dust haze
+// sandstorm Î“Ã‡Ã¶ yellow-orange forward-scattering fog
 #define WEATHER_PRESET_VALUES_sandstorm(X)                                                             \
-  X(float,   cloudDensity,                              2.4f)                                          \
-  X(float,   cloudCoverageMean,                         0.85f)                                         \
-  X(float,   cloudCoverageSpread,                       0.15f)                                         \
+  X(float,   cloudDensity,                              1.5f)                                          \
+  X(float,   cloudCoverageMean,                         0.40f)                                         \
+  X(float,   cloudCoverageSpread,                       0.30f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
-  X(float,   cloudTypeMean,                             0.3f)                                          \
-  X(float,   cloudTypeSpread,                           0.35f)                                         \
+  X(float,   cloudTypeMean,                             0.2f)                                          \
+  X(float,   cloudTypeSpread,                           0.4f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.3f)                                          \
-  X(Vector3, cloudColor,                                Vector3(0.85f, 0.55f, 0.32f))                  \
+  X(Vector3, cloudColor,                                Vector3(0.85f, 0.65f, 0.40f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.30f)                                         \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
-  X(float,   cloudThickness,                            3.5f)                                          \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         1.30f)                                         \
+  X(float,   cloudShadowStrength,                       0.20f)                                         \
+  X(float,   cloudThickness,                            2.5f)                                          \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
   X(float,   airDensity,                                1.0f)                                          \
-  X(float,   aerosolDensity,                            3.5f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(8.0f, 6.0f, 4.0f))                     \
+  X(float,   aerosolDensity,                            2.5f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(10.0f, 8.0f, 5.0f))                    \
   X(float,   nightSkyBrightness,                        0.010f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
-  X(Vector3, transmittanceColor,                        Vector3(0.95f, 0.55f, 0.28f))                  \
-  X(float,   transmittanceMeasurementDistanceMeters,    35.0f)                                         \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.45f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.50f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.25f)                            \
-  X(Vector3, singleScatteringAlbedo,                    Vector3(0.90f, 0.70f, 0.45f))                  \
-  X(float,   volumetricAnisotropy,                      0.60f)
+  X(Vector3, transmittanceColor,                        Vector3(0.95f, 0.65f, 0.35f))                  \
+  X(float,   transmittanceMeasurementDistanceMeters,    50.0f)                                         \
+  X(Vector3, singleScatteringAlbedo,                    Vector3(0.90f, 0.75f, 0.50f))                  \
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.60f) \
+  X(float,   cloudAnvilBias,                            0.3f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         1.30f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.45f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.50f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.25f)
 
-// smoggy — industrial dark grey-brown haze
+// smoggy Î“Ã‡Ã¶ industrial dark grey-brown haze
 #define WEATHER_PRESET_VALUES_smoggy(X)                                                                \
   X(float,   cloudDensity,                              1.4f)                                          \
   X(float,   cloudCoverageMean,                         0.45f)                                         \
@@ -495,16 +881,18 @@
   X(float,   cloudTypeMean,                             0.3f)                                          \
   X(float,   cloudTypeSpread,                           0.3f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
-  X(float,   cloudAnvilBias,                            0.3f)                                          \
   X(Vector3, cloudColor,                                Vector3(0.65f, 0.58f, 0.45f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
   X(float,   cloudShadowStrength,                       0.15f)                                         \
-  X(float,   cloudAnisotropy,                           0.6f)                                          \
   X(float,   cloudThickness,                            2.5f)                                          \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f))                  \
-  X(float,   cloudShadowTintStrength,                   1.0f)                                          \
-  X(float,   cloudSunsetWarmth,                         0.80f)                                         \
+  X(float, cloudUndersideLightSigma, 0.12f) \
+  X(float, cloudBottomDarkening,     1.0f) \
+  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialHazePerKm,     0.05f) \
+  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
+  X(float, skyIndirectRadianceScale, 1.0f) \
   X(float,   airDensity,                                1.1f)                                          \
   X(float,   aerosolDensity,                            1.8f)                                          \
   X(Vector3, sunIlluminance,                            Vector3(12.0f, 10.0f, 8.0f))                   \
@@ -513,24 +901,52 @@
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
   X(Vector3, transmittanceColor,                        Vector3(0.70f, 0.65f, 0.55f))                  \
   X(float,   transmittanceMeasurementDistanceMeters,    200.0f)                                        \
-  X(float,   fogDensityReferenceTransmittanceDay,       0.50f)                                  \
-  X(float,   fogDensityReferenceTransmittanceNight,     0.60f)                                  \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f)                            \
-  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.25f)                            \
   X(Vector3, singleScatteringAlbedo,                    Vector3(0.85f, 0.80f, 0.70f))                  \
-  X(float,   volumetricAnisotropy,                      0.20f)
+  X(float, fogSunVisibilityGain, 1.0f) \
+  X(float, volumetricConsumerGain, 0.008f) \
+  X(bool, enableHeterogeneousFog, false) \
+  X(float, noiseFieldDensityScale, 1.0f) \
+  X(float, noiseFieldDensityExponent, 2.0f) \
+  X(float, noiseFieldInitialFrequencyPerMeter, 8.0f) \
+  X(float, noiseFieldLacunarity, 2.0f) \
+  X(float, noiseFieldGain, 0.5f) \
+  X(float, noiseFieldTimeScale, 0.5f) \
+  X(float, noiseFieldSubStepSizeMeters, 10.0f) \
+  X(float, froxelMaxDistanceMeters, 20.0f) \
+  X(bool, enableFogRemap, false) \
+  X(bool, enableFogColorRemap, false) \
+  X(bool, enableFogMaxDistanceRemap, true) \
+  X(float, fogRemapMaxDistanceMinMeters, 1.0f) \
+  X(float, fogRemapMaxDistanceMaxMeters, 40.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMinMeters, 20.0f) \
+  X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
+  X(float, fogRemapColorMultiscatteringScale, 0.1f) \
+  X(bool,  enableTranslucentShadows, false) \
+  X(float, atmosphereSunFogScale,    1.0f) \
+  X(float, depthOffset,              0.5f) \
+  X(float, noiseFieldOctaves,        2.0f) \
+  X(float,   volumetricAnisotropy,                      0.20f) \
+  X(float,   cloudAnvilBias,                            0.3f) \
+  X(float,   cloudAnisotropy,                           0.6f) \
+  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
+  X(float,   cloudShadowTintStrength,                   1.0f) \
+  X(float,   cloudSunsetWarmth,                         0.80f) \
+  X(float,   fogDensityReferenceTransmittanceDay,       0.50f) \
+  X(float,   fogDensityReferenceTransmittanceNight,     0.60f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f) \
+  X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.25f)
 
 // ---------------------------------------------------------------------------
 // Single-preset macro. Walks WEATHER_PRESET_VALUES_<N> via the binder for
-// preset N, emitting all 27 RTX_OPTION declarations with archetype-tuned
+// preset N, emitting all 61 RTX_OPTION declarations with archetype-tuned
 // defaults. Must be invoked inside a class body (RTX_OPTION declares inline
 // static members).
 // ---------------------------------------------------------------------------
 #define DECLARE_WEATHER_PRESET(N) WEATHER_PRESET_VALUES_##N(WEATHER_PRESET_BIND_##N)
 
 // ---------------------------------------------------------------------------
-// Umbrella macro. Invoke inside RtxOptions struct body to declare all 324
-// RTX_OPTIONs (12 presets x 27 fields).
+// Umbrella macro. Invoke inside RtxOptions struct body to declare all 624
+// RTX_OPTIONs (12 presets x 61 fields).
 // ---------------------------------------------------------------------------
 #define DECLARE_ALL_WEATHER_PRESETS()   \
   DECLARE_WEATHER_PRESET(clear)         \
@@ -547,7 +963,7 @@
   DECLARE_WEATHER_PRESET(smoggy)
 
 // ---------------------------------------------------------------------------
-// WeatherSnapshot + WeatherBlender — Task 2 additions.
+// WeatherSnapshot (61 fields) + WeatherBlender Î“Ã‡Ã¶ Task 2 additions.
 // Lives in dxvk::fork_weather namespace. Included by rtx_fork_weather.cpp;
 // forward-use in rtx_fork_hooks.h needs only the hook forward declarations
 // (no WeatherBlender include required there).
@@ -557,25 +973,25 @@
 namespace dxvk { namespace fork_weather {
 
   // -------------------------------------------------------------------------
-  // WeatherSnapshot — a plain-value copy of all 27 renderer weather params.
+  // WeatherSnapshot (61 fields) Î“Ã‡Ã¶ a plain-value copy of all 52 renderer weather params.
   // Members are auto-generated from the single-source-of-truth X-macro so
   // that any field addition automatically propagates here.
   // -------------------------------------------------------------------------
   struct WeatherSnapshot {
-#define WEATHER_PRESET_FIELD_AS_MEMBER_(type, name, defaultValue) type name = defaultValue;
+#define WEATHER_PRESET_FIELD_AS_MEMBER_(type, name, defaultValue, kind, group, section, label, mn, mx, step, fmt) type name = defaultValue;
     WEATHER_PRESET_FIELD_LIST(WEATHER_PRESET_FIELD_AS_MEMBER_)
 #undef WEATHER_PRESET_FIELD_AS_MEMBER_
   };
 
   // -------------------------------------------------------------------------
-  // WeatherBlender — per-frame lerp pipeline.
+  // WeatherBlender Î“Ã‡Ã¶ per-frame lerp pipeline.
   //
   // Reads __weather.target + __weather.blend_seconds from the GameStateStore,
   // lerps from m_previousSnapshot toward the named preset's RTX_OPTION values
   // over m_blendDurationSec seconds, and writes interpolated values into the
   // Derived layer of each underlying RTX_OPTION via setImmediately().
   //
-  // Dormant when __weather.target is absent or unknown — zero upstream
+  // Dormant when __weather.target is absent or unknown Î“Ã‡Ã¶ zero upstream
   // behavioural change.
   //
   // Caller (Task 3) provides deltaTimeSeconds from the per-frame render loop.
@@ -589,29 +1005,43 @@ namespace dxvk { namespace fork_weather {
     // Called once per frame from fork_hooks::updateWeatherBlender (Task 3).
     void update(float deltaTimeSeconds);
 
-    // Renders the ImGui weather-preset panel. Placeholder until Task 4.
+    // Renders the inline weather-preset panel (transition controls, status, and
+    // the button that toggles the pop-out editor window).
     void showImguiSettings();
+
+    // Renders the pop-out preset editor as a separate movable window (toggled
+    // from showImguiSettings). No-op while closed. Call once per frame.
+    void renderEditorWindow();
 
     bool isPaused() const { return m_paused; }
     void setPaused(bool paused) { m_paused = paused; }
 
   private:
-    // Preset cache — empty string means "not yet active".
+    // Preset cache Î“Ã‡Ã¶ empty string means "not yet active".
     std::string m_previousPresetName;
     std::string m_targetPresetName;
 
-    // Blend timeline.
-    float m_blendStartTimeSec  = 0.0f;
-    float m_blendDurationSec   = 1.0f;
-    float m_currentTimeSec     = 0.0f;
+    // Blend timeline. Wall-clock accumulators are double so sub-frame precision
+    // survives multi-hour sessions (a 32-bit float erodes to ~4 ms after ~9 h).
+    double m_blendStartTimeSec = 0.0;
+    float  m_blendDurationSec  = 1.0f;
+    double m_currentTimeSec    = 0.0;
 
     bool m_paused = false;
+
+    // Pop-out preset editor window visibility (toggled from showImguiSettings).
+    bool m_editorWindowOpen = false;
+
+    // "Pin & Freeze for Tuning" toggle state + the drift intensity to restore on
+    // un-pin (so freezing variation for tuning is non-destructive).
+    bool  m_pinnedForTuning   = false;
+    float m_savedDriftIntensity = 1.0f;
 
     // Drift state (cloud-drift modulation; spec 2026-05-09-cloud-drift-design).
     // m_driftPhaseSeconds is monotonically advanced each frame by
     // dt * m_driftSpeedSmoothed. Smoothed values are one-pole filtered toward
     // the GameStateStore-supplied raw values with tau = 1.0s.
-    float m_driftPhaseSeconds      = 0.0f;
+    double m_driftPhaseSeconds     = 0.0;
     float m_driftSpeedSmoothed     = 1.0f;
     float m_driftIntensitySmoothed = 1.0f;
 
@@ -633,3 +1063,4 @@ namespace dxvk { namespace fork_weather {
   };
 
 } }  // namespace dxvk::fork_weather
+

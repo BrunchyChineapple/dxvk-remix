@@ -424,6 +424,8 @@ namespace {
     args.bloodmoonStrength  = 0.0f;
     args.bloodmoonGlow      = 0.0f;
     args.bloodmoonTint      = vec3(0.0f, 0.0f, 0.0f);
+    // Applied post-LUT-sample per ray, never feeds a LUT bake — exclude from the key.
+    args.skyIndirectRadianceScale    = 0.0f;
   }
 
   // Quantize one direction-vector component to the granularity step.
@@ -604,6 +606,11 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.multiScatterStrength = RtxOptions::multiScatterStrength();
   args.sunsetSaturation     = RtxOptions::sunsetSaturation();
 
+  // Diffuse-indirect sky radiance multiplier. Applied per-ray in evalSkyRadiance
+  // (post-LUT-sample), so it never feeds any LUT bake — see normalizeForSkyLutCache,
+  // which zeroes it in the cache key so dragging the slider doesn't trigger a rebake.
+  args.skyIndirectRadianceScale = std::max(RtxOptions::skyIndirectRadianceScale(), 0.0f);
+
   // View Altitude (converted m to km)
   args.viewAltitude = RtxOptions::altitude() * 0.001f;
 
@@ -639,7 +646,7 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.starRotation      = RtxOptions::starRotation();
   args.starAxisElevation = RtxOptions::starAxisElevation();
   args.starAxisRotation  = RtxOptions::starAxisRotation();
-  args.pad3              = 0.0f;
+  // (skyIndirectRadianceScale — formerly pad3 — is populated above from RtxOptions.)
 
   args.starPsfSharpness            = RtxOptions::starPsfSharpness();
   args.starCloudExtinctionPower    = RtxOptions::starCloudExtinctionPower();

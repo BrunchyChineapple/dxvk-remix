@@ -1295,6 +1295,15 @@ namespace dxvk {
     RTX_OPTION("rtx.atmosphere", Vector3, sunIlluminance, Vector3(15.0f, 15.0f, 15.0f), "Base Sun illuminance color/intensity.");
     RTX_OPTION("rtx.atmosphere", float, multiScatterPhysicalStrength, 0.0f, "Blend between artistic (0) and physical (1) multiscattering. 0 = analytical inline fit that preserves preset color directly. 1 = LUT-based hemisphere integration (Hillaire-physical) that wavelength-amplifies each preset's Rayleigh bias. Intermediate values blend. Per-preset overrides recommended.");
 
+    RTX_OPTION_ARGS("rtx.atmosphere", float, skyIndirectRadianceScale, 1.0f,
+               "Artistic multiplier for sky radiance gathered by diffuse indirect bounces only. "
+               "1.0 = physical (default). Raise it to brighten diffuse sky fill (the distant-light "
+               "sun has a much higher radiance than the sky, so indirect lighting reads dull). "
+               "Applies only to genuine diffuse sky gather; sky seen via reflection, refraction, "
+               "alpha-cutout, or the primary view stays at physical brightness so reflections match "
+               "the visible sky.",
+      args.minValue = 0.0f);
+
     // ----- Night-sky shading (fork) -----
     // Stars, Milky Way, shooting stars, airglow. Active when skyMode == Numos.
     RTX_OPTION_FLAG("rtx.atmosphere", float, starBrightness, 1.0f, RtxOptionFlags::NoSave,

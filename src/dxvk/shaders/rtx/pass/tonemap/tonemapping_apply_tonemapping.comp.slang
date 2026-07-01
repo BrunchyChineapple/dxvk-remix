@@ -119,6 +119,10 @@ float3 applyToneMapping(float3 color, uint2 pixelPosition)
     );
   }
 
+  // Fork: the dither is applied INSIDE the performSRGBConversion block above (so it
+  // only runs in gamma space), then we return. This is equivalent to Kim's
+  // performSRGBConversion-gated final dither, but must not be combined with it or the
+  // result would double-dither. Keep the fork form.
   return color;
 }
 
