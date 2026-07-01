@@ -554,7 +554,7 @@ namespace dxvk { namespace fork_weather { namespace {
     if (std::strcmp(name, "enableTranslucentShadows") == 0) return RtxGlobalVolumetrics::enableTranslucentShadowsObject().getDescription();
     if (std::strcmp(name, "depthOffset") == 0) return RtxGlobalVolumetrics::depthOffsetObject().getDescription();
     if (std::strcmp(name, "noiseFieldOctaves") == 0) return RtxGlobalVolumetrics::noiseFieldOctavesObject().getDescription();
-    if (std::strcmp(name, "atmosphereSunFogScale") == 0) return RtxOptions::atmosphereSunVolumetricRadianceScaleObject().getDescription();
+    if (std::strcmp(name, "atmosphereSunFogScale") == 0) return RtxGlobalVolumetrics::atmosphereSunVolumetricRadianceScaleObject().getDescription();
     return "";
   }
   // True if any field in this (group[, section]) matches the filter.
@@ -781,7 +781,7 @@ namespace dxvk { namespace fork_weather { namespace {
     s.fogRemapTransmittanceMeasurementDistanceMaxMeters = RtxGlobalVolumetrics::fogRemapTransmittanceMeasurementDistanceMaxMeters();
     s.fogRemapColorMultiscatteringScale = RtxGlobalVolumetrics::fogRemapColorMultiscatteringScale();
     s.enableTranslucentShadows = RtxGlobalVolumetrics::enableTranslucentShadows();
-    s.atmosphereSunFogScale    = RtxOptions::atmosphereSunVolumetricRadianceScale();
+    s.atmosphereSunFogScale    = RtxGlobalVolumetrics::atmosphereSunVolumetricRadianceScale();
     s.depthOffset              = RtxGlobalVolumetrics::depthOffset();
     s.noiseFieldOctaves        = static_cast<float>(RtxGlobalVolumetrics::noiseFieldOctaves());
     return s;
@@ -938,7 +938,7 @@ namespace dxvk { namespace fork_weather { namespace {
     if (weatherVaries_fogRemapTransmittanceMeasurementDistanceMaxMeters()) RtxGlobalVolumetrics::fogRemapTransmittanceMeasurementDistanceMaxMetersObject().setImmediately(interp.fogRemapTransmittanceMeasurementDistanceMaxMeters);
     if (weatherVaries_fogRemapColorMultiscatteringScale()) RtxGlobalVolumetrics::fogRemapColorMultiscatteringScaleObject().setImmediately(interp.fogRemapColorMultiscatteringScale);
     if (weatherVaries_enableTranslucentShadows()) RtxGlobalVolumetrics::enableTranslucentShadowsObject().setImmediately(interp.enableTranslucentShadows);
-    if (weatherVaries_atmosphereSunFogScale())    RtxOptions::atmosphereSunVolumetricRadianceScaleObject().setImmediately(interp.atmosphereSunFogScale);
+    if (weatherVaries_atmosphereSunFogScale())    RtxGlobalVolumetrics::atmosphereSunVolumetricRadianceScaleObject().setImmediately(interp.atmosphereSunFogScale);
     if (weatherVaries_depthOffset())              RtxGlobalVolumetrics::depthOffsetObject().setImmediately(interp.depthOffset);
     if (weatherVaries_noiseFieldOctaves())        RtxGlobalVolumetrics::noiseFieldOctavesObject().setImmediately(static_cast<uint32_t>(interp.noiseFieldOctaves + 0.5f));
   }
