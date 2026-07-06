@@ -2428,9 +2428,9 @@ namespace dxvk {
       // the USD replacement material takes precedence, and use a neutral default material
       // since the replacement will provide its own.
       DrawCallState replacementDrawCall = state.drawCall;
-      replacementDrawCall.geometryData = submeshes[0];
-      replacementDrawCall.geometryData.cullMode = state.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
-      replacementDrawCall.geometryData.externalMaterial = nullptr;
+      replacementDrawCall.modifyGeometryData() = submeshes[0];
+      replacementDrawCall.modifyGeometryData().cullMode = state.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+      replacementDrawCall.modifyGeometryData().externalMaterial = nullptr;
 
       MaterialData renderMaterialData = LegacyMaterialData().as<OpaqueMaterialData>();
       drawReplacements(ctx, &replacementDrawCall, pReplacements, renderMaterialData, replacementInstance);
@@ -2549,14 +2549,14 @@ namespace dxvk {
       // submitExternalDraw parameterizes the additive, non-game-draw geometry path.
       DrawCallState anchor {};
       anchor.cameraType = CameraType::Main;
-      anchor.transformData.objectToWorld = Matrix4();
-      anchor.transformData.worldToView = Matrix4 { rtCamera.getWorldToView() };
-      anchor.transformData.viewToProjection = Matrix4 { rtCamera.getViewToProjection() };
-      anchor.transformData.objectToView = anchor.transformData.worldToView;
-      anchor.transformData.textureTransform = Matrix4();
-      anchor.transformData.texgenMode = TexGenMode::None;
-      anchor.materialData.colorTextures[0] = TextureRef {};
-      anchor.materialData.colorTextures[1] = TextureRef {};
+      anchor.modifyTransformData().objectToWorld = Matrix4();
+      anchor.modifyTransformData().worldToView = Matrix4 { rtCamera.getWorldToView() };
+      anchor.modifyTransformData().viewToProjection = Matrix4 { rtCamera.getViewToProjection() };
+      anchor.modifyTransformData().objectToView = anchor.getTransformData().worldToView;
+      anchor.modifyTransformData().textureTransform = Matrix4();
+      anchor.modifyTransformData().texgenMode = TexGenMode::None;
+      anchor.modifyMaterialData().colorTextures[0] = TextureRef {};
+      anchor.modifyMaterialData().colorTextures[1] = TextureRef {};
 
       // Persistence: a stable ReplacementInstance keyed by the instancer's prim-path identity so the
       // RtInstances survive across frames. Without advancing frameLastSeen every frame, the 4-frame GC
@@ -2564,7 +2564,7 @@ namespace dxvk {
       // transform are the instancer origin (identity) since the per-instance world placement lives in
       // instancesToObject.
       const ReplacementInstance::LookupKey key {
-        entry->identityHash, entry->identityHash, kEmptyHash, kEmptyHash, Vector3(), anchor.transformData.objectToWorld
+        entry->identityHash, entry->identityHash, kEmptyHash, kEmptyHash, Vector3(), anchor.getTransformData().objectToWorld
       };
       ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(key);
 
