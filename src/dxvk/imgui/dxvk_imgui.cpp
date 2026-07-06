@@ -2002,6 +2002,33 @@ namespace dxvk {
       return str.str();
     }
 
+    std::string buildTextureCategoryTooltip(const RtxTextureOption& category,
+                                            std::optional<XXH64_hash_t> texHash = std::nullopt) {
+      if (!category.textureSetOption) {
+        assert(false && "Texture category is missing an RTX option.");
+        return category.displayName;
+      }
+
+      std::string tooltipText;
+      const char* description = category.textureSetOption->getDescription();
+      if (description && description[0] != '\0') {
+        tooltipText = description;
+        tooltipText += "\n\n";
+      }
+
+      tooltipText += category.textureSetOption->getFullName();
+
+      if (texHash.has_value()) {
+        std::string layerValues = RemixGui::FormatOptionLayerValues(category.textureSetOption, texHash, false);
+        if (!layerValues.empty()) {
+          tooltipText += "\n\nPer-layer status for this hash:\n";
+          tooltipText += layerValues;
+        }
+      }
+
+      return tooltipText;
+    }
+
     float computeTexturePopupLabelColumnWidth(uint32_t textureFeatureFlags) {
       float maxWidth = 0.0f;
       for (const auto& rtxOption : rtxTextureOptions) {
@@ -2207,21 +2234,17 @@ namespace dxvk {
                 displayName = std::string(rtxOption.displayName) + " [!]";
               }
 
-              if (RemixGui::Checkbox(displayName.c_str(), &rtxOption.bufferToggle)) {
+              const bool toggleChanged = RemixGui::Checkbox(displayName.c_str(), &rtxOption.bufferToggle);
+              const bool showTooltip = ImGui::IsItemHovered();
+
+              if (toggleChanged) {
                 toggleTextureSelection(texHash, rtxOption.uniqueId, rtxOption.textureSetOption);
               }
               
-              // Only build the expensive tooltip when this item is actually hovered
-              if (ImGui::IsItemHovered()) {
-                std::ostringstream tooltipStream;
-                tooltipStream << rtxOption.textureSetOption->getDescription() << "\n";
-                
-                std::string layerValues = RemixGui::FormatOptionLayerValues(rtxOption.textureSetOption, texHash, false);
-                if (!layerValues.empty()) {
-                  tooltipStream << "\nPer-layer status for this hash:\n" << layerValues;
-                }
-                
-                ImGui::SetTooltip("%s", tooltipStream.str().c_str());
+              // Only build the expensive tooltip when this item is actually hovered.
+              if (showTooltip) {
+                std::string tooltipText = buildTextureCategoryTooltip(rtxOption, texHash);
+                RemixGui::SetTooltipUnformatted(tooltipText.c_str());
               }
             }
             RemixGui::PopLabelColumnFixedWidth();
@@ -2753,7 +2776,8 @@ namespace dxvk {
           spacing();
         }
         for (const RtxTextureOption& category : rtxTextureOptions) {
-          showLegacyGui(category.uniqueId, category.displayName, RemixGui::BuildRtxOptionTooltip(category.textureSetOption).c_str());
+          std::string categoryTooltip = buildTextureCategoryTooltip(category);
+          showLegacyGui(category.uniqueId, category.displayName, categoryTooltip.c_str());
         }
 
         // Check if last saved category was closed this frame
@@ -2788,6 +2812,7 @@ namespace dxvk {
       if (RemixGui::CollapsingHeader("Heuristics", collapsingHeaderClosedFlags)) {
         ImGui::Indent();
         RemixGui::Checkbox("Orthographic Is UI", &D3D9Rtx::orthographicIsUIObject());
+        RemixGui::Checkbox("Pre-Transformed Vertices Is UI", &D3D9Rtx::preTransformedVerticesIsUIObject());
         RemixGui::Checkbox("Allow Cubemaps", &D3D9Rtx::allowCubemapsObject());
         RemixGui::Checkbox("Always Calculate AABB (For Instance Matching)", &RtxOptions::enableAlwaysCalculateAABBObject());
         RemixGui::Checkbox("Skip Sky Fog Values", &RtxOptions::fogIgnoreSkyObject());

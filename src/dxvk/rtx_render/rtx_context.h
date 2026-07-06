@@ -147,7 +147,7 @@ namespace dxvk {
     void clearImageView(const Rc<DxvkImageView>& imageView, VkOffset3D offset, VkExtent3D extent, VkImageAspectFlags aspect, VkClearValue value);
 
     void commitGeometryToRT(const DrawParameters& params, DrawCallState& drawCallState);
-    void commitExternalGeometryToRT(ExternalDrawState&& state);
+    void commitExternalGeometryToRT(std::unique_ptr<ExternalDrawState> state);
 
     // Queue a pixel buffer to be alpha-composited over the final tone-mapped image in the next frame.
     // Used by remixapi_DrawScreenOverlay. Ownership of stagingBuffer transfers here.
