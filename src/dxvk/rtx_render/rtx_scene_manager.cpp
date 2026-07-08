@@ -114,7 +114,7 @@ namespace dxvk {
     data.objectToWorld = transforms.objectToWorld;
     data.textureTransform = transforms.textureTransform;
 
-    return hashStructByMemory(data,
+    return hashStructByMemory<ExternalDrawIdentityHashData,
         &ExternalDrawIdentityHashData::meshId,
         &ExternalDrawIdentityHashData::materialHash,
         &ExternalDrawIdentityHashData::boneHash,
@@ -131,7 +131,7 @@ namespace dxvk {
         &ExternalDrawIdentityHashData::_pad0,
         &ExternalDrawIdentityHashData::_pad1,
         &ExternalDrawIdentityHashData::objectToWorld,
-        &ExternalDrawIdentityHashData::textureTransform);
+        &ExternalDrawIdentityHashData::textureTransform>(data);
   }
 
   SceneManager::SceneManager(DxvkDevice* device)
@@ -680,20 +680,10 @@ namespace dxvk {
       return false;
     };
 
-    // Replacements with attached particle systems require processDrawCallState's particle-system wiring,
-    // which the preserve path doesn't replicate. Outer ParticleEmitter check only covers the input draw call
-    // (not replacement-attached emitters), so check here too.
-    auto anyReplacementHasParticleSystem = [pReplacements]() -> bool {
-      if (pReplacements == nullptr) {
-        return false;
-      }
-      for (const auto& rep : *pReplacements) {
-        if (rep.particleSystem.has_value()) {
-          return true;
-        }
-      }
-      return false;
-    };
+    // Per-frame override materials (terrain bake, etc.) can introduce particle systems
+    // without a prior dynamic update on this RI.
+    const bool overrideMaterialHasParticles = overrideMaterialData != nullptr
+        && overrideMaterialData->getParticleSystemDesc() != nullptr;
 
     // The RI's prims must already be wired up for this exact replacements vector. drawReplacements
     // re-initializes prims when activeReplacements changes (e.g. async replacement load completes
@@ -731,7 +721,7 @@ namespace dxvk {
         !input.getCategoryFlags().test(InstanceCategories::ParticleEmitter) &&
         !RtxOptions::shouldConvertToLight(input.getMaterialData().getHash()) &&
         !blasAlreadyTouchedByOtherDraw() &&
-        !anyReplacementHasParticleSystem() &&
+        !overrideMaterialHasParticles&&
         activeReplacementsMatch &&
         legacyMaterialIdentityHashMatch &&
         !terrainCascadesJustChanged &&
@@ -745,6 +735,10 @@ namespace dxvk {
       if (!activeReplacementsMatch) {
         replacementInstance->clear();
       }
+
+      // Recompute dynamic-feature bits on each dynamic update.
+      replacementInstance->dirtyFlags.clr(ReplacementInstance::kDynamicFeatureMask);
+
       // Create / process: full geometry cache and instance update.
       if (pReplacements != nullptr) {
         drawReplacements(ctx, &input, pReplacements, renderMaterialData, replacementInstance);
@@ -753,7 +747,7 @@ namespace dxvk {
             ? replacementInstance->prims[0].getInstance() : nullptr;
 
         RtInstance* instance = processDrawCallState(ctx, input, renderMaterialData,
-            existingInstance, nullptr);
+            *replacementInstance, existingInstance, nullptr);
         if (instance != nullptr) {
           if (replacementInstance->root.getUntyped() == nullptr) {
             replacementInstance->setup(PrimInstance(instance, PrimInstance::Type::Instance), 1, nullptr);
@@ -939,7 +933,7 @@ namespace dxvk {
         }
 
         const RtxParticleSystemDesc* pParticleSystemDesc = replacement.particleSystem.has_value() ? &replacement.particleSystem.value() : nullptr;
-        instance = processDrawCallState(ctx, *newDrawCallState, renderMaterialData, getExistingInstance(i), pParticleSystemDesc);
+        instance = processDrawCallState(ctx, *newDrawCallState, renderMaterialData, *replacementInstance, getExistingInstance(i), pParticleSystemDesc);
       }
 
       if (instance != nullptr) {
@@ -1347,7 +1341,7 @@ namespace dxvk {
     textureManager.addTexture(inputTexture, samplerFeedbackStamp, async, textureIndex);
   }
 
-  RtInstance* SceneManager::processDrawCallState(const Rc<DxvkContext>& ctx, const DrawCallState& drawCallState, const MaterialData& renderMaterialData, RtInstance* existingInstance, const RtxParticleSystemDesc* pParticleSystemDesc) {
+  RtInstance* SceneManager::processDrawCallState(const Rc<DxvkContext>& ctx, const DrawCallState& drawCallState, const MaterialData& renderMaterialData, ReplacementInstance& replacementInstance, RtInstance* existingInstance, const RtxParticleSystemDesc* pParticleSystemDesc) {
     ScopedCpuProfileZone();
 
     if (renderMaterialData.getIgnored()) {
@@ -1442,6 +1436,8 @@ namespace dxvk {
       if (pParticleSystemDesc->hideEmitter) {
         instance->setHidden(true);
       }
+
+      replacementInstance.dirtyFlags.set(ReplacementInstance::DirtyFlag::ParticleSystem);
     }
 
     return instance; 
@@ -2421,6 +2417,7 @@ namespace dxvk {
 
     const ReplacementInstance::LookupKey externalKey { identityHash, spatialMapHash, matHash, kEmptyHash, worldPos, xform };
     ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(externalKey);
+    replacementInstance->dirtyFlags.clr(ReplacementInstance::kDynamicFeatureMask);
 
     if (std::vector<AssetReplacement>* pReplacements = fork_hooks::externalDrawMeshReplacement(*m_pReplacer, meshHash)) {
       // Copy the DrawCallState so we don't mutate the caller's state. Point geometryData
@@ -2501,7 +2498,7 @@ namespace dxvk {
       static MaterialData defaultMaterialData(LegacyMaterialData::createDefault());
       auto& materialData = material != nullptr ? *material : defaultMaterialData;
 
-      RtInstance* instance = processDrawCallState(ctx, state.drawCall, materialData, existingInstance, pParticles);
+      RtInstance* instance = processDrawCallState(ctx, state.drawCall, materialData, *replacementInstance, existingInstance, pParticles);
 
       if (instance != nullptr) {
         if (replacementInstance->root.getUntyped() == nullptr) {
