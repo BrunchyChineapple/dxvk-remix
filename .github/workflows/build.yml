@@ -120,7 +120,7 @@ jobs:
             - type: section
               text:
                 type: mrkdwn
-                text: ":rotating-light-red: *Build workflow failed* for `${{ github.repository }}`"
+                text: "<!here> :rotating-light-red: *Build workflow failed* for `${{ github.repository }}`"
             - type: section
               fields:
                 - type: mrkdwn
