@@ -39,6 +39,7 @@
 
 using remixapi_MaterialHandle = struct remixapi_MaterialHandle_T*;
 using remixapi_MeshHandle = struct remixapi_MeshHandle_T*;
+using remixapi_InstanceHandle = struct remixapi_InstanceHandle_T*;
 
 namespace dxvk 
 {
