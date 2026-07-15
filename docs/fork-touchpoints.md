@@ -530,6 +530,8 @@ initializer list and can't be lifted into a separate TU.
 
 **Category:** index-only
 
+**Retention contract:** `numFramesToKeepInstances` and `numFramesToKeepBLAS` match NVIDIA's one-frame defaults. RT_AntiCull clamps its effective submission cadence to that window, so no retention-default fork touchpoint is required.
+
 **Rationale:** All fork additions are an enum definition and `RTX_OPTION(...)` macro declarations inside the `RtxOptions` class body. `RTX_OPTION` expands to an inline static member declaration — it is structurally part of the class definition and cannot be lifted into a separate TU or wrapped in a hook. There is no function body to extract.
 
 - **Inline tweak** at `(file scope namespace dxvk)` (SkyMode enum) — ~5 LOC.
