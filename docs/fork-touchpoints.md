@@ -530,6 +530,8 @@ initializer list and can't be lifted into a separate TU.
 
 **Category:** index-only
 
+**Morrowind retention override:** `numFramesToKeepInstances` and `numFramesToKeepBLAS` are both `4`, not NVIDIA's default `1`. Hardware testing after merging topology-aware pooled-BLAS fix `38aa605b0` showed that returning either lifetime contract to the one-frame baseline restores whole-subsystem distant-land flicker. Preserve the four-frame values during upstream merges until the missed-submission/instance-lifetime root cause is fixed; RT_AntiCull's wrapper-owned retention window is synchronized to the same value.
+
 **Rationale:** All fork additions are an enum definition and `RTX_OPTION(...)` macro declarations inside the `RtxOptions` class body. `RTX_OPTION` expands to an inline static member declaration — it is structurally part of the class definition and cannot be lifted into a separate TU or wrapped in a hook. There is no function body to extract.
 
 - **Inline tweak** at `(file scope namespace dxvk)` (SkyMode enum) — ~5 LOC.
