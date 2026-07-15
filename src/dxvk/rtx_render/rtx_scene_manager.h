@@ -154,6 +154,12 @@ public:
   void submitDrawState(Rc<DxvkContext> ctx, const DrawCallState& input, const MaterialData* overrideMaterialData);
   void submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> state);
 
+  // Explicit-lifetime external instances are owned by the renderer and replayed
+  // before generic scene GC. All mutation methods run on the dxvk-cs thread.
+  void createRetainedExternalInstance(remixapi_InstanceHandle handle, std::unique_ptr<ExternalDrawState> state);
+  void updateRetainedExternalInstance(remixapi_InstanceHandle handle, std::unique_ptr<ExternalDrawState> state);
+  void destroyRetainedExternalInstance(remixapi_InstanceHandle handle);
+
   // Submits all clean-path (world-anchored) UsdGeomPointInstancers once per frame. These are authored
   // under /RootNode/ScatterBrush and are not anchored to a captured game draw call, so they must be
   // pumped every frame from their USD world transform (see AssetReplacer::getWorldAnchoredInstancers).
@@ -329,6 +335,9 @@ private:
 
   void drawReplacements(Rc<DxvkContext> ctx, const DrawCallState* input, const std::vector<AssetReplacement>* pReplacements, MaterialData& renderMaterialData, ReplacementInstance* replacementInstance);
 
+  // Refresh every explicitly retained external instance before scene GC/TLAS.
+  void submitRetainedExternalInstances(const Rc<DxvkContext>& ctx);
+
   // Build the per-replacement DrawCallState used by both the dynamic (drawReplacements) and
   // preserve (syncPreservedReplacementMeshesState) paths so they always feed the same input
   // into the BlasEntry / processDrawCallState. Returns std::nullopt for replacement types
@@ -392,6 +401,10 @@ private:
   CameraManager m_cameraManager;
 
   std::unique_ptr<AssetReplacer> m_pReplacer;
+
+  // Converted API draw states keyed by caller-owned retained handles. Entries
+  // live independently of transient DrawInstance traffic and frustum visibility.
+  std::unordered_map<remixapi_InstanceHandle, ExternalDrawState> m_retainedExternalInstances;
 
   std::unique_ptr<TerrainBaker> m_terrainBaker;
 

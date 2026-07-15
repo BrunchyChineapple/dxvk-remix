@@ -46,11 +46,14 @@ check will enforce it if discipline slips.
 
 **Category:** migrate
 
-- **Block** at `Interface` class (method declarations) — ~13 LOC, planned target `N/A (public header)` in `N/A (public header)`.
-  *Declares fork-added C++ wrapper methods: `CreateMeshBatched`, `GetUIState`, `SetUIState`, `AddTextureHash`, `RemoveTextureHash`, `dxvk_GetTextureHash`, `CreateLightBatched`, `UpdateLightDefinition`, `SetGameValue`.*
+- **Block** at `Interface` class (method declarations) — ~16 LOC, planned target `N/A (public header)` in `N/A (public header)`.
+  *Declares fork-added C++ wrapper methods: `CreateMeshBatched`, `CreateRetainedInstance`, `UpdateRetainedInstance`, `DestroyRetainedInstance`, `GetUIState`, `SetUIState`, `AddTextureHash`, `RemoveTextureHash`, `dxvk_GetTextureHash`, `CreateLightBatched`, `UpdateLightDefinition`, `SetGameValue`.*
 
 - **Block** at `Interface::CreateMeshBatched` (inline definition) — ~9 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Inline C++ wrapper that calls `m_CInterface.CreateMeshBatched` for the batched mesh submission API slot.*
+
+- **Block** at `Interface::CreateRetainedInstance` / `Interface::UpdateRetainedInstance` / `Interface::DestroyRetainedInstance` (inline definitions) — ~21 LOC, planned target `N/A (public header)` in `N/A (public header)`.
+  *C++ wrappers for explicit-lifetime external instances. Create returns the opaque retained handle generated from the caller's stable identity; update and destroy dispatch by that handle.*
 
 - **Block** at `Interface::GetUIState` / `Interface::SetUIState` (inline definitions) — ~16 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Inline C++ wrappers for UI state query/set API, guarding on nullptr slot before dispatching.*
@@ -71,7 +74,7 @@ check will enforce it if discipline slips.
   *C++ wrapper for the `remixapi_SetGameValue` C API slot introduced in workstream 10 (plugin-injected game-state write). Wrapper guards on nullptr vtable slot before dispatching, matching the `SetConfigVariable` shape. Companion readers are graph components `GameValueReadBool` / `GameValueReadNumber`; backing store lives in `rtx_fork_game_state.h`.*
 
 - **Block** at `remixapi_Interface` static_assert updates (file scope) — ~3 LOC (three separate assert sizes), planned target `N/A (public header)` in `N/A (public header)`.
-  *Updates `sizeof(remixapi_Interface)` static_asserts in the C++ header to match each successive vtable extension (208 → 240 → 272 → 280 → 288).*
+  *Updates `sizeof(remixapi_Interface)` static_asserts for append-only vtable extensions; retained-instance ABI v0.1001.0 sets the x64 interface size to 352 bytes.*
 
 ---
 
@@ -82,13 +85,16 @@ check will enforce it if discipline slips.
 **Category:** migrate
 
 - **Block** at `REMIXAPI_VERSION_MAJOR/MINOR/PATCH` (file scope) — ~3 LOC, planned target `N/A (public header)` in `N/A (public header)`.
-  *Sets the Remix Plus ABI version to `0.1000.0` (reserved MINOR `1000`), distinct from stock NVIDIA `0.6.x`. Because `isVersionCompatible` treats each minor as breaking while MAJOR==0, this makes the runtime reject binaries built against stock Remix `0.6.x` or older Remix Plus `0.6.x` — whose `remixapi_Interface` layout and category-bit ABI differ. Bump MINOR on any further breaking ABI change.*
+  *Sets the Remix Plus ABI version to `0.1001.0`. The reserved MINOR range starts at `1000`, distinct from stock NVIDIA `0.6.x`; v0.1001.0 adds the retained-instance handle and three append-only interface slots. Because `isVersionCompatible` treats each minor as breaking while MAJOR==0, consumers compiled against older interface layouts are rejected.*
 
 - **Block** at `remixapi_StructType` enum (file scope) — ~3 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Adds `REMIXAPI_STRUCT_TYPE_TEXTURE_INFO`, `INSTANCE_INFO_PARTICLE_SYSTEM_EXT`, and `INSTANCE_INFO_GPU_INSTANCING_EXT` enumerators.*
 
-- **Block** at `remixapi_TextureHandle` typedef (file scope) — ~1 LOC, planned target `N/A (public header)` in `N/A (public header)`.
-  *Declares the opaque `remixapi_TextureHandle_T*` handle type for the texture upload API.*
+- **Block** at `remixapi_TextureHandle` / `remixapi_InstanceHandle` typedefs (file scope) — ~2 LOC, planned target `N/A (public header)` in `N/A (public header)`.
+  *Declares opaque handle types for texture uploads and caller-owned retained instances. A retained handle encodes the non-zero stable identity supplied at creation.*
+
+- **Block** at `PFN_remixapi_CreateRetainedInstance` / `PFN_remixapi_UpdateRetainedInstance` / `PFN_remixapi_DestroyRetainedInstance` typedefs (file scope) — ~15 LOC, planned target `N/A (public header)` in `N/A (public header)`.
+  *Declares explicit create/update/destroy operations for external instances whose lifetime is independent of per-frame `DrawInstance` traffic.*
 
 - **Block** at `REMIXAPI_INSTANCE_CATEGORY_BIT_*` enum (file scope) — ~16 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Bit values match upstream NVIDIA exactly (reverted 2026-06-27 from an earlier fork build that shifted `IGNORE_ALPHA_CHANNEL` to bit 8 to mirror the internal `InstanceCategories` order). The C↔internal mapping in `toRtCategories()` is by-name, so the public bit values are free to match upstream and now do. No remaining fork delta — the enum now matches upstream exactly. (The misleadingly-named `LEGACY_EMISSIVE` alias of bit 24 / `SMOOTH_NORMALS` was removed 2026-06-28: its name implied emissive behavior but it routed to `SmoothNormals`, so callers got a silent wrong-category result; removing it converts that into a compile error.)*
@@ -135,8 +141,8 @@ check will enforce it if discipline slips.
 - **Block** at `PFN_remixapi_SetGameValue` typedef (file scope) — ~14 LOC (including the contract doc block), planned target `N/A (public header)` in `N/A (public header)`.
   *Declares the function-pointer type for the plugin-injected game-state write API introduced in workstream 10. The entrypoint stores a single string/string pair under a caller-chosen key in a fork-owned thread-safe map; graph components `GameValueReadBool` / `GameValueReadNumber` read those values by name. The contract doc block above the typedef describes key/value semantics, validation, and lifetime (store survives `Shutdown` / re-init).*
 
-- **Block** at `remixapi_Interface` vtable additions (struct fields) — ~15 LOC spread across the vtable struct, planned target `N/A (public header)` in `N/A (public header)`.
-  *Appends new function-pointer slots to `remixapi_Interface`: `AddTextureHash`, `RemoveTextureHash`, `CreateTexture`, `DestroyTexture`, `dxvk_GetTextureHash`, `CreateMeshBatched`, `GetUIState`/`SetUIState`, `DrawScreenOverlay`, `RegisterCallbacks`, `AutoInstancePersistentLights`, `UpdateLightDefinition`, `CreateLightBatched`, `dxvk_GetSharedD3D11TextureHandle`, `SetGameValue`. 2026-06-27: the upstream `SetCameraMediumMaterial` slot was moved out of the middle of the struct (it had been inherited between `SetupCamera` and `DrawInstance`) to immediately after `Present`, mirroring upstream's canonical tail layout (upstream `2bac8874`); fork slots remain appended after it. Size-neutral move — the `sizeof` sentinel is unchanged. An append-at-end warning comment was restored above the struct.*
+- **Block** at `remixapi_Interface` vtable additions (struct fields) — ~18 LOC spread across the vtable struct, planned target `N/A (public header)` in `N/A (public header)`.
+  *Appends fork function-pointer slots to `remixapi_Interface`, including the v0.1001.0 retained-instance create/update/destroy slots at the tail. The x64 interface is 352 bytes. 2026-06-27: the upstream `SetCameraMediumMaterial` slot was moved out of the middle of the struct to immediately after `Present`, mirroring upstream's canonical tail layout; fork slots remain append-only after it.*
 
 ---
 
@@ -670,6 +676,12 @@ initializer list and can't be lifted into a separate TU.
 - **Hook** at `remixapi_Shutdown` (callback + frame-state clear) → `fork_hooks::shutdownCallbacks` in `rtx_fork_api_entry.cpp` (migrated 2026-04-18, migration #7c).
   *One-liner call replacing the 4-line null/false reset. Clears `s_beginCallback`, `s_endCallback`, `s_presentCallback`, and `s_inFrame`.*
 
+- **Inline tweak** at `(anonymous namespace)` (`s_retainedInstanceMeshes` plus retained entry points) — ~100 LOC. Not migrated because validation, pending-mesh flushing, and device/CS ordering use the API translation unit's existing state.
+  *Tracks retained handle → mesh ownership on the API thread, rejects zero/duplicate/unknown identities, flushes batched mesh definitions before create/update, and schedules create/update/destroy mutations onto SceneManager's CS-thread registry.*
+
+- **Inline tweak** at `remixapi_DestroyMesh` / `remixapi_Shutdown` — ~20 LOC.
+  *Erases retained ownership records before mesh teardown, clears retained/pending API state at shutdown, and relies on SceneManager's owner teardown to drop retained draw states before device resources are released.*
+
 - **Hook** at `remixapi_Present` (screen overlay flush — inner namespace path) → `fork_hooks::presentScreenOverlayFlush` in `rtx_fork_api_entry.cpp` (migrated 2026-04-18, migration #7b).
   *One-liner call to the fork-owned flush hook. State (PendingScreenOverlay + s_pendingScreenOverlay) was unified in the same migration.*
 
@@ -726,11 +738,11 @@ initializer list and can't be lifted into a separate TU.
 - **Inline tweak** at `(anonymous namespace)` `remixapi_SetGameValue` — ~15 LOC. Not migrated (fork-owned store + direct inline body fits the surrounding `remixapi_SetConfigVariable` pattern; no anonymous-namespace state to share with other TUs).
   *Implements the plugin-injected game-state write API introduced in workstream 10. Validates args, constructs `std::string` copies of the incoming C strings, and forwards to `dxvk::fork_game_state::GameStateStore::get().set(key, value)`. Does not take `s_mutex` — the store owns its own lock, and funnelling high-frequency plugin writes through the API-wide mutex has no benefit.*
 
-- **Block** at `extern "C"` vtable init block (fork-added anonymous-namespace slots) — ~11 LOC inline assignment block in `remixapi_InitializeLibrary`. Not fully hookable: the anonymous-namespace function pointers have internal linkage and cannot be named from another TU. Tracked here per the fridge-list invariant. The three extern-C-linked fork slots (RegisterCallbacks, AutoInstancePersistentLights, UpdateLightDefinition) are assigned via `fork_hooks::remixApiVtableInit` (migrated 2026-04-18, migration #7c).
-  *Registers all fork-added API functions into the `remixapi_Interface` vtable. The inline block assigns the anonymous-namespace slots (including `SetGameValue` added in workstream 10); the hook fills the three externally-linked ones.*
+- **Block** at `extern "C"` vtable init block (fork-added anonymous-namespace slots) — inline assignment block in `remixapi_InitializeLibrary`. Not fully hookable: anonymous-namespace function pointers have internal linkage and cannot be named from another TU. Tracked here per the fridge-list invariant.
+  *Registers all fork-added API functions into `remixapi_Interface`, including the retained create/update/destroy slots appended for ABI v0.1001.0; externally-linked fork slots continue through `fork_hooks::remixApiVtableInit`.*
 
 - **Inline tweak** at `extern "C"` vtable size static_assert — 1 LOC. Not migrated (fridge-listed).
-  *The `static_assert(sizeof(interf) == 288, ...)` sentinel is the final value in the chain (208 → 240 → 272 → 280 → 288 across five workstreams). Retained inline in `remixapi_InitializeLibrary` as a size sentinel.*
+  *The retained-instance ABI extends the x64 interface sentinel to `static_assert(sizeof(interf) == 352, ...)`.*
 
 ---
 
@@ -782,7 +794,7 @@ initializer list and can't be lifted into a separate TU.
 ## src/dxvk/rtx_render/rtx_scene_manager.cpp
 
 **Pre-refactor footprint:** +73 / -2 LOC (migrated 2026-04-18)
-**Post-refactor footprint:** 4 hook call sites + 1 `#include "rtx_fork_hooks.h"`
+**Post-refactor footprint:** 4 hook call sites + retained-instance lifecycle inline tweaks + 1 `#include "rtx_fork_hooks.h"`
 
 - **Hook** at `SceneManager::submitExternalDraw` (before submesh loop) → `fork_hooks::externalDrawMeshReplacement` in `rtx_fork_submit.cpp`
   *Checks for USD mesh/light replacements keyed on the API mesh handle hash; call site handles the early-exit + `drawReplacements` dispatch since those are private SceneManager methods.*
@@ -796,11 +808,17 @@ initializer list and can't be lifted into a separate TU.
 - **Hook** at `SceneManager::submitExternalDraw` (after particle setup, before `processDrawCallState`) → `fork_hooks::externalDrawObjectPicking` in `rtx_fork_submit.cpp`
   *Stores per-draw texture hash metadata in `m_drawCallMeta` when object picking is active. Access to the private `m_drawCallMeta` member is granted via a `friend` declaration — see the `rtx_scene_manager.h` entry below.*
 
+- **Inline tweak** at `SceneManager::prepareSceneData` and retained lifecycle methods — ~50 LOC.
+  *Replays renderer-owned `ExternalDrawState` entries through the existing `submitExternalDraw()` path before generic scene GC/TLAS preparation. Create/update/destroy mutate only the CS-thread registry; updates and destroys retire the affected external-mesh spatial bucket before the remaining retained placements replay.*
+
+- **Inline tweak** at `SceneManager::destroyExternalMesh` / `SceneManager::onDestroy` — ~15 LOC.
+  *Removes retained entries that reference a mesh before destroying external mesh storage, and clears the retained registry during owner teardown before device resources are released.*
+
 ---
 
 ## src/dxvk/rtx_render/rtx_scene_manager.h
 
-**Post-refactor fork footprint:** forward decl + `friend` declaration (added 2026-04-18)
+**Post-refactor fork footprint:** forward decl + `friend` declaration + retained-instance registry declarations
 
 **Category:** index-only
 
@@ -809,6 +827,9 @@ initializer list and can't be lifted into a separate TU.
 
 - **Inline tweak** at `SceneManager` class body (top of class, before `public:`) — 5-line `friend` declaration granting `fork_hooks::externalDrawObjectPicking` access to `m_drawCallMeta`.
   *Canonical pattern for hooks that must read/write private upstream state — one inline tweak per such hook, tracked here.*
+
+- **Inline tweak** at `SceneManager` public/private declarations — ~12 LOC.
+  *Declares create/update/destroy retained mutations, private pre-GC replay, and the handle-keyed `ExternalDrawState` registry. Registry state is renderer-owned and independent of transient API draw traffic.*
 
 ---
 

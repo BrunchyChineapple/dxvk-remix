@@ -156,6 +156,10 @@ namespace {
   std::vector<PendingDomeUpdate>  s_pendingDomeUpdates;
   std::vector<remixapi_LightHandle> s_pendingLightDestroys;
   std::vector<PendingMeshCreate>    s_pendingMeshCreates;
+  // API-thread ownership index. Converted draw state itself lives in
+  // SceneManager on the CS thread; this map validates duplicate/unknown handles
+  // and tracks mesh dependencies for ordered teardown.
+  std::unordered_map<remixapi_InstanceHandle, remixapi_MeshHandle> s_retainedInstanceMeshes;
   // Track handles that were updated or created this frame to prevent re-adding after deletion in the same frame
   std::unordered_set<remixapi_LightHandle> s_handlesDeletedThisFrame;
   // Sticky: set once any external (C-API) light is registered. Used to gate the
@@ -1341,7 +1345,21 @@ namespace {
     if (!remixDevice) {
       return REMIXAPI_ERROR_CODE_REMIX_DEVICE_WAS_NOT_REGISTERED;
     }
+    if (!handle) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+
     std::lock_guard lock { s_mutex };
+    // Remove API ownership records before scheduling mesh teardown. The
+    // SceneManager performs the matching retained-instance erases on the same
+    // CS command before destroying external mesh storage.
+    for (auto entry = s_retainedInstanceMeshes.begin(); entry != s_retainedInstanceMeshes.end();) {
+      if (entry->second == handle) {
+        entry = s_retainedInstanceMeshes.erase(entry);
+      } else {
+        ++entry;
+      }
+    }
     remixDevice->EmitCs([cHandle = handle](dxvk::DxvkContext* ctx) {
       ctx->getCommonObjects()->getSceneManager().destroyExternalMesh(cHandle);
     });
@@ -1433,6 +1451,96 @@ namespace {
         ctx->commitExternalGeometryToRT(std::move(cRtDrawState));
       });
     }
+    return REMIXAPI_ERROR_CODE_SUCCESS;
+  }
+
+  remixapi_ErrorCode REMIXAPI_CALL remixapi_CreateRetainedInstance(
+      uint64_t identity,
+      const remixapi_InstanceInfo* info,
+      remixapi_InstanceHandle* out_handle) {
+    dxvk::D3D9DeviceEx* remixDevice = tryAsDxvk();
+    if (!remixDevice) {
+      return REMIXAPI_ERROR_CODE_REMIX_DEVICE_WAS_NOT_REGISTERED;
+    }
+    if (!out_handle || !info || info->sType != REMIXAPI_STRUCT_TYPE_INSTANCE_INFO ||
+        !info->mesh || identity == 0) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+
+    static_assert(sizeof(remixapi_InstanceHandle) == sizeof(identity));
+    auto handle = reinterpret_cast<remixapi_InstanceHandle>(identity);
+    auto drawState = convert::toRtDrawState(*info);
+
+    // Materialize any batched mesh definitions before the retained definition
+    // reaches the CS thread, preserving create-mesh -> create-instance order.
+    flushPendingMeshes(remixDevice);
+
+    std::lock_guard lock { s_mutex };
+    if (s_retainedInstanceMeshes.find(handle) != s_retainedInstanceMeshes.end()) {
+      return REMIXAPI_ERROR_CODE_ALREADY_EXISTS;
+    }
+    s_retainedInstanceMeshes.emplace(handle, info->mesh);
+
+    auto devLock = remixDevice->LockDevice();
+    remixDevice->EmitCs([handle, drawState = std::move(drawState)](dxvk::DxvkContext* ctx) mutable {
+      ctx->getCommonObjects()->getSceneManager().createRetainedExternalInstance(
+          handle, std::move(drawState));
+    });
+
+    *out_handle = handle;
+    return REMIXAPI_ERROR_CODE_SUCCESS;
+  }
+
+  remixapi_ErrorCode REMIXAPI_CALL remixapi_UpdateRetainedInstance(
+      remixapi_InstanceHandle handle,
+      const remixapi_InstanceInfo* info) {
+    dxvk::D3D9DeviceEx* remixDevice = tryAsDxvk();
+    if (!remixDevice) {
+      return REMIXAPI_ERROR_CODE_REMIX_DEVICE_WAS_NOT_REGISTERED;
+    }
+    if (!handle || !info || info->sType != REMIXAPI_STRUCT_TYPE_INSTANCE_INFO || !info->mesh) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+
+    auto drawState = convert::toRtDrawState(*info);
+    flushPendingMeshes(remixDevice);
+
+    std::lock_guard lock { s_mutex };
+    auto entry = s_retainedInstanceMeshes.find(handle);
+    if (entry == s_retainedInstanceMeshes.end()) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+    entry->second = info->mesh;
+
+    auto devLock = remixDevice->LockDevice();
+    remixDevice->EmitCs([handle, drawState = std::move(drawState)](dxvk::DxvkContext* ctx) mutable {
+      ctx->getCommonObjects()->getSceneManager().updateRetainedExternalInstance(
+          handle, std::move(drawState));
+    });
+    return REMIXAPI_ERROR_CODE_SUCCESS;
+  }
+
+  remixapi_ErrorCode REMIXAPI_CALL remixapi_DestroyRetainedInstance(
+      remixapi_InstanceHandle handle) {
+    dxvk::D3D9DeviceEx* remixDevice = tryAsDxvk();
+    if (!remixDevice) {
+      return REMIXAPI_ERROR_CODE_REMIX_DEVICE_WAS_NOT_REGISTERED;
+    }
+    if (!handle) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+
+    std::lock_guard lock { s_mutex };
+    auto entry = s_retainedInstanceMeshes.find(handle);
+    if (entry == s_retainedInstanceMeshes.end()) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+    s_retainedInstanceMeshes.erase(entry);
+
+    auto devLock = remixDevice->LockDevice();
+    remixDevice->EmitCs([handle](dxvk::DxvkContext* ctx) {
+      ctx->getCommonObjects()->getSceneManager().destroyRetainedExternalInstance(handle);
+    });
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
 
@@ -2058,6 +2166,11 @@ namespace {
   remixapi_ErrorCode REMIXAPI_CALL remixapi_Shutdown(void) {
     // Clear fork-owned callback state (lives in rtx_fork_api_entry.cpp)
     dxvk::fork_hooks::shutdownCallbacks();
+    {
+      std::lock_guard lock { s_mutex };
+      s_retainedInstanceMeshes.clear();
+      s_pendingMeshCreates.clear();
+    }
     if (s_dxvkDevice) {
       while (true) {
         ULONG left = s_dxvkDevice->Release();
@@ -2580,10 +2693,13 @@ extern "C"
       interf.GetVramStats = remixapi_GetVramStats;
       interf.RequestTextureVramFree = remixapi_RequestTextureVramFree;
       interf.GetGameValue = remixapi_GetGameValue;
+      interf.CreateRetainedInstance = remixapi_CreateRetainedInstance;
+      interf.UpdateRetainedInstance = remixapi_UpdateRetainedInstance;
+      interf.DestroyRetainedInstance = remixapi_DestroyRetainedInstance;
       // Fork-added vtable slots (extern-C exported; delegated to fork hook)
       dxvk::fork_hooks::remixApiVtableInit(interf);
     }
-    static_assert(sizeof(interf) == 328, "Add/remove function registration");
+    static_assert(sizeof(interf) == 352, "Add/remove function registration");
 
     *out_result = interf;
     return REMIXAPI_ERROR_CODE_SUCCESS;

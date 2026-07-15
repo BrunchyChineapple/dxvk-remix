@@ -194,6 +194,9 @@ namespace remix {
     Result< void >                    DestroyMesh(remixapi_MeshHandle handle);
     Result< void >                    SetupCamera(const remixapi_CameraInfo& info);
     Result< void >                    DrawInstance(const remixapi_InstanceInfo& info);
+    Result< remixapi_InstanceHandle > CreateRetainedInstance(uint64_t identity, const remixapi_InstanceInfo& info);
+    Result< void >                    UpdateRetainedInstance(remixapi_InstanceHandle handle, const remixapi_InstanceInfo& info);
+    Result< void >                    DestroyRetainedInstance(remixapi_InstanceHandle handle);
     Result< remixapi_LightHandle >    CreateLight(const remixapi_LightInfo& info);
     Result< remixapi_LightHandle >    CreateLightBatched(const remixapi_LightInfo& info);
     Result< void >                    DestroyLight(remixapi_LightHandle handle);
@@ -248,7 +251,7 @@ namespace remix {
         return status;
       }
 
-      static_assert(sizeof(remixapi_Interface) == 328,
+      static_assert(sizeof(remixapi_Interface) == 352,
                     "Change version, update C++ wrapper when adding new functions");
 
       remix::Interface interfaceInCpp = {};
@@ -905,6 +908,27 @@ namespace remix {
 
   inline Result< void > Interface::DrawInstance(const remixapi_InstanceInfo& info) {
     return m_CInterface.DrawInstance(&info);
+  }
+
+  inline Result< remixapi_InstanceHandle > Interface::CreateRetainedInstance(
+      uint64_t identity,
+      const remixapi_InstanceInfo& info) {
+    remixapi_InstanceHandle handle = nullptr;
+    remixapi_ErrorCode status = m_CInterface.CreateRetainedInstance(identity, &info, &handle);
+    if (status != REMIXAPI_ERROR_CODE_SUCCESS) {
+      return status;
+    }
+    return handle;
+  }
+
+  inline Result< void > Interface::UpdateRetainedInstance(
+      remixapi_InstanceHandle handle,
+      const remixapi_InstanceInfo& info) {
+    return m_CInterface.UpdateRetainedInstance(handle, &info);
+  }
+
+  inline Result< void > Interface::DestroyRetainedInstance(remixapi_InstanceHandle handle) {
+    return m_CInterface.DestroyRetainedInstance(handle);
   }
 
 

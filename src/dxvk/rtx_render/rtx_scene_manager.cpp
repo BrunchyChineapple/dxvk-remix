@@ -329,6 +329,9 @@ namespace dxvk {
   }
 
   void SceneManager::onDestroy() {
+    // Drop API-owned draw state before the external meshes and device resources
+    // referenced by those entries are released.
+    m_retainedExternalInstances.clear();
     m_accelManager.onDestroy();
     if (m_opacityMicromapManager) {
       m_opacityMicromapManager->onDestroy();
@@ -2034,6 +2037,11 @@ namespace dxvk {
   void SceneManager::prepareSceneData(Rc<RtxContext> ctx, DxvkBarrierSet& execBarriers) {
     ScopedGpuProfileZone(ctx, "Build Scene");
 
+    // Explicitly retained external geometry owns its lifetime independently of
+    // API draw traffic. Refresh it before GC so every committed placement is
+    // present in the frame's instance tables and TLAS.
+    submitRetainedExternalInstances(ctx);
+
   #ifdef REMIX_DEVELOPMENT
     if (m_device->getCurrentFrameId() == RtxOptions::dumpAllInstancesOnFrame()) {
       // Print all RtInstances for debugging
@@ -2371,6 +2379,48 @@ namespace dxvk {
 
   static_assert(std::is_same_v< decltype(RtSurface::objectPickingValue), ObjectPickingValue>);
 
+  void SceneManager::createRetainedExternalInstance(
+      remixapi_InstanceHandle handle,
+      std::unique_ptr<ExternalDrawState> state) {
+    if (!handle || !state) {
+      return;
+    }
+    m_retainedExternalInstances.insert_or_assign(handle, std::move(*state));
+  }
+
+  void SceneManager::updateRetainedExternalInstance(
+      remixapi_InstanceHandle handle,
+      std::unique_ptr<ExternalDrawState> state) {
+    auto entry = m_retainedExternalInstances.find(handle);
+    if (entry == m_retainedExternalInstances.end() || !state) {
+      return;
+    }
+
+    // External-draw identity includes transform and material state. Retire the
+    // old mesh bucket immediately so an update cannot leave the former
+    // placement alive for the generic retention window. Other retained
+    // placements sharing this mesh are replayed below in the same frame.
+    m_drawCallTracker.removeReplacementInstancesWithSpatialMapHash(
+        spatialMapHashForExternalDrawMesh(entry->second.mesh));
+    entry->second = std::move(*state);
+  }
+
+  void SceneManager::destroyRetainedExternalInstance(remixapi_InstanceHandle handle) {
+    auto entry = m_retainedExternalInstances.find(handle);
+    if (entry == m_retainedExternalInstances.end()) {
+      return;
+    }
+    m_drawCallTracker.removeReplacementInstancesWithSpatialMapHash(
+        spatialMapHashForExternalDrawMesh(entry->second.mesh));
+    m_retainedExternalInstances.erase(entry);
+  }
+
+  void SceneManager::submitRetainedExternalInstances(const Rc<DxvkContext>& ctx) {
+    for (const auto& entry : m_retainedExternalInstances) {
+      submitExternalDraw(ctx, std::make_unique<ExternalDrawState>(entry.second));
+    }
+  }
+
   void SceneManager::submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> pstate) {
     ScopedCpuProfileZone();
 
@@ -2579,6 +2629,15 @@ namespace dxvk {
 
   void SceneManager::destroyExternalMesh(remixapi_MeshHandle handle) {
     if (handle) {
+      // Retained placements must release their instance ownership before the
+      // mesh storage they reference is removed.
+      for (auto entry = m_retainedExternalInstances.begin(); entry != m_retainedExternalInstances.end();) {
+        if (entry->second.mesh == handle) {
+          entry = m_retainedExternalInstances.erase(entry);
+        } else {
+          ++entry;
+        }
+      }
       m_drawCallTracker.removeReplacementInstancesWithSpatialMapHash(
           spatialMapHashForExternalDrawMesh(handle));
       m_pReplacer->destroyExternalMesh(handle);
