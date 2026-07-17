@@ -22,6 +22,9 @@
 #include "util_bridgecommand.h"
 #include "log/log_strings.h"
 
+#include <mutex>
+#include <unordered_set>
+
 namespace {
   DWORD get_default_timeout() {
     const auto timeout = GlobalOptions::getCommandTimeout();
@@ -83,6 +86,10 @@ DECL_BRIDGE_FUNC(void, syncDataQueue, size_t expectedMemUsage, bool posResetOnLa
     *s_pWriterChannel->serverResetPosRequired = false;
     Logger::info("DataQueue overwrite condition resolved");
   };
+
+  if (totalSize > 0 && expectedClientDataPos >= totalSize - 1) {
+    s_curBatchDataWrapped = true;
+  }
 
   if (expectedClientDataPos >= totalSize) {
     if (*s_pWriterChannel->serverResetPosRequired == true) {
@@ -152,7 +159,10 @@ DECL_BRIDGE_FUNC(bridge_util::Result, ensureQueueEmpty) {
 
 DECL_BRIDGE_FUNC(bridge_util::Result, waitForCommand, const Commands::D3D9Command& command,
                                                       DWORD overrideTimeoutMS,
-                                                      std::atomic<bool>* const pbEarlyOutSignal, bool verifyUID, UID uidToVerify) {
+                                                      std::atomic<bool>* const pbEarlyOutSignal,
+                                                      bool verifyUID,
+                                                      UID uidToVerify,
+                                                      bool allowResponseTimeout) {
   ZoneScoped;
   DWORD peekTimeoutMS = overrideTimeoutMS > 0 ? overrideTimeoutMS : GlobalOptions::getCommandTimeout();
   uint32_t maxAttempts = GlobalOptions::getCommandRetries();
@@ -166,6 +176,11 @@ DECL_BRIDGE_FUNC(bridge_util::Result, waitForCommand, const Commands::D3D9Comman
     Logger::info("waitForCommand Command:" + toString(command) + (verifyUID ? " UID: " + std::to_string(uidToVerify) : ""));
   }
 #endif
+  static std::mutex abandonedResponseMutex;
+  static std::unordered_set<UID> abandonedResponseUids;
+
+  const bool isUidResponse = command == Commands::Bridge_Response && verifyUID;
+  const bool requiresDefinitiveResult = isUidResponse && !allowResponseTimeout;
   bool infiniteRetries = false;
   bool bEarlyOut = false;
   uint32_t attemptNum = 0;
@@ -177,30 +192,77 @@ DECL_BRIDGE_FUNC(bridge_util::Result, waitForCommand, const Commands::D3D9Comman
 
     case Result::Success:
     {
-      bool uidVerified = true;
-      if (verifyUID) {
-        if (header.pHandle != uidToVerify) {
-          uidVerified = false;
+      const bool commandMatches =
+        command == Commands::Bridge_Any || header.command == command;
+      const bool uidMatches = !verifyUID || header.pHandle == uidToVerify;
+      if (commandMatches && uidMatches) {
+        if (isUidResponse) {
+          std::lock_guard<std::mutex> lock(abandonedResponseMutex);
+          abandonedResponseUids.erase(uidToVerify);
         }
-      }
-      if ((command == Commands::Bridge_Any) || (header.command == command) && uidVerified) {
 #ifdef ENABLE_WAIT_FOR_COMMAND_TRACE
         if (command != Commands::Bridge_Any) {
           Logger::trace(format_string("...success, command %s received!", Commands::toString(command).c_str()));
         }
 #endif
         return Result::Success;
-      } else {
-#if defined(_DEBUG) || defined(DEBUGOPT)
-        if (GlobalOptions::getLogAllCommands()) {
-          Logger::info(format_string("Different instance of a command detected: %s with UID: %s , Expected: %s with UID: %s. ", Commands::toString(header.command).c_str(), std::to_string(header.pHandle).c_str(),
-                                     Commands::toString(command).c_str(), std::to_string(uidToVerify).c_str()));
-        }
-#endif
-        // If we see the incorrect command, we want to give the other side of
-        // the bridge ample time to make an attempt to process it first
-        Sleep(peekTimeoutMS);
       }
+
+      bool discardedAbandonedResponse = false;
+      if (isUidResponse &&
+          header.command == Commands::Bridge_Response &&
+          header.pHandle != uidToVerify) {
+        std::lock_guard<std::mutex> lock(abandonedResponseMutex);
+        const auto abandoned = abandonedResponseUids.find(header.pHandle);
+        if (abandoned != abandonedResponseUids.end()) {
+          Result currentResult;
+          const Header currentHeader =
+            getReaderChannel().commands->peek(currentResult, 1);
+          if (currentResult == Result::Success &&
+              currentHeader.command == header.command &&
+              currentHeader.pHandle == header.pHandle) {
+            const bool mustWrap = Commands::DidDataQueueWrap(currentHeader.flags);
+            bool wrapped = false;
+            size_t wordsRemaining = getReaderChannel().data->get_total_size();
+            while ((get_data_pos() != currentHeader.dataOffset ||
+                    (mustWrap && !wrapped)) &&
+                   wordsRemaining > 0) {
+              --wordsRemaining;
+              const size_t previousPos = get_data_pos();
+              get_data();
+              wrapped |= get_data_pos() < previousPos;
+            }
+
+            if (get_data_pos() != currentHeader.dataOffset ||
+                (mustWrap && !wrapped)) {
+              Logger::err("Failed to discard an abandoned bridge response payload.");
+              return Result::Failure;
+            }
+
+            pop_front();
+            abandonedResponseUids.erase(abandoned);
+            discardedAbandonedResponse = true;
+            Logger::debug(format_string(
+              "Discarded late response for abandoned UID %u.",
+              currentHeader.pHandle));
+          }
+        }
+      }
+
+      if (discardedAbandonedResponse) {
+        attemptNum = 0;
+        continue;
+      }
+
+#if defined(_DEBUG) || defined(DEBUGOPT)
+      if (GlobalOptions::getLogAllCommands()) {
+        Logger::info(format_string("Different instance of a command detected: %s with UID: %s , Expected: %s with UID: %s. ", Commands::toString(header.command).c_str(), std::to_string(header.pHandle).c_str(),
+                                   Commands::toString(command).c_str(), std::to_string(uidToVerify).c_str()));
+      }
+#endif
+      // If we see the incorrect command, we want to give the other side of
+      // the bridge ample time to make an attempt to process it first.
+      Sleep(peekTimeoutMS);
       break;
     }
 
@@ -243,9 +305,14 @@ DECL_BRIDGE_FUNC(bridge_util::Result, waitForCommand, const Commands::D3D9Comman
     if (pbEarlyOutSignal) {
       bEarlyOut = pbEarlyOutSignal->load();
     }
-  } while (!bEarlyOut &&
-            attemptNum++ <= maxAttempts &&
+  } while ((!bEarlyOut || requiresDefinitiveResult) &&
+            (requiresDefinitiveResult || attemptNum++ <= maxAttempts) &&
             gbBridgeRunning);
+
+  if (isUidResponse && allowResponseTimeout && gbBridgeRunning) {
+    std::lock_guard<std::mutex> lock(abandonedResponseMutex);
+    abandonedResponseUids.insert(uidToVerify);
+  }
   return Result::Timeout;
 }
 
@@ -289,6 +356,7 @@ DECL_COMMAND_FUNC(,Command,const Commands::D3D9Command command,
   }
   s_pWriterChannel->pbCmdInProgress->store(true);
   s_curBatchStartPos = (int32_t) s_pWriterChannel->data->get_pos();
+  s_curBatchDataWrapped = false;
   s_cmdCounter++;
   if (gbBridgeRunning) {
     // Send command id as part of data queue for everycommand from client to server
@@ -315,10 +383,13 @@ DECL_COMMAND_FUNC(,~Command) {
     s_curBatchStartPos = -1;
     uint32_t numRetries = 0;
     Result result;
+    const auto commandFlags = static_cast<Commands::Flags>(
+      m_commandFlags |
+      (s_curBatchDataWrapped ? Commands::DataQueueWrapped : 0));
     // We check if the bridge is enabled for each loop iteration in case it
     // was disabled externally by the server process exit callback.
     do {
-      result = s_pWriterChannel->commands->push({ m_command, m_commandFlags, (uint32_t) s_pWriterChannel->data->get_pos(), m_handle });
+      result = s_pWriterChannel->commands->push({ m_command, commandFlags, (uint32_t) s_pWriterChannel->data->get_pos(), m_handle });
 #if defined(_DEBUG) || defined(DEBUGOPT)
       if (GlobalOptions::getLogAllCommands()) {
         Logger::info("Pushed: " + toString(m_command));

@@ -151,6 +151,106 @@ static void deserializeFromQueue(SerializableT& serializableT) {
   dslz.deserialize();
   serializableT = std::move(dslz);
 }
+
+struct InstanceExtensions {
+  serialize::InstanceInfoObjectPicking objectPicking;
+  serialize::InstanceInfoBlend blend;
+  serialize::InstanceInfoTransforms boneXforms;
+  serialize::InstanceInfoParticleSystem particleSystem;
+  serialize::InstanceInfoGpuInstancing gpuInstancing;
+};
+
+static std::unordered_map<uint32_t, uint32_t> s_retainedInstanceMeshes;
+
+static uint32_t deserializeInstanceInfo(
+    serialize::InstanceInfo& instInfo,
+    InstanceExtensions& exts) {
+  memset(&exts, 0, sizeof(exts));
+
+  const auto instSType = remixapi::pullSType();
+  assert(instSType == REMIXAPI_STRUCT_TYPE_INSTANCE_INFO);
+  deserializeFromQueue(instInfo);
+
+  MeshHandle meshHandle(instInfo.mesh);
+  const bool meshValid = meshHandle.isValid();
+  if (meshValid) {
+    instInfo.mesh = meshHandle;
+  } else {
+    Logger::err("[RemixApi_InstanceInfo] Invalid mesh handle!");
+  }
+
+  instInfo.pNext = nullptr;
+  bool bInstExtExists = remixapi::pullBool();
+  auto* pInfoProto = &getInfoProto(instInfo);
+  while (bInstExtExists) {
+    const auto extSType = remixapi::pullSType();
+    switch (extSType) {
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_OBJECT_PICKING_EXT:
+      {
+        assert(!exts.objectPicking.pNext);
+        deserializeFromQueue(exts.objectPicking);
+        exts.objectPicking.sType = extSType;
+        pInfoProto->pNext = &exts.objectPicking;
+        pInfoProto = &getInfoProto(exts.objectPicking);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BLEND_EXT:
+      {
+        assert(!exts.blend.pNext);
+        deserializeFromQueue(exts.blend);
+        pInfoProto->pNext = &exts.blend;
+        pInfoProto = &getInfoProto(exts.blend);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BONE_TRANSFORMS_EXT:
+      {
+        assert(!exts.boneXforms.pNext);
+        deserializeFromQueue(exts.boneXforms);
+        pInfoProto->pNext = &exts.boneXforms;
+        pInfoProto = &getInfoProto(exts.boneXforms);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_PARTICLE_SYSTEM_EXT:
+      {
+        assert(!exts.particleSystem.pNext);
+        deserializeFromQueue(exts.particleSystem);
+        pInfoProto->pNext = &exts.particleSystem;
+        pInfoProto = &getInfoProto(exts.particleSystem);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_GPU_INSTANCING_EXT:
+      {
+        assert(!exts.gpuInstancing.pNext);
+        deserializeFromQueue(exts.gpuInstancing);
+        pInfoProto->pNext = &exts.gpuInstancing;
+        pInfoProto = &getInfoProto(exts.gpuInstancing);
+        break;
+      }
+      default:
+      {
+        Logger::warn("[RemixApi_InstanceInfo] Unknown sType. Skipping.");
+        break;
+      }
+    }
+    bInstExtExists = remixapi::pullBool();
+  }
+  return meshValid ? meshHandle.uid : 0;
+}
+
+static void purgeRetainedInstancesForMesh(const uint32_t bridgeMeshHandle) {
+  // Native mesh destruction cascades to its retained instances; mirror that
+  // ownership teardown so no bridge alias can target a destroyed instance.
+  for (auto instance = s_retainedInstanceMeshes.begin();
+       instance != s_retainedInstanceMeshes.end();) {
+    if (instance->second != bridgeMeshHandle) {
+      ++instance;
+      continue;
+    }
+
+    InstanceHandle::s_handleMap.erase(instance->first);
+    instance = s_retainedInstanceMeshes.erase(instance);
+  }
+}
 }
 
 static inline void safeDestroy(IUnknown* obj, uint32_t x86handle) {
@@ -2953,8 +3053,13 @@ void ProcessDeviceCommandQueue() {
       {
         MeshHandle handle(DeviceBridge::get_data());
         if(handle.isValid()) {
-          remixapi::g_remix.DestroyMesh(handle);
-          handle.invalidate();
+          const auto result = remixapi::g_remix.DestroyMesh(handle);
+          if (result == REMIXAPI_ERROR_CODE_SUCCESS) {
+            purgeRetainedInstancesForMesh(handle.uid);
+            handle.invalidate();
+          } else {
+            Logger::err("[RemixApi_DestroyMesh] Remix API call failed!");
+          }
         } else {
           Logger::err("[RemixApi_DestroyMesh] Invalid mesh handle!" );
         }
@@ -2963,81 +3068,91 @@ void ProcessDeviceCommandQueue() {
 
       case RemixApi_DrawInstance:
       {
-        // Rather than allocate deserialized struct extensions on the heap,
-        // allocate them locally, since we know only one instance will be
-        // supported at a time
-        struct InstanceExtensions {
-          serialize::InstanceInfoObjectPicking objectPicking;
-          serialize::InstanceInfoBlend blend;
-          serialize::InstanceInfoTransforms boneXforms;
-          serialize::InstanceInfoParticleSystem particleSystem;
-        } exts;
-        memset(&exts, 0, sizeof(InstanceExtensions));
-
-        const auto instSType = remixapi::pullSType();
-        assert(instSType == REMIXAPI_STRUCT_TYPE_INSTANCE_INFO);
+        InstanceExtensions exts;
         serialize::InstanceInfo instInfo;
-        deserializeFromQueue(instInfo);
-        
-        MeshHandle meshHandle(instInfo.mesh);
-        if(meshHandle.isValid()) {
-          instInfo.mesh = meshHandle;
-        } else {
-          Logger::err("[RemixApi_DrawInstance] Invalid mesh handle!" );
-        }
-
-        instInfo.pNext = nullptr;
-        
-        bool bInstExtExists = remixapi::pullBool();
-        auto* pInfoProto = &getInfoProto(instInfo);
-        while(bInstExtExists) {
-          const auto extSType = remixapi::pullSType();
-          switch (extSType) {
-            case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_OBJECT_PICKING_EXT:
-            {
-              assert(!exts.objectPicking.pNext);
-              deserializeFromQueue(exts.objectPicking);
-              pInfoProto->pNext = &(exts.objectPicking);
-              pInfoProto = &getInfoProto(exts.objectPicking);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BLEND_EXT:
-            {
-              assert(!exts.blend.pNext);
-              deserializeFromQueue(exts.blend);
-              pInfoProto->pNext = &(exts.blend);
-              pInfoProto = &getInfoProto(exts.blend);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BONE_TRANSFORMS_EXT:
-            {
-              assert(!exts.boneXforms.pNext);
-              deserializeFromQueue(exts.boneXforms);
-              pInfoProto->pNext = &(exts.boneXforms);
-              pInfoProto = &getInfoProto(exts.boneXforms);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_PARTICLE_SYSTEM_EXT:
-            {
-              assert(!exts.particleSystem.pNext);
-              deserializeFromQueue(exts.particleSystem);
-              pInfoProto->pNext = &(exts.particleSystem);
-              pInfoProto = &getInfoProto(exts.particleSystem);
-              break;
-            }
-            default:
-            {
-              Logger::warn("[RemixApi_DrawInstance] Unknown sType. Skipping.");
-              break;
-            }
-          }
-          bInstExtExists = remixapi::pullBool();
-        }
-
-        if(remixapi::g_remix.DrawInstance(&instInfo) != REMIXAPI_ERROR_CODE_SUCCESS) {
+        if (deserializeInstanceInfo(instInfo, exts) != 0 &&
+            remixapi::g_remix.DrawInstance(&instInfo) != REMIXAPI_ERROR_CODE_SUCCESS) {
           Logger::err("[RemixApi_DrawInstance] Remix API call failed!");
         }
+        break;
+      }
 
+      case RemixApi_CreateRetainedInstance:
+      {
+        const uint64_t identityLo = DeviceBridge::get_data();
+        const uint64_t identityHi = DeviceBridge::get_data();
+        const uint64_t identity = identityLo | (identityHi << 32);
+
+        InstanceExtensions exts;
+        serialize::InstanceInfo instInfo;
+        const uint32_t bridgeMeshHandle = deserializeInstanceInfo(instInfo, exts);
+        const uint32_t bridgeHandle = DeviceBridge::get_data();
+
+        remixapi_ErrorCode result = REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+        remixapi_InstanceHandle remixApiHandle = nullptr;
+        if (bridgeMeshHandle != 0 && identity != 0 && bridgeHandle != 0) {
+          if (!remixapi::g_remix.CreateRetainedInstance) {
+            result = REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+          } else {
+            result = remixapi::g_remix.CreateRetainedInstance(
+              identity, &instInfo, &remixApiHandle);
+            if (result == REMIXAPI_ERROR_CODE_SUCCESS) {
+              if (remixApiHandle) {
+                InstanceHandle handle(bridgeHandle, remixApiHandle);
+                s_retainedInstanceMeshes[bridgeHandle] = bridgeMeshHandle;
+              } else {
+                result = REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+              }
+            }
+          }
+        }
+
+        ServerMessage response(Commands::Bridge_Response, currentUID);
+        response.send_data(static_cast<uint32_t>(result));
+        break;
+      }
+
+      case RemixApi_UpdateRetainedInstance:
+      {
+        InstanceExtensions exts;
+        serialize::InstanceInfo instInfo;
+        const uint32_t bridgeMeshHandle = deserializeInstanceInfo(instInfo, exts);
+        const uint32_t bridgeHandle = DeviceBridge::get_data();
+        const auto instance = InstanceHandle::s_handleMap.find(bridgeHandle);
+
+        remixapi_ErrorCode result = REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+        if (bridgeMeshHandle != 0 && instance != InstanceHandle::s_handleMap.end()) {
+          result = remixapi::g_remix.UpdateRetainedInstance
+            ? remixapi::g_remix.UpdateRetainedInstance(instance->second, &instInfo)
+            : REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+          if (result == REMIXAPI_ERROR_CODE_SUCCESS) {
+            s_retainedInstanceMeshes[bridgeHandle] = bridgeMeshHandle;
+          }
+        }
+
+        ServerMessage response(Commands::Bridge_Response, currentUID);
+        response.send_data(static_cast<uint32_t>(result));
+        break;
+      }
+
+      case RemixApi_DestroyRetainedInstance:
+      {
+        const uint32_t bridgeHandle = DeviceBridge::get_data();
+        const auto instance = InstanceHandle::s_handleMap.find(bridgeHandle);
+
+        remixapi_ErrorCode result = REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+        if (instance != InstanceHandle::s_handleMap.end()) {
+          result = remixapi::g_remix.DestroyRetainedInstance
+            ? remixapi::g_remix.DestroyRetainedInstance(instance->second)
+            : REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+          if (result == REMIXAPI_ERROR_CODE_SUCCESS) {
+            s_retainedInstanceMeshes.erase(bridgeHandle);
+            InstanceHandle::s_handleMap.erase(instance);
+          }
+        }
+
+        ServerMessage response(Commands::Bridge_Response, currentUID);
+        response.send_data(static_cast<uint32_t>(result));
         break;
       }
 

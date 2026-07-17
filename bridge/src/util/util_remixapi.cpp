@@ -36,6 +36,7 @@ namespace util {
 MaterialHandle::HandleMapT MaterialHandle::s_handleMap;
 MeshHandle::HandleMapT MeshHandle::s_handleMap;
 LightHandle::HandleMapT LightHandle::s_handleMap;
+InstanceHandle::HandleMapT InstanceHandle::s_handleMap;
 #endif
 }
 }
@@ -249,7 +250,7 @@ void deserialize(void*& deserializeFrom, remixapi_HardcodedVertex& deserializeTo
 }
 
 // remixapi_*Handles
-// convenience macro to define same specializations for all three types
+// convenience macro to define same specializations for all bridged handle types
 #define REMIX_API_HANDLE_FUNCS(HandleT) \
 template<> \
 static inline constexpr uint32_t sizeOf<HandleT>() { \
@@ -267,6 +268,7 @@ void deserialize(void*& deserializeFrom, HandleT& deserializeTo) { \
 REMIX_API_HANDLE_FUNCS(remixapi_MaterialHandle)
 REMIX_API_HANDLE_FUNCS(remixapi_MeshHandle)
 REMIX_API_HANDLE_FUNCS(remixapi_LightHandle)
+REMIX_API_HANDLE_FUNCS(remixapi_InstanceHandle)
 
 
 //////////////////

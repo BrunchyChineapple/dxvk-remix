@@ -202,7 +202,10 @@ public:
   // into an unrecoverable state otherwise.
   static bridge_util::Result waitForCommand(const Commands::D3D9Command& command = Commands::Bridge_Any,
                                             DWORD overrideTimeoutMS = 0,
-                                            std::atomic<bool>* const pbEarlyOutSignal = nullptr, bool verifyUID = false, UID uidToVerify=0);
+                                            std::atomic<bool>* const pbEarlyOutSignal = nullptr,
+                                            bool verifyUID = false,
+                                            UID uidToVerify = 0,
+                                            bool allowResponseTimeout = true);
   // Waits for a command to appear in the command queue. Upon success the command will be removed from the queue
   // and discarded.
   static bridge_util::Result waitForCommandAndDiscard(const Commands::D3D9Command& command = Commands::Bridge_Any,
@@ -340,6 +343,7 @@ private:
   static inline WriterChannel* s_pWriterChannel = nullptr;
   static inline ReaderChannel* s_pReaderChannel = nullptr;
   static inline int32_t        s_curBatchStartPos = -1;
+  static inline bool           s_curBatchDataWrapped = false;
   static inline size_t         s_cmdCounter = 0;
   // UIDs are assigned to commands to tag the responses from server to allow misorder responses to be handled correctly 
   static inline UID s_cmdUID = 0;

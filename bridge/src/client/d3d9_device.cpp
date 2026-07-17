@@ -437,12 +437,14 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::Reset(D3DPRESENT_PARAMETERS* pPresent
     // Perform an WAIT_FOR_OPTIONAL_SERVER_RESPONSE but don't return since we still have work to do.
     if (GlobalOptions::getSendAllServerResponses()) {
       const uint32_t timeoutMs = GlobalOptions::getAckTimeout();
-      if (Result::Success != DeviceBridge::waitForCommand(Commands::Bridge_Response, timeoutMs, nullptr, true, currentUID)) {
+      if (Result::Success == DeviceBridge::waitForCommand(Commands::Bridge_Response, timeoutMs, nullptr, true, currentUID)) {
+        res = (HRESULT) DeviceBridge::get_data();
+        DeviceBridge::pop_front();
+      } else {
         Logger::err("Direct3DDevice9Ex_LSS::Reset() failed with : no response from server.");
+        res = D3DERR_DEVICELOST;
       }
-      res = (HRESULT) DeviceBridge::get_data();
-      DeviceBridge::pop_front();
-      }
+    }
 
     // Reset swapchain and link server backbuffer/depth buffer after the server reset its swapchain, or we will link to the old backbuffer/depth resources
     initImplicitObjects(presParam);
@@ -3451,11 +3453,13 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::ResetEx(D3DPRESENT_PARAMETERS* pPrese
     // Perform an WAIT_FOR_OPTIONAL_SERVER_RESPONSE but don't return since we still have work to do.
     if (GlobalOptions::getSendAllServerResponses()) {
       const uint32_t timeoutMs = GlobalOptions::getAckTimeout();
-      if (Result::Success != DeviceBridge::waitForCommand(Commands::Bridge_Response, timeoutMs, nullptr, true, currentUID)) {
+      if (Result::Success == DeviceBridge::waitForCommand(Commands::Bridge_Response, timeoutMs, nullptr, true, currentUID)) {
+        res = (HRESULT) DeviceBridge::get_data();
+        DeviceBridge::pop_front();
+      } else {
         Logger::err("Direct3DDevice9Ex_LSS::ResetEx() failed with : no response from server.");
+        res = D3DERR_DEVICELOST;
       }
-      res = (HRESULT) DeviceBridge::get_data();
-      DeviceBridge::pop_front();
     }
 
     // Reset swapchain and link server backbuffer/depth buffer after the server reset its swapchain, or we will link to the old backbuffer/depth resources

@@ -453,6 +453,11 @@ namespace Commands {
     IDirect3DQuery9_GetDataSize,
     IDirect3DQuery9_Issue,
     IDirect3DQuery9_GetData,
+
+    // Appended to preserve every established bridge command value.
+    RemixApi_CreateRetainedInstance,
+    RemixApi_UpdateRetainedInstance,
+    RemixApi_DestroyRetainedInstance,
   };
 
   // Maybe this will be useful...  
@@ -507,6 +512,9 @@ namespace Commands {
     case RemixApi_AutoInstancePersistentLights: return "RemixApi_AutoInstancePersistentLights";
     case RemixApi_GetVramStats: return "RemixApi_GetVramStats";
     case RemixApi_RequestVramCompaction: return "RemixApi_RequestVramCompaction";
+    case RemixApi_CreateRetainedInstance: return "RemixApi_CreateRetainedInstance";
+    case RemixApi_UpdateRetainedInstance: return "RemixApi_UpdateRetainedInstance";
+    case RemixApi_DestroyRetainedInstance: return "RemixApi_DestroyRetainedInstance";
 
     case Bridge_SharedHeap_AddSeg: return "SharedHeap_AddSeg";
     case Bridge_SharedHeap_Alloc: return "SharedHeap_Alloc";
@@ -892,6 +900,7 @@ namespace Commands {
                                     // and only allocation id(s) is transferred on the queue
     DataIsReserved   = 0b00000010,  // Data was already reserved in data queue and only its
                                     // offset is transferred
+    DataQueueWrapped = 0b00000100,  // This command's data crossed the circular-buffer boundary
   };
 
   inline bool IsDataInSharedHeap(Flags flags) {
@@ -900,6 +909,10 @@ namespace Commands {
 
   inline bool IsDataReserved(Flags flags) {
     return (flags & FlagBits::DataIsReserved) != 0;
+  }
+
+  inline bool DidDataQueueWrap(Flags flags) {
+    return (flags & FlagBits::DataQueueWrapped) != 0;
   }
 }
 

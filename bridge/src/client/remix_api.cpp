@@ -242,60 +242,174 @@ remixapi_ErrorCode REMIXAPI_CALL remixapi_DestroyMesh(remixapi_MeshHandle handle
   return REMIXAPI_ERROR_CODE_SUCCESS;
 }
 
-remixapi_ErrorCode REMIXAPI_CALL remixapi_DrawInstance(const remixapi_InstanceInfo* info) {
-  ASSERT_REMIXAPI_PFN_TYPE(remixapi_DrawInstance);
-  {
-    ClientMessage c(Commands::RemixApi_DrawInstance);
+static void sendInstanceInfo(ClientMessage& c, const remixapi_InstanceInfo* info) {
+  serializeAndSend<serialize::InstanceInfo>(c, *info);
 
-    serializeAndSend<serialize::InstanceInfo>(c, *info);
-
-    // For each valid pNext, we will send a true-valued bool to indicate that
-    // server must read another extension. If it reads false, it knows that it
-    // is done reading.
-    // send(c, Bool::True); -> CONTINUE
-    // send(c, Bool::False); -> STOP
-    const void* infoItr = info;
-    while (auto* const pNext = getPNext(infoItr)) {
-      infoItr = pNext;
-      switch (getSType(pNext)) {
-        case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_OBJECT_PICKING_EXT:
-        {
-          auto* pObjectPicking = static_cast<const remixapi_InstanceInfoObjectPickingEXT* const>(infoItr);
-          send(c, Bool::True);
-          serializeAndSend<serialize::InstanceInfoObjectPicking>(c, *pObjectPicking);
-          break;
-        }
-        case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BLEND_EXT:
-        {
-          auto* pBlend = static_cast<const remixapi_InstanceInfoBlendEXT* const>(infoItr);
-          send(c, Bool::True);
-          serializeAndSend<serialize::InstanceInfoBlend>(c, *pBlend);
-          break;
-        }
-        case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BONE_TRANSFORMS_EXT:
-        {
-          auto* pXforms = static_cast<const remixapi_InstanceInfoBoneTransformsEXT* const>(infoItr);
-          send(c, Bool::True);
-          serializeAndSend<serialize::InstanceInfoTransforms>(c, *pXforms);
-          break;
-        }
-        case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_PARTICLE_SYSTEM_EXT:
-        {
-          auto* pParticle = static_cast<const remixapi_InstanceInfoParticleSystemEXT* const>(infoItr);
-          send(c, Bool::True);
-          serializeAndSend<serialize::InstanceInfoParticleSystem>(c, *pParticle);
-          break;
-        }
-        default:
-        {
-          Logger::warn("[remixapi_DrawInstance] Unknown sType. Skipping.");
-          break;
-        }
+  const void* infoItr = info;
+  while (auto* const pNext = getPNext(infoItr)) {
+    infoItr = pNext;
+    switch (getSType(pNext)) {
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_OBJECT_PICKING_EXT:
+      {
+        auto* pObjectPicking = static_cast<const remixapi_InstanceInfoObjectPickingEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::InstanceInfoObjectPicking>(c, *pObjectPicking);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BLEND_EXT:
+      {
+        auto* pBlend = static_cast<const remixapi_InstanceInfoBlendEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::InstanceInfoBlend>(c, *pBlend);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BONE_TRANSFORMS_EXT:
+      {
+        auto* pXforms = static_cast<const remixapi_InstanceInfoBoneTransformsEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::InstanceInfoTransforms>(c, *pXforms);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_PARTICLE_SYSTEM_EXT:
+      {
+        auto* pParticle = static_cast<const remixapi_InstanceInfoParticleSystemEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::InstanceInfoParticleSystem>(c, *pParticle);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_GPU_INSTANCING_EXT:
+      {
+        auto* pGpuInstancing = static_cast<const remixapi_InstanceInfoGpuInstancingEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::InstanceInfoGpuInstancing>(c, *pGpuInstancing);
+        break;
+      }
+      default:
+      {
+        Logger::warn("[RemixApi_InstanceInfo] Unknown sType. Skipping.");
+        break;
       }
     }
-    send(c, Bool::False);
+  }
+  send(c, Bool::False);
+}
+
+static bool waitForRetainedMutationResponse(const char* functionName, UID uid) {
+  const auto waitResult = DeviceBridge::waitForCommand(
+    Commands::Bridge_Response,
+    GlobalOptions::getAckTimeout(),
+    nullptr,
+    true,
+    uid,
+    false);
+  if (waitResult == Result::Success) {
+    return true;
+  }
+
+  Logger::err(std::string(functionName) +
+    " failed: bridge stopped before returning a definitive result.");
+  return false;
+}
+
+remixapi_ErrorCode REMIXAPI_CALL remixapi_DrawInstance(const remixapi_InstanceInfo* info) {
+  ASSERT_REMIXAPI_PFN_TYPE(remixapi_DrawInstance);
+  if (!info || info->sType != REMIXAPI_STRUCT_TYPE_INSTANCE_INFO || !info->mesh) {
+    return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+  }
+  {
+    ClientMessage c(Commands::RemixApi_DrawInstance);
+    sendInstanceInfo(c, info);
   }
   return REMIXAPI_ERROR_CODE_SUCCESS;
+}
+
+remixapi_ErrorCode REMIXAPI_CALL remixapi_CreateRetainedInstance(
+  uint64_t identity,
+  const remixapi_InstanceInfo* info,
+  remixapi_InstanceHandle* out_handle) {
+  ASSERT_REMIXAPI_PFN_TYPE(remixapi_CreateRetainedInstance);
+  if (identity == 0 || !info || info->sType != REMIXAPI_STRUCT_TYPE_INSTANCE_INFO ||
+      !info->mesh || !out_handle) {
+    return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+  }
+
+  *out_handle = nullptr;
+  InstanceHandle newHandle;
+  UID currentUID = 0;
+  {
+    ClientMessage c(Commands::RemixApi_CreateRetainedInstance);
+    currentUID = c.get_uid();
+    c.send_data(static_cast<uint32_t>(identity & 0xFFFFFFFFull));
+    c.send_data(static_cast<uint32_t>(identity >> 32));
+    sendInstanceInfo(c, info);
+    sendHandle(c, newHandle);
+  }
+  if (!waitForRetainedMutationResponse("remixapi_CreateRetainedInstance", currentUID)) {
+    return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+  }
+
+  const auto result = static_cast<remixapi_ErrorCode>(DeviceBridge::get_data());
+  DeviceBridge::pop_front();
+  if (result == REMIXAPI_ERROR_CODE_SUCCESS) {
+    *out_handle = newHandle;
+  }
+  return result;
+}
+
+remixapi_ErrorCode REMIXAPI_CALL remixapi_UpdateRetainedInstance(
+  remixapi_InstanceHandle handle,
+  const remixapi_InstanceInfo* info) {
+  ASSERT_REMIXAPI_PFN_TYPE(remixapi_UpdateRetainedInstance);
+  if (!handle || !info || info->sType != REMIXAPI_STRUCT_TYPE_INSTANCE_INFO || !info->mesh) {
+    return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+  }
+
+  InstanceHandle instanceHandle(handle);
+  if (!instanceHandle.isValid()) {
+    return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+  }
+
+  UID currentUID = 0;
+  {
+    ClientMessage c(Commands::RemixApi_UpdateRetainedInstance);
+    currentUID = c.get_uid();
+    sendInstanceInfo(c, info);
+    sendHandle(c, instanceHandle);
+  }
+  if (!waitForRetainedMutationResponse("remixapi_UpdateRetainedInstance", currentUID)) {
+    return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+  }
+
+  const auto result = static_cast<remixapi_ErrorCode>(DeviceBridge::get_data());
+  DeviceBridge::pop_front();
+  return result;
+}
+
+remixapi_ErrorCode REMIXAPI_CALL remixapi_DestroyRetainedInstance(
+  remixapi_InstanceHandle handle) {
+  ASSERT_REMIXAPI_PFN_TYPE(remixapi_DestroyRetainedInstance);
+  if (!handle) {
+    return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+  }
+
+  InstanceHandle instanceHandle(handle);
+  if (!instanceHandle.isValid()) {
+    return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+  }
+
+  UID currentUID = 0;
+  {
+    ClientMessage c(Commands::RemixApi_DestroyRetainedInstance);
+    currentUID = c.get_uid();
+    sendHandle(c, instanceHandle);
+  }
+  if (!waitForRetainedMutationResponse("remixapi_DestroyRetainedInstance", currentUID)) {
+    return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+  }
+
+  const auto result = static_cast<remixapi_ErrorCode>(DeviceBridge::get_data());
+  DeviceBridge::pop_front();
+  return result;
 }
 
 remixapi_ErrorCode REMIXAPI_CALL remixapi_SetupCamera(const remixapi_CameraInfo* info) {
@@ -659,6 +773,9 @@ extern "C" {
       interf.DestroyMesh = remixapi_DestroyMesh;
       interf.SetupCamera = remixapi_SetupCamera;
       interf.DrawInstance = remixapi_DrawInstance;
+      interf.CreateRetainedInstance = remixapi_CreateRetainedInstance;
+      interf.UpdateRetainedInstance = remixapi_UpdateRetainedInstance;
+      interf.DestroyRetainedInstance = remixapi_DestroyRetainedInstance;
       interf.CreateLight = remixapi_CreateLight;
       interf.CreateLightBatched = remixapi_CreateLightBatched;
       interf.DestroyLight = remixapi_DestroyLight;
