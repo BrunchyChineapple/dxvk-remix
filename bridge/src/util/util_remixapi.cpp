@@ -499,6 +499,7 @@ void serialize(const remixapi_MeshInfoSurfaceTriangles& surface, void*& pSeriali
 }
 
 void MeshInfo::_deserialize(void*& pDeserialize) {
+  pNext = nullptr;
   bridge_util::deserialize(pDeserialize, sType);
   bridge_util::deserialize(pDeserialize, hash);
   bridge_util::deserialize(pDeserialize, surfaces_count);
@@ -542,6 +543,21 @@ void MeshInfo::_dtor() {
       delete skinning.blendIndices_values;
     }
   }
+}
+
+#define MeshInfoReplacementVars sType, \
+                                replacementHash
+uint32_t MeshInfoReplacement::_calcSize() const {
+  return fold_helper::calcSize(MeshInfoReplacementVars);
+}
+void MeshInfoReplacement::_serialize(void*& pSerialize) const {
+  fold_helper::serialize(pSerialize, MeshInfoReplacementVars);
+}
+void MeshInfoReplacement::_deserialize(void*& pDeserialize) {
+  pNext = nullptr;
+  fold_helper::deserialize(pDeserialize, MeshInfoReplacementVars);
+}
+void MeshInfoReplacement::_dtor() {
 }
 
 //////////////////

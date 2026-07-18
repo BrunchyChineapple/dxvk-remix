@@ -122,6 +122,7 @@ template<> constexpr auto ToRemixApiStructEnum< remixapi_LightInfoDomeEXT       
 template<> constexpr auto ToRemixApiStructEnum< remixapi_LightInfoUSDEXT                > = REMIXAPI_STRUCT_TYPE_LIGHT_INFO_USD_EXT;
 template<> constexpr auto ToRemixApiStructEnum< remixapi_LightInfo                      > = REMIXAPI_STRUCT_TYPE_LIGHT_INFO;
 template<> constexpr auto ToRemixApiStructEnum< remixapi_MeshInfo                       > = REMIXAPI_STRUCT_TYPE_MESH_INFO;
+template<> constexpr auto ToRemixApiStructEnum< remixapi_MeshInfoReplacementEXT         > = REMIXAPI_STRUCT_TYPE_MESH_INFO_REPLACEMENT_EXT;
 template<> constexpr auto ToRemixApiStructEnum< remixapi_InstanceInfo                   > = REMIXAPI_STRUCT_TYPE_INSTANCE_INFO;
 template<> constexpr auto ToRemixApiStructEnum< remixapi_InstanceInfoBoneTransformsEXT  > = REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BONE_TRANSFORMS_EXT;
 template<> constexpr auto ToRemixApiStructEnum< remixapi_InstanceInfoBlendEXT           > = REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BLEND_EXT;
@@ -144,6 +145,7 @@ using MaterialInfoPortal = bridge_util::Serializable<remixapi_MaterialInfoPortal
 
 // MeshInfo
 using MeshInfo = bridge_util::Serializable<remixapi_MeshInfo,false>;
+using MeshInfoReplacement = bridge_util::Serializable<remixapi_MeshInfoReplacementEXT,true>;
 
 // InstanceInfo
 using InstanceInfo = bridge_util::Serializable<remixapi_InstanceInfo,true>;

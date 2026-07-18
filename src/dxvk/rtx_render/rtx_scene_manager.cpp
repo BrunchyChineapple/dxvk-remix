@@ -2445,15 +2445,18 @@ namespace dxvk {
         std::make_shared<const std::vector<Matrix4>>(std::move(state.gpuInstancingTransforms));
     }
 
-    const XXH64_hash_t meshHash = reinterpret_cast<XXH64_hash_t>(state.mesh);
+    const XXH64_hash_t ownershipHash = reinterpret_cast<XXH64_hash_t>(state.mesh);
 
     // Fetch submeshes once — they drive both the replacement path (needs submeshes[0]
     // as geometry template) and the default iteration path.
     const std::vector<RasterGeometry>& submeshes = m_pReplacer->accessExternalMesh(state.mesh);
     if (submeshes.empty()) {
-      Logger::err(str::format("[RTX-Mesh] External mesh has no submeshes: 0x", std::hex, meshHash, std::dec));
+      Logger::err(str::format("[RTX-Mesh] External mesh has no submeshes: 0x", std::hex, ownershipHash, std::dec));
       return;
     }
+    const auto replacementHandle =
+      submeshes[0].externalMesh != nullptr ? submeshes[0].externalMesh : state.mesh;
+    const XXH64_hash_t meshHash = reinterpret_cast<XXH64_hash_t>(replacementHandle);
 
     // Persistence-tracking setup happens before the replacement-lookup early-out
     // so the same ReplacementInstance can be threaded through both paths —

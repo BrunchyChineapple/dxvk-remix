@@ -144,7 +144,7 @@ namespace {
   };
   struct PendingMeshCreate {
     remixapi_MeshHandle handle;
-    uint64_t hash;
+    XXH64_hash_t replacementHash;
     std::vector<OwnedSurface> surfaces;
   };
   // PendingScreenOverlay struct and s_pendingScreenOverlay optional were removed
@@ -186,6 +186,14 @@ namespace {
   template<typename T>
   size_t sizeInBytes(const T* values, size_t count) {
     return sizeof(T) * count;
+  }
+
+  XXH64_hash_t getMeshReplacementHash(const remixapi_MeshInfo& info) {
+    if (const auto* replacement =
+          pnext::find<remixapi_MeshInfoReplacementEXT>(&info)) {
+      return replacement->replacementHash;
+    }
+    return info.hash;
   }
 
 
@@ -1020,7 +1028,8 @@ namespace {
     }
     static_assert(sizeof(remixapi_MeshHandle) == sizeof(info->hash));
     auto handle = reinterpret_cast<remixapi_MeshHandle>(info->hash);
-    if (!handle) {
+    const XXH64_hash_t replacementHash = getMeshReplacementHash(*info);
+    if (!handle || replacementHash == 0) {
       return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
     }
 
@@ -1128,9 +1137,9 @@ namespace {
     }
     std::lock_guard lock { s_mutex };
 
-    remixDevice->EmitCs([cHandle = handle, cSurfaces = std::move(allocatedSurfaces)](dxvk::DxvkContext* ctx) mutable {
+    remixDevice->EmitCs([cHandle = handle, cReplacementHash = replacementHash, cSurfaces = std::move(allocatedSurfaces)](dxvk::DxvkContext* ctx) mutable {
       auto& assets = ctx->getCommonObjects()->getSceneManager().getAssetReplacer();
-      assets->registerExternalMesh(cHandle, std::move(cSurfaces));
+      assets->registerExternalMesh(cHandle, cReplacementHash, std::move(cSurfaces));
     });
 
     *out_handle = handle;
@@ -1251,7 +1260,8 @@ namespace {
     auto& assets = ctx->getCommonObjects()->getSceneManager().getAssetReplacer();
     for (auto& mesh : meshCreates) {
       auto allocatedSurfaces = buildExternalMeshSurfacesFromOwned(mesh.surfaces);
-      assets->registerExternalMesh(mesh.handle, std::move(allocatedSurfaces));
+      assets->registerExternalMesh(
+        mesh.handle, mesh.replacementHash, std::move(allocatedSurfaces));
     }
   }
 
@@ -1288,13 +1298,14 @@ namespace {
     }
     static_assert(sizeof(remixapi_MeshHandle) == sizeof(info->hash));
     auto handle = reinterpret_cast<remixapi_MeshHandle>(info->hash);
-    if (!handle) {
+    const XXH64_hash_t replacementHash = getMeshReplacementHash(*info);
+    if (!handle || replacementHash == 0) {
       return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
     }
 
     PendingMeshCreate pending;
     pending.handle = handle;
-    pending.hash = info->hash;
+    pending.replacementHash = replacementHash;
     pending.surfaces.reserve(info->surfaces_count);
 
     for (uint32_t i = 0; i < info->surfaces_count; i++) {

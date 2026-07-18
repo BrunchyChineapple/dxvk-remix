@@ -162,6 +162,28 @@ remixapi_ErrorCode REMIXAPI_CALL remixapi_DestroyMaterial(remixapi_MaterialHandl
   return REMIXAPI_ERROR_CODE_SUCCESS;
 }
 
+static void sendMeshInfoExtensions(ClientMessage& c, const remixapi_MeshInfo* info) {
+  const void* infoItr = info;
+  while (auto* const pNext = getPNext(infoItr)) {
+    infoItr = pNext;
+    switch (getSType(infoItr)) {
+      case REMIXAPI_STRUCT_TYPE_MESH_INFO_REPLACEMENT_EXT:
+      {
+        auto* pReplacement = static_cast<const remixapi_MeshInfoReplacementEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::MeshInfoReplacement>(c, *pReplacement);
+        break;
+      }
+      default:
+      {
+        Logger::warn("[RemixApi_MeshInfo] Unknown sType. Skipping.");
+        break;
+      }
+    }
+  }
+  send(c, Bool::False);
+}
+
 remixapi_ErrorCode REMIXAPI_CALL remixapi_CreateMesh(
   const remixapi_MeshInfo* info,
   remixapi_MeshHandle*     out_handle) {
@@ -172,19 +194,8 @@ remixapi_ErrorCode REMIXAPI_CALL remixapi_CreateMesh(
   MeshHandle newHandle;
   {
     ClientMessage c(Commands::RemixApi_CreateMesh);
-    
     serializeAndSend<serialize::MeshInfo>(c, *info);
-
-    const void* infoItr = info;
-    while (auto* const pNext = getPNext(infoItr)) {
-      switch (getSType(pNext)) {
-        default:
-        {
-          Logger::warn("[remixapi_CreateMesh] Unknown sType. Skipping.");
-          break;
-        }
-      }
-    }
+    sendMeshInfoExtensions(c, info);
     sendHandle(c, newHandle);
   }
   
@@ -200,27 +211,11 @@ remixapi_ErrorCode REMIXAPI_CALL remixapi_CreateMeshBatched(
   ASSERT_REMIXAPI_PFN_TYPE(remixapi_CreateMeshBatched);
   assert(info->sType == REMIXAPI_STRUCT_TYPE_MESH_INFO);
 
-  // Batched mesh creation marshals the identical remixapi_MeshInfo payload as
-  // remixapi_CreateMesh; the only difference is the server-side verb it invokes
-  // (the renderer defers DXVK buffer allocation / asset-replacer registration to
-  // the next render-thread flush). Mirror CreateMesh exactly so the wire format
-  // stays in lockstep with the existing, proven path.
   MeshHandle newHandle;
   {
     ClientMessage c(Commands::RemixApi_CreateMeshBatched);
-
     serializeAndSend<serialize::MeshInfo>(c, *info);
-
-    const void* infoItr = info;
-    while (auto* const pNext = getPNext(infoItr)) {
-      switch (getSType(pNext)) {
-        default:
-        {
-          Logger::warn("[remixapi_CreateMeshBatched] Unknown sType. Skipping.");
-          break;
-        }
-      }
-    }
+    sendMeshInfoExtensions(c, info);
     sendHandle(c, newHandle);
   }
 

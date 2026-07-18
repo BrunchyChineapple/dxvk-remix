@@ -321,7 +321,10 @@ namespace dxvk {
     [[nodiscard]] const MaterialData* accessExternalMaterial(remixapi_MaterialHandle handle) const;
     void destroyExternalMaterial(remixapi_MaterialHandle handle);
 
-    void registerExternalMesh(remixapi_MeshHandle handle, std::vector<RasterGeometry>&& submeshes);
+    void registerExternalMesh(
+      remixapi_MeshHandle handle,
+      XXH64_hash_t replacementHash,
+      std::vector<RasterGeometry>&& submeshes);
     [[nodiscard]] const std::vector<RasterGeometry>& accessExternalMesh(remixapi_MeshHandle handle) const;
     void destroyExternalMesh(remixapi_MeshHandle handle);
 

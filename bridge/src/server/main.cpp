@@ -2990,12 +2990,40 @@ void ProcessDeviceCommandQueue() {
       }
 
       case RemixApi_CreateMesh:
+      case RemixApi_CreateMeshBatched:
       {
+        const bool batched = rpcHeader.command == RemixApi_CreateMeshBatched;
+
+        serialize::MeshInfoReplacement replacementExt;
+        memset(&replacementExt, 0, sizeof(replacementExt));
+
         const auto meshInfoSType = remixapi::pullSType();
         assert(meshInfoSType == REMIXAPI_STRUCT_TYPE_MESH_INFO);
         serialize::MeshInfo meshInfo;
         deserializeFromQueue(meshInfo);
         meshInfo.pNext = nullptr;
+
+        bool bMeshExtExists = remixapi::pullBool();
+        auto* pInfoProto = &getInfoProto(meshInfo);
+        while (bMeshExtExists) {
+          const auto extSType = remixapi::pullSType();
+          switch (extSType) {
+            case REMIXAPI_STRUCT_TYPE_MESH_INFO_REPLACEMENT_EXT:
+            {
+              assert(!replacementExt.pNext);
+              deserializeFromQueue(replacementExt);
+              pInfoProto->pNext = &replacementExt;
+              pInfoProto = &getInfoProto(replacementExt);
+              break;
+            }
+            default:
+            {
+              Logger::warn("[RemixApi_MeshInfo] Unknown sType. Skipping.");
+              break;
+            }
+          }
+          bMeshExtExists = remixapi::pullBool();
+        }
         
         for(size_t iSurf = 0; iSurf < meshInfo.surfaces_count; ++iSurf) {
           // If we don't const_cast, we'd have to copy the entire
@@ -3009,41 +3037,15 @@ void ProcessDeviceCommandQueue() {
 
         auto bridgeHandle = DeviceBridge::get_data();
         remixapi_MeshHandle remixApiHandle = nullptr;
-        if(remixapi::g_remix.CreateMesh(&meshInfo, &remixApiHandle) == REMIXAPI_ERROR_CODE_SUCCESS) {
+        const auto result = batched
+          ? remixapi::g_remix.CreateMeshBatched(&meshInfo, &remixApiHandle)
+          : remixapi::g_remix.CreateMesh(&meshInfo, &remixApiHandle);
+        if(result == REMIXAPI_ERROR_CODE_SUCCESS) {
           MeshHandle handle(bridgeHandle, remixApiHandle);
         } else {
-          Logger::err("[RemixApi_CreateMesh] Remix API call failed!");
-        }
-
-        break;
-      }
-
-      case RemixApi_CreateMeshBatched:
-      {
-        // Identical wire format to RemixApi_CreateMesh (same serialize::MeshInfo
-        // payload + per-surface material-handle remap); only the renderer verb
-        // differs. The renderer's CreateMeshBatched deep-copies meshInfo and
-        // defers DXVK buffer allocation / asset-replacer registration to the next
-        // render-thread flush, so the deserialized info and its owned surface
-        // arrays only need to outlive this call exactly as for CreateMesh.
-        const auto meshInfoSType = remixapi::pullSType();
-        assert(meshInfoSType == REMIXAPI_STRUCT_TYPE_MESH_INFO);
-        serialize::MeshInfo meshInfo;
-        deserializeFromQueue(meshInfo);
-        meshInfo.pNext = nullptr;
-
-        for(size_t iSurf = 0; iSurf < meshInfo.surfaces_count; ++iSurf) {
-          auto& surf = const_cast<remixapi_MeshInfoSurfaceTriangles&>(meshInfo.surfaces_values[iSurf]);
-          MaterialHandle matHandle(surf.material);
-          surf.material = matHandle;
-        }
-
-        auto bridgeHandle = DeviceBridge::get_data();
-        remixapi_MeshHandle remixApiHandle = nullptr;
-        if(remixapi::g_remix.CreateMeshBatched(&meshInfo, &remixApiHandle) == REMIXAPI_ERROR_CODE_SUCCESS) {
-          MeshHandle handle(bridgeHandle, remixApiHandle);
-        } else {
-          Logger::err("[RemixApi_CreateMeshBatched] Remix API call failed!");
+          Logger::err(batched
+            ? "[RemixApi_CreateMeshBatched] Remix API call failed!"
+            : "[RemixApi_CreateMesh] Remix API call failed!");
         }
 
         break;

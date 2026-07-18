@@ -469,10 +469,8 @@ namespace dxvk {
     assert(pBlas != nullptr);
     const XXH64_hash_t matHash = rtInstance.getMaterialDataHash();
 
-    // For external (API-submitted) meshes, use the original API handle as the hash so
-    // captures and runtime replacement lookups agree on mesh identity. Falling back to
-    // the geometry-data hash for API meshes produces a different hash at capture-time
-    // than at runtime, breaking replacement parity.
+    // External meshes carry their canonical authored replacement identity in
+    // RasterGeometry::externalMesh, so captures and runtime lookup use the same hash.
     XXH64_hash_t meshHash = 0;
     if (pBlas->input.getGeometryData().externalMesh != nullptr) {
       meshHash = reinterpret_cast<XXH64_hash_t>(pBlas->input.getGeometryData().externalMesh);
