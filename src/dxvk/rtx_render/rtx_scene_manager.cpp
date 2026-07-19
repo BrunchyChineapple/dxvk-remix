@@ -2665,15 +2665,13 @@ namespace dxvk {
 
       RetainedExternalInstance& retained = retainedIter->second;
       const bool wasPerFrameSubmission = retained.requiresPerFrameSubmission;
-      const XXH64_hash_t identityHash = retained.state.computeExternalDrawIdentityHash();
-      submitExternalDraw(ctx, std::make_unique<ExternalDrawState>(retained.state));
-
       ReplacementInstance* replacementInstance =
-          m_drawCallTracker.findReplacementInstanceByIdentity(identityHash);
+          submitExternalDraw(ctx, std::make_unique<ExternalDrawState>(retained.state));
+
       if (replacementInstance != nullptr) {
         // Track rootless/ignored materializations too so update/destroy can retire
         // the exact owner record instead of leaving a GC-exempt orphan.
-        retained.materializedIdentity = identityHash;
+        retained.materializedIdentity = replacementInstance->identityHash;
         replacementInstance->isRetainedExternal = true;
         replacementInstance->dirtyFlags.clr(ReplacementInstance::kLookupDriftMask);
       } else {
@@ -2705,7 +2703,7 @@ namespace dxvk {
     }
   }
 
-  void SceneManager::submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> pstate) {
+  ReplacementInstance* SceneManager::submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> pstate) {
     ScopedCpuProfileZone();
 
     Rc<DxvkSampler> externalSampler = getOrCreateExternalSampler();
@@ -2738,7 +2736,7 @@ namespace dxvk {
     const std::vector<RasterGeometry>& submeshes = m_pReplacer->accessExternalMesh(state.mesh);
     if (submeshes.empty()) {
       Logger::err(str::format("[RTX-Mesh] External mesh has no submeshes: 0x", std::hex, ownershipHash, std::dec));
-      return;
+      return nullptr;
     }
     const auto replacementHandle =
       submeshes[0].externalMesh != nullptr ? submeshes[0].externalMesh : state.mesh;
@@ -2791,7 +2789,7 @@ namespace dxvk {
       replacementInstance->frameLastSeen = m_device->getCurrentFrameId();
       replacementInstance->categoryFlags = replacementDrawCall.getCategoryFlags().raw();
       replacementInstance->isSkinned = replacementDrawCall.getSkinningState().numBones > 0;
-      return;
+      return replacementInstance;
     }
 
     AxisAlignedBoundingBox geometryBBox;
@@ -2866,6 +2864,7 @@ namespace dxvk {
       replacementInstance->geometryBoundingBox = geometryBBox;
       replacementInstance->objectToWorld = xform;
     }
+    return replacementInstance;
   }
 
   void SceneManager::submitWorldAnchoredInstancers(Rc<DxvkContext> ctx) {

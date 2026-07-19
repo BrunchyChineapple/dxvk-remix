@@ -155,7 +155,7 @@ public:
   void onDestroy();
 
   void submitDrawState(Rc<DxvkContext> ctx, const DrawCallState& input, const MaterialData* overrideMaterialData);
-  void submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> state);
+  ReplacementInstance* submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> state);
 
   // Explicit-lifetime external instances are owned by the renderer and refreshed
   // before generic scene GC. All mutation methods run on the dxvk-cs thread.
