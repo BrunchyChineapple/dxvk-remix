@@ -466,6 +466,7 @@ namespace dxvk {
     }
 
     if (totalPrimitiveIDOffset > PRIMITIVE_INDEX_MAX_VALUE) {
+#ifdef REMIX_DEVELOPMENT
       auto logPrimitiveOverflow = [&]() {
         struct Contribution {
           uint64_t primitives = 0;
@@ -575,6 +576,13 @@ namespace dxvk {
       };
 
       ONCE(logPrimitiveOverflow());
+#else
+      ONCE(Logger::err(str::format(
+        "DxvkRaytrace: total primitive count (", totalPrimitiveIDOffset,
+        ") exceeds the maximum primitive index (", PRIMITIVE_INDEX_MAX_VALUE,
+        ") representable in ", PRIMITIVE_INDEX_BIT_COUNT, " bits. "
+        "Downstream systems (NEE cache, prefix-sum lookups) may produce incorrect results.")));
+#endif
     }
   }
 

@@ -2386,7 +2386,9 @@ namespace dxvk {
     if (!handle || !state) {
       return;
     }
-    m_retainedExternalInstances.insert_or_assign(handle, std::move(*state));
+    m_retainedExternalInstances.insert_or_assign(
+        handle,
+        RetainedExternalInstance { std::move(*state), std::nullopt });
   }
 
   void SceneManager::updateRetainedExternalInstance(
@@ -2400,10 +2402,11 @@ namespace dxvk {
     // External-draw identity includes transform and material state. Retire the
     // old mesh bucket immediately so an update cannot leave the former
     // placement alive for the generic retention window. Other retained
-    // placements sharing this mesh are replayed below in the same frame.
+    // placements sharing this mesh are rematerialized below in the same frame.
     m_drawCallTracker.removeReplacementInstancesWithSpatialMapHash(
-        spatialMapHashForExternalDrawMesh(entry->second.mesh));
-    entry->second = std::move(*state);
+        spatialMapHashForExternalDrawMesh(entry->second.state.mesh));
+    entry->second.state = std::move(*state);
+    entry->second.materializedIdentity.reset();
   }
 
   void SceneManager::destroyRetainedExternalInstance(remixapi_InstanceHandle handle) {
@@ -2412,13 +2415,138 @@ namespace dxvk {
       return;
     }
     m_drawCallTracker.removeReplacementInstancesWithSpatialMapHash(
-        spatialMapHashForExternalDrawMesh(entry->second.mesh));
+        spatialMapHashForExternalDrawMesh(entry->second.state.mesh));
     m_retainedExternalInstances.erase(entry);
   }
 
+  bool SceneManager::tryPreserveRetainedExternalInstance(
+      const RetainedExternalInstance& retained,
+      const std::unordered_set<const BlasEntry*>& blockedBlases) {
+    const bool objectPickingActive = m_device->getCommon()->getResources().getRaytracingOutput()
+        .m_primaryObjectPicking.isValid();
+    if (!retained.materializedIdentity.has_value() ||
+        !RtxOptions::enablePreservePath() ||
+        RtxOptionManager::isDrawcallTranslationInvalid() ||
+        retained.state.optionalParticleDesc.has_value() ||
+        objectPickingActive ||
+        m_device->getCommon()->getTextureManager().getTextureCacheGeneration() !=
+            m_textureCacheGenerationValidForPreserve) {
+      return false;
+    }
+
+    ReplacementInstance* replacementInstance =
+        m_drawCallTracker.findReplacementInstanceByIdentity(*retained.materializedIdentity);
+    if (replacementInstance == nullptr ||
+        replacementInstance->root.getUntyped() == nullptr ||
+        replacementInstance->prims.empty()) {
+      return false;
+    }
+
+    const std::vector<RasterGeometry>& submeshes =
+        m_pReplacer->accessExternalMesh(retained.state.mesh);
+    if (submeshes.empty()) {
+      return false;
+    }
+    const remixapi_MeshHandle replacementHandle =
+        submeshes[0].externalMesh != nullptr
+            ? submeshes[0].externalMesh
+            : retained.state.mesh;
+    const XXH64_hash_t meshHash =
+        reinterpret_cast<XXH64_hash_t>(replacementHandle);
+    const std::vector<AssetReplacement>* currentReplacements =
+        fork_hooks::externalDrawMeshReplacement(*m_pReplacer, meshHash);
+    if (replacementInstance->activeReplacements != currentReplacements) {
+      return false;
+    }
+
+    const uint32_t currentFrameId = m_device->getCurrentFrameId();
+    if (replacementInstance->frameLastSeen == currentFrameId) {
+      return true;
+    }
+    if (!replacementInstance->dirtyFlags.isClear()) {
+      return false;
+    }
+
+    bool hasMeshInstance = false;
+    for (const PrimInstance& prim : replacementInstance->prims) {
+      RtInstance* instance = prim.getInstance();
+      if (instance == nullptr) {
+        continue;
+      }
+
+      hasMeshInstance = true;
+      BlasEntry* pBlas = instance->getBlas();
+      if (pBlas == nullptr ||
+          instance->isMarkedForGC() ||
+          blockedBlases.find(pBlas) != blockedBlases.end() ||
+          instance->getMaterialType() == MaterialDataType::RayPortal ||
+          pBlas->input.getCategoryFlags().test(InstanceCategories::ParticleEmitter) ||
+          RtxOptions::shouldConvertToLight(pBlas->input.getMaterialData().getHash())) {
+        return false;
+      }
+    }
+    if (!hasMeshInstance) {
+      return false;
+    }
+
+    const RtCamera& rtCamera = m_cameraManager.getCamera(retained.state.cameraType);
+    for (PrimInstance& prim : replacementInstance->prims) {
+      RtInstance* instance = prim.getInstance();
+      if (instance == nullptr) {
+        continue;
+      }
+
+      DrawCallState& input = instance->getBlas()->input;
+      input.cameraType = retained.state.cameraType;
+      DrawCallTransforms& transforms = input.modifyTransformData();
+      transforms.worldToView = rtCamera.getWorldToViewf();
+      transforms.viewToProjection = rtCamera.getViewToProjectionf();
+      transforms.objectToView = transforms.worldToView * transforms.objectToWorld;
+
+      instance->surface.isPreservePath = true;
+      preserveInstance(*instance, &input);
+      m_instanceManager.preserveInstance(*instance, input, nullptr);
+    }
+
+    replacementInstance->frameLastSeen = currentFrameId;
+    return true;
+  }
+
   void SceneManager::submitRetainedExternalInstances(const Rc<DxvkContext>& ctx) {
-    for (const auto& entry : m_retainedExternalInstances) {
-      submitExternalDraw(ctx, std::make_unique<ExternalDrawState>(entry.second));
+    const uint32_t currentFrameId = m_device->getCurrentFrameId();
+    std::unordered_set<const BlasEntry*> blockedBlases;
+    blockedBlases.reserve(m_drawCallCache.getEntries().size());
+    for (const auto& cacheEntry : m_drawCallCache.getEntries()) {
+      const BlasEntry& blas = cacheEntry.second;
+      if (blas.frameLastTouched == currentFrameId) {
+        blockedBlases.insert(&blas);
+      }
+    }
+
+    for (auto& entry : m_retainedExternalInstances) {
+      RetainedExternalInstance& retained = entry.second;
+      if (tryPreserveRetainedExternalInstance(retained, blockedBlases)) {
+        continue;
+      }
+
+      const XXH64_hash_t identityHash = retained.state.computeExternalDrawIdentityHash();
+      submitExternalDraw(ctx, std::make_unique<ExternalDrawState>(retained.state));
+
+      ReplacementInstance* replacementInstance =
+          m_drawCallTracker.findReplacementInstanceByIdentity(identityHash);
+      if (replacementInstance != nullptr &&
+          replacementInstance->root.getUntyped() != nullptr) {
+        retained.materializedIdentity = identityHash;
+        replacementInstance->dirtyFlags.clr(ReplacementInstance::kLookupDriftMask);
+        for (const PrimInstance& prim : replacementInstance->prims) {
+          RtInstance* instance = prim.getInstance();
+          if (instance != nullptr && instance->getBlas() != nullptr) {
+            blockedBlases.insert(instance->getBlas());
+          }
+        }
+      } else {
+        retained.materializedIdentity.reset();
+      }
     }
   }
 
@@ -2440,6 +2568,8 @@ namespace dxvk {
       state.drawCall.modifyTransformData().viewToProjection = rtCamera.getViewToProjectionf();
       state.drawCall.modifyTransformData().objectToView = state.drawCall.getTransformData().worldToView * state.drawCall.getTransformData().objectToWorld;
     }
+
+    const XXH64_hash_t identityHash = state.computeExternalDrawIdentityHash();
 
     if (!state.gpuInstancingTransforms.empty()) {
       state.drawCall.modifyTransformData().instancesToObject =
@@ -2463,7 +2593,6 @@ namespace dxvk {
     // so the same ReplacementInstance can be threaded through both paths —
     // drawReplacements() requires a non-null instance and uses it to drive
     // RtInstance reuse across frames for the replacement primitives.
-    const XXH64_hash_t identityHash = state.computeExternalDrawIdentityHash();
     const XXH64_hash_t spatialMapHash = spatialMapHashForExternalDrawMesh(state.mesh);
     const Matrix4& xform = state.drawCall.getTransformData().objectToWorld;
     const XXH64_hash_t matHash = state.drawCall.getMaterialData().getHash();
@@ -2471,9 +2600,14 @@ namespace dxvk {
 
     const ReplacementInstance::LookupKey externalKey { identityHash, spatialMapHash, matHash, kEmptyHash, worldPos, xform };
     ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(externalKey);
+    std::vector<AssetReplacement>* pReplacements =
+        fork_hooks::externalDrawMeshReplacement(*m_pReplacer, meshHash);
+    if (replacementInstance->activeReplacements != pReplacements) {
+      replacementInstance->clear();
+    }
     replacementInstance->dirtyFlags.clr(ReplacementInstance::kDynamicFeatureMask);
 
-    if (std::vector<AssetReplacement>* pReplacements = fork_hooks::externalDrawMeshReplacement(*m_pReplacer, meshHash)) {
+    if (pReplacements != nullptr) {
       // Copy the DrawCallState so we don't mutate the caller's state. Point geometryData
       // at submeshes[0] as the replacement geometry template, clear externalMaterial so
       // the USD replacement material takes precedence, and use a neutral default material
@@ -2636,7 +2770,7 @@ namespace dxvk {
       // Retained placements must release their instance ownership before the
       // mesh storage they reference is removed.
       for (auto entry = m_retainedExternalInstances.begin(); entry != m_retainedExternalInstances.end();) {
-        if (entry->second.mesh == handle) {
+        if (entry->second.state.mesh == handle) {
           entry = m_retainedExternalInstances.erase(entry);
         } else {
           ++entry;

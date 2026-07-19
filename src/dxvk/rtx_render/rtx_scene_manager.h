@@ -154,7 +154,7 @@ public:
   void submitDrawState(Rc<DxvkContext> ctx, const DrawCallState& input, const MaterialData* overrideMaterialData);
   void submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> state);
 
-  // Explicit-lifetime external instances are owned by the renderer and replayed
+  // Explicit-lifetime external instances are owned by the renderer and refreshed
   // before generic scene GC. All mutation methods run on the dxvk-cs thread.
   void createRetainedExternalInstance(remixapi_InstanceHandle handle, std::unique_ptr<ExternalDrawState> state);
   void updateRetainedExternalInstance(remixapi_InstanceHandle handle, std::unique_ptr<ExternalDrawState> state);
@@ -335,8 +335,19 @@ private:
 
   void drawReplacements(Rc<DxvkContext> ctx, const DrawCallState* input, const std::vector<AssetReplacement>* pReplacements, MaterialData& renderMaterialData, ReplacementInstance* replacementInstance);
 
+  struct RetainedExternalInstance {
+    ExternalDrawState state;
+    std::optional<XXH64_hash_t> materializedIdentity;
+  };
+
   // Refresh every explicitly retained external instance before scene GC/TLAS.
   void submitRetainedExternalInstances(const Rc<DxvkContext>& ctx);
+
+  // Reuse the renderer-owned instances created by the last full external draw while
+  // refreshing the per-frame resource, camera, callback, and lifetime state.
+  bool tryPreserveRetainedExternalInstance(
+      const RetainedExternalInstance& retained,
+      const std::unordered_set<const BlasEntry*>& blockedBlases);
 
   // Build the per-replacement DrawCallState used by both the dynamic (drawReplacements) and
   // preserve (syncPreservedReplacementMeshesState) paths so they always feed the same input
@@ -402,9 +413,10 @@ private:
 
   std::unique_ptr<AssetReplacer> m_pReplacer;
 
-  // Converted API draw states keyed by caller-owned retained handles. Entries
-  // live independently of transient DrawInstance traffic and frustum visibility.
-  std::unordered_map<remixapi_InstanceHandle, ExternalDrawState> m_retainedExternalInstances;
+  // Converted API draw states keyed by caller-owned retained handles. The
+  // materialized identity is resolved through DrawCallTracker every frame so
+  // tracker clears and replacement reloads cannot leave dangling ownership.
+  std::unordered_map<remixapi_InstanceHandle, RetainedExternalInstance> m_retainedExternalInstances;
 
   std::unique_ptr<TerrainBaker> m_terrainBaker;
 
