@@ -168,6 +168,28 @@ namespace dxvk {
     }
   }
 
+  bool DrawCallTracker::removeReplacementInstanceByIdentity(XXH64_hash_t identityHash) {
+    auto identityIter = m_identityHashMap.find(identityHash);
+    if (identityIter == m_identityHashMap.end()) {
+      return false;
+    }
+
+    ReplacementInstance* replacementInstance = identityIter->second;
+    for (size_t i = 0; i < m_replacementInstances.size(); ++i) {
+      if (m_replacementInstances[i].get() != replacementInstance) {
+        continue;
+      }
+
+      destroyReplacementInstance(replacementInstance);
+      std::swap(m_replacementInstances[i], m_replacementInstances.back());
+      m_replacementInstances.pop_back();
+      return true;
+    }
+
+    assert(false && "ReplacementInstance identity map and owner vector disagree");
+    return false;
+  }
+
   ReplacementInstance* DrawCallTracker::findOrCreateReplacementInstance(
       const ReplacementInstance::LookupKey& key) {
     ScopedCpuProfileZone();
@@ -189,6 +211,7 @@ namespace dxvk {
       // path set when first matching this RI for the current frame. Dynamic-feature
       // bits persist until the dynamic path runs.
       ReplacementInstance* match = exactMatchIter->second;
+      match->isRetainedExternal = match->isRetainedExternal || key.isRetainedExternal;
       if (match->frameLastSeen != currentFrameId) {
         match->dirtyFlags.clr(ReplacementInstance::kLookupDriftMask);
       }
@@ -200,12 +223,13 @@ namespace dxvk {
     const float spatialMapCellSize = RtxOptions::uniqueObjectDistance() * 2.f;
 
     auto l2Filter = [&](const ReplacementInstance* candidate) {
-      return candidate->frameLastSeen != currentFrameId &&
+      return !candidate->isRetainedExternal &&
+             candidate->frameLastSeen != currentFrameId &&
              candidate->materialHash == key.materialHash;
     };
 
     auto spatialMapIter = m_assetSpatialMaps.find(key.spatialMapHash);
-    if (spatialMapIter != m_assetSpatialMaps.end()) {
+    if (!key.isRetainedExternal && spatialMapIter != m_assetSpatialMaps.end()) {
       // Try exact transform + vertex position hash match first
       ReplacementInstance* exactTransformMatch = nullptr;
       spatialMapIter->second.forEachAtTransform(key.transform, [&](const ReplacementInstance* candidate) {
@@ -245,6 +269,7 @@ namespace dxvk {
     auto newReplacementInstance = std::make_unique<ReplacementInstance>(
         key, m_nextReplacementInstanceId++, currentFrameId);
     ReplacementInstance* replacementInstance = newReplacementInstance.get();
+    replacementInstance->isRetainedExternal = key.isRetainedExternal;
 
     m_identityHashMap[key.identityHash] = replacementInstance;
 
@@ -276,7 +301,8 @@ namespace dxvk {
       drawCallState.getGeometryData().boundingBox.getTransformedCentroid(objectToWorld),
       objectToWorld,
       drawCallState.getTransformData().textureTransform,
-      drawCallState.getTransformData().texgenMode
+      drawCallState.getTransformData().texgenMode,
+      drawCallState.isRetainedExternal
     };
 
     ReplacementInstance* result = findOrCreateReplacementInstance(key);
@@ -314,6 +340,7 @@ namespace dxvk {
 
     auto portalFilter = [&](const ReplacementInstance* candidate) {
       return candidate != newInstance &&
+             !candidate->isRetainedExternal &&
              candidate->frameLastSeen != currentFrameId &&
              candidate->materialHash == key.materialHash;
     };
@@ -380,6 +407,13 @@ namespace dxvk {
 
     for (size_t i = 0; i < m_replacementInstances.size();) {
       ReplacementInstance* replacementInstance = m_replacementInstances[i].get();
+
+      // API-retained records are released only by their owning handle. Frame-age,
+      // frustum, camera-cut, and anti-culling limits do not participate in lifetime.
+      if (replacementInstance->isRetainedExternal) {
+        ++i;
+        continue;
+      }
 
       const bool hasLights = replacementInstance->lightBoundingBox.isValid();
       const bool hasMeshes = replacementInstance->geometryBoundingBox.isValid();

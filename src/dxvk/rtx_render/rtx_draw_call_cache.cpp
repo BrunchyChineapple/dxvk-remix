@@ -67,10 +67,13 @@ DrawCallCache::CacheState DrawCallCache::get(const DrawCallState& drawCall, Blas
     const bool boneHashesMatch = entry.input.getSkinningState().boneHash == drawCall.getSkinningState().boneHash;
     const bool materialHashesMatch = entry.input.getMaterialData().getHash() == drawCall.getMaterialData().getHash();
 
-    if (exactMatch(drawCall, entry) || !updatedThisFrame && (vertexDataMatches && boneHashesMatch || materialHashesMatch)) {
+    if (exactMatch(drawCall, entry) ||
+        (!entry.isRetainedExternalPinned && !updatedThisFrame &&
+         (vertexDataMatches && boneHashesMatch || materialHashesMatch))) {
       // Exact vertex match that is reusable for the current draw call,
       // or something that hasn't been updated this frame and is similar enough.
-      // Matching the logic in the multi-element loop below.
+      // Pinned retained entries may only be selected by exact match: their linked
+      // instances remain live even when no draw submission touched them this frame.
       *out = &entry;
       return CacheState::kExisted;
     } else {
@@ -93,7 +96,8 @@ DrawCallCache::CacheState DrawCallCache::get(const DrawCallState& drawCall, Blas
       *out = &blas;
       return CacheState::kExisted;
     }
-    if (blas.frameLastTouched == m_device->getCurrentFrameId()) {
+    if (blas.isRetainedExternalPinned ||
+        blas.frameLastTouched == m_device->getCurrentFrameId()) {
       continue;
     }
     // TODO these heuristics could use more refinement.
@@ -130,6 +134,7 @@ DrawCallCache::CacheState DrawCallCache::get(const DrawCallState& drawCall, Blas
 BlasEntry* DrawCallCache::allocateEntry(XXH64_hash_t hash, const DrawCallState& drawCall) {
   auto iter = m_entries.emplace(hash, drawCall);
   BlasEntry* result = &iter->second;
+  result->setInput(drawCall);
   result->frameCreated = m_device->getCurrentFrameId();
   return result;
 }

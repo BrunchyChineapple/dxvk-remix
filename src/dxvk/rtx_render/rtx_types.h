@@ -136,6 +136,10 @@ struct ReplacementInstance {
     // so they don't churn dirty flags.
     Matrix4 textureTransform = Matrix4();
     TexGenMode texgenMode = TexGenMode::None;
+
+    // Explicit API-retained draws own their identity and must never be reassociated
+    // through the heuristic spatial lookup used for transient game submissions.
+    bool isRetainedExternal = false;
   };
 
   ReplacementInstance() = delete;
@@ -214,6 +218,13 @@ struct ReplacementInstance {
   // Stored as raw bits because CategoryFlags is defined later in this file.
   uint32_t categoryFlags = 0;
   bool isSkinned = false;
+
+  // Explicit API ownership bypasses frame-age/anti-culling GC. The owner clears
+  // this RI through DrawCallTracker when the retained handle is updated or destroyed.
+  bool isRetainedExternal = false;
+  // Unsupported camera/material/replacement features stay on dynamic submission.
+  // Resource refresh lists contain only event-driven retained instances.
+  bool requiresPerFrameRetainedSubmission = false;
 
   // When true, the aggregate object-space bounding boxes (geometryBoundingBox,
   // lightBoundingBox) will be recomputed from the replacement mesh/light data
@@ -846,6 +857,7 @@ struct DrawCallState {
 private:
   friend struct D3D9Rtx;
   friend struct RemixAPIPrivateAccessor;
+  friend struct BlasEntry;
 
   // Fork touchpoint: the external-draw texture-category hook needs access to
   // private setCategory. See docs/fork-touchpoints.md.
@@ -936,6 +948,12 @@ struct BlasEntry {
   // Frame when the vertex data of this geometry was last updated, used to detect static geometries
   uint32_t frameLastUpdated = kInvalidFrameIndex;
 
+  // A retained instance may keep this entry linked while no draw call touches it.
+  // Pinning prevents DrawCallCache's similarity heuristic from repurposing the
+  // geometry before retained resources are refreshed during scene preparation.
+  // The flag is derived from m_retainedExternalLinkCount.
+  bool isRetainedExternalPinned = false;
+
   Rc<PooledBlas> dynamicBlas = nullptr;
 
   std::vector<VkAccelerationStructureGeometryKHR> buildGeometries;
@@ -944,6 +962,14 @@ struct BlasEntry {
   BlasEntry() = default;
 
   BlasEntry(const DrawCallState& input_);
+
+  void setInput(const DrawCallState& newInput) {
+    input = newInput;
+    if (input.overrides.geometryData != nullptr) {
+      input.geometryData = *input.overrides.geometryData;
+      input.overrides.geometryData = nullptr;
+    }
+  }
 
   void cacheMaterial(const LegacyMaterialData& newMaterial) {
     if (input.getMaterialData().getHash() != newMaterial.getHash()) {
@@ -972,6 +998,20 @@ struct BlasEntry {
   }
 
   void unlinkInstance(RtInstance* instance);
+
+  void addRetainedExternalLink() {
+    ++m_retainedExternalLinkCount;
+    isRetainedExternalPinned = true;
+  }
+
+  void removeRetainedExternalLink() {
+    assert(m_retainedExternalLinkCount > 0);
+    if (m_retainedExternalLinkCount == 0) {
+      return;
+    }
+    --m_retainedExternalLinkCount;
+    isRetainedExternalPinned = m_retainedExternalLinkCount != 0;
+  }
 
   const std::unordered_set<RtInstance*>& getLinkedInstances() const { return m_linkedInstances; }
 
@@ -1014,6 +1054,7 @@ private:
   // ordering doesn't matter for any current consumer (size / empty are the
   // only read operations on this container).
   std::unordered_set<RtInstance*> m_linkedInstances;
+  uint32_t m_retainedExternalLinkCount = 0;
   std::unordered_map<XXH64_hash_t, LegacyMaterialData> m_materials;
 };
 

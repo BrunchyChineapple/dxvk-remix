@@ -636,7 +636,7 @@ namespace dxvk {
         // Re-evaluate PointInstancer hard-radius admission before uploading prefixes.
         rebuildPrimitivePrefixSums(cameraManager.getMainCamera().getPosition());
         // Upload per-surface GPU data (surface buffer, mapping buffer, prefix sums)
-        uploadSurfaceData(ctx);
+        uploadSurfaceData(ctx, instanceManager);
         // Continue building OMMs even when the scene is static — surface data must be
         // uploaded first since the GPU baking pass reads it.
         if (opacityMicromapManager && opacityMicromapManager->isActive()) {
@@ -1746,7 +1746,9 @@ namespace dxvk {
     std::swap(currIndex, prevIndex);
   }
 
-  void AccelManager::uploadSurfaceData(Rc<DxvkContext> ctx) {
+  void AccelManager::uploadSurfaceData(
+      Rc<DxvkContext> ctx,
+      InstanceManager& instanceManager) {
     ScopedCpuProfileZone();
     if (m_reorderedSurfaces.empty()) {
       return;
@@ -1779,8 +1781,32 @@ namespace dxvk {
     surfacesGPUData.resize(surfacesGPUSize);
 
     for (uint32_t i = 0; i < m_reorderedSurfaces.size(); ++i) {
-      const auto& currentInstance = *m_reorderedSurfaces[i];
-      RtSurface& currentSurface = m_reorderedSurfaces[i]->surface;
+      RtInstance& currentInstance = *m_reorderedSurfaces[i];
+      RtSurface& currentSurface = currentInstance.surface;
+
+      // Retained BLAS resources were registered once per unique BLAS before the
+      // bindless table was prepared. Copy those fresh frame-scoped indices here,
+      // avoiding a separate per-placement preserve/replay pass.
+      if (currentInstance.isRetainedExternal() && currentInstance.getBlas() != nullptr) {
+        BlasEntry& blas = *currentInstance.getBlas();
+        instanceManager.processInstanceBuffers(blas, currentInstance);
+
+        // The materialization/update frame keeps real motion history. On later
+        // event-free frames, settle motion and run the lightweight listener
+        // finalization once per unique instance. This advances OMM frame age and
+        // completes deferred OMM calculations without replaying draw translation.
+        const uint32_t currentFrameId = m_device->getCurrentFrameId();
+        if (currentInstance.getFrameLastUpdated() != currentFrameId) {
+          currentInstance.setFrameLastUpdated(currentFrameId);
+          if (!currentSurface.isStatic) {
+            currentSurface.prevObjectToWorld = currentSurface.objectToWorld;
+            currentSurface.isStatic = true;
+          }
+          currentSurface.hasMaterialChanged = false;
+          currentSurface.isPreservePath = true;
+          instanceManager.preserveInstance(currentInstance, blas.input, nullptr);
+        }
+      }
 
       // For PointInstancer entries beyond the first, do nothing.  The GPU culling shader will 
       // patch per-instance transforms and set per-instance customInstanceIndex later.
@@ -1883,7 +1909,7 @@ namespace dxvk {
                                  DxvkBarrierSet& execBarriers,
                                  const CameraManager& cameraManager,
                                  OpacityMicromapManager* opacityMicromapManager,
-                                 const InstanceManager& instanceManager,
+                                 InstanceManager& instanceManager,
                                  const std::vector<TextureRef>& textures,
                                  const std::vector<RtInstance*>& instances,
                                  const std::vector<std::unique_ptr<BlasBucket>>& blasBuckets,
@@ -1892,7 +1918,7 @@ namespace dxvk {
                                  size_t& totalScratchMemory) {
     ScopedGpuProfileZone(ctx, "buildBLAS");
     // Upload surfaces before opacity micromap generation which reads the surface data on the GPU
-    uploadSurfaceData(ctx);
+    uploadSurfaceData(ctx, instanceManager);
 
     // Clear any stale OMM bindings from cached geometry data.  This must happen
     // unconditionally because buildGeometries are cached across frames and the

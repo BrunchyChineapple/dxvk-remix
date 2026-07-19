@@ -21,6 +21,7 @@
 */
 #pragma once
 
+#include <atomic>
 #include <memory>
 
 #include "rtx_types.h"
@@ -168,7 +169,22 @@ namespace dxvk {
     void set(XXH64_hash_t hash, std::vector<AssetReplacement>&& v) {
       std::lock_guard<sync::Spinlock> lock(m_spinlock);
       auto& map = T == AssetReplacement::eMesh ? m_meshReplacers : m_lightReplacers;
-      map.emplace(hash, std::move(v));
+      if (map.emplace(hash, std::move(v)).second) {
+        if constexpr (T == AssetReplacement::eMesh) {
+          notifyMeshReplacementLookupChanged();
+        }
+      }
+    }
+
+    // Changes whenever a mesh replacement becomes visible to renderer lookups.
+    // SceneManager uses this event generation to rematerialize retained handles
+    // without polling every retained placement for pointer changes.
+    static uint64_t getMeshReplacementGeneration() {
+      return s_meshReplacementGeneration.load(std::memory_order_acquire);
+    }
+
+    static void notifyMeshReplacementLookupChanged() {
+      s_meshReplacementGeneration.fetch_add(1, std::memory_order_release);
     }
 
     // Returns a pointer to the stored object of type T for a given hash value.
@@ -257,6 +273,7 @@ namespace dxvk {
     }
 
   private:
+    inline static std::atomic<uint64_t> s_meshReplacementGeneration { 0 };
     mutable sync::Spinlock m_spinlock;
 
     // Replacements ready to be fed to the renderer
@@ -313,8 +330,13 @@ namespace dxvk {
     void markVariantStatus(const XXH64_hash_t assetHash,
                            const size_t variantId,
                            const bool bEnabled) {
-      m_variantInfos[assetHash].selectedVariant =
-        (bEnabled) ? variantId : VariantInfo::kDefaultVariant;
+      const size_t selectedVariant =
+        bEnabled ? variantId : VariantInfo::kDefaultVariant;
+      auto& variantInfo = m_variantInfos[assetHash];
+      if (variantInfo.selectedVariant != selectedVariant) {
+        variantInfo.selectedVariant = selectedVariant;
+        AssetReplacements::notifyMeshReplacementLookupChanged();
+      }
     }
 
     void makeMaterialWithTexturePreload(DxvkContext& ctx, remixapi_MaterialHandle handle, MaterialData&& data);

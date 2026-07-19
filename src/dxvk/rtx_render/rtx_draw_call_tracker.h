@@ -50,6 +50,10 @@ public:
   // m_assetSpatialMaps). Used when a draw source tied to that bucket is invalidated.
   void removeReplacementInstancesWithSpatialMapHash(XXH64_hash_t spatialMapHash);
 
+  // Removes one exact identity. Explicitly retained handles use this so updating or
+  // destroying one placement cannot invalidate every placement that shares a mesh.
+  bool removeReplacementInstanceByIdentity(XXH64_hash_t identityHash);
+
   // Find or create a ReplacementInstance from a DrawCallState.
   // L1 identity includes legacy material hash from DrawCallState plus the hash of
   // overrideMaterialData when non-null (terrain bake, particles, etc.); full merged

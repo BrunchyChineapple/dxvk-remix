@@ -106,6 +106,9 @@ protected:
 struct ExternalDrawState {
   DrawCallState drawCall {};
   remixapi_MeshHandle mesh {};
+  // Caller-owned identity salt for explicitly retained draws. Transient external
+  // draws leave this null and preserve their existing identity-hash behavior.
+  remixapi_InstanceHandle retainedHandle {};
   CameraType::Enum cameraType {};
   CategoryFlags categories {};
   bool doubleSided {};
@@ -338,16 +341,24 @@ private:
   struct RetainedExternalInstance {
     ExternalDrawState state;
     std::optional<XXH64_hash_t> materializedIdentity;
+    bool requiresPerFrameSubmission = false;
   };
 
-  // Refresh every explicitly retained external instance before scene GC/TLAS.
+  // Materializes only create/update/invalidation work. Static retained instances
+  // remain owned by their handles and do not replay draw translation every frame.
   void submitRetainedExternalInstances(const Rc<DxvkContext>& ctx);
-
-  // Reuse the renderer-owned instances created by the last full external draw while
-  // refreshing the per-frame resource, camera, callback, and lifetime state.
-  bool tryPreserveRetainedExternalInstance(
+  void queueAllRetainedExternalInstances();
+  void retireRetainedExternalInstance(RetainedExternalInstance& retained);
+  bool canRetainExternalInstanceWithoutSubmission(
       const RetainedExternalInstance& retained,
-      const std::unordered_set<const BlasEntry*>& blockedBlases);
+      const ReplacementInstance& replacementInstance) const;
+
+  // Frame-scoped bindless tables still need live resource references. Refresh each
+  // unique retained BLAS/material once, then patch per-surface buffer indices in the
+  // AccelManager upload loop that already visits every emitted surface.
+  void rebuildRetainedExternalResources();
+  void refreshRetainedExternalResources();
+  void preserveSurfaceMaterial(uint32_t surfaceMaterialIndex);
 
   // Build the per-replacement DrawCallState used by both the dynamic (drawReplacements) and
   // preserve (syncPreservedReplacementMeshesState) paths so they always feed the same input
@@ -413,10 +424,18 @@ private:
 
   std::unique_ptr<AssetReplacer> m_pReplacer;
 
-  // Converted API draw states keyed by caller-owned retained handles. The
-  // materialized identity is resolved through DrawCallTracker every frame so
-  // tracker clears and replacement reloads cannot leave dangling ownership.
+  // Converted API draw states keyed by caller-owned retained handles. Stable
+  // instances are submitted only when queued by create/update/global invalidation.
   std::unordered_map<remixapi_InstanceHandle, RetainedExternalInstance> m_retainedExternalInstances;
+  std::unordered_set<remixapi_InstanceHandle> m_retainedExternalInstancesPendingSubmission;
+  std::unordered_set<remixapi_InstanceHandle> m_retainedExternalInstancesPerFrame;
+
+  // Rebuilt only when retained topology/material ownership changes. These compact
+  // unique-resource lists replace the old per-placement preserve walk.
+  bool m_retainedExternalResourcesDirty = true;
+  uint64_t m_retainedExternalReplacementGeneration = 0;
+  std::vector<BlasEntry*> m_retainedExternalBlases;
+  std::vector<uint32_t> m_retainedExternalSurfaceMaterials;
 
   std::unique_ptr<TerrainBaker> m_terrainBaker;
 

@@ -140,8 +140,10 @@ public:
   // Prepares instance buffers for rendering by the GPU
   void prepareSceneData(Rc<DxvkContext> ctx, class DxvkBarrierSet& execBarriers, InstanceManager& instanceManager);
 
-  // Uploads instances' surface data to the GPU
-  void uploadSurfaceData(Rc<DxvkContext> ctx);
+  // Uploads instances' surface data to the GPU. Retained surfaces refresh their
+  // frame-scoped buffer indices and lightweight per-frame listener state here,
+  // inside the loop that already emits them.
+  void uploadSurfaceData(Rc<DxvkContext> ctx, InstanceManager& instanceManager);
 
   // Merges the RtInstance's into a set of BLAS. Some of the BLAS will contain multiple geometries/instances,
   // and some other BLAS will be dedicated to instances with static geometries.
@@ -193,7 +195,7 @@ private:
   } uploadSurfaceDataFuncState;
 
   void buildBlases(Rc<DxvkContext> ctx, DxvkBarrierSet& execBarriers,
-                   const CameraManager& cameraManager, OpacityMicromapManager* opacityMicromapManager, const InstanceManager& instanceManager,
+                   const CameraManager& cameraManager, OpacityMicromapManager* opacityMicromapManager, InstanceManager& instanceManager,
                    const std::vector<TextureRef>& textures, const std::vector<RtInstance*>& instances,
                    const std::vector<std::unique_ptr<BlasBucket>>& blasBuckets, 
                    std::vector<VkAccelerationStructureBuildGeometryInfoKHR>& blasToBuild,
