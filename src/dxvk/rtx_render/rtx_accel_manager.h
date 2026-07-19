@@ -211,6 +211,8 @@ private:
   template<Tlas::Type type>
   void internalBuildTlas(Rc<DxvkContext> ctx, size_t& totalScratchSize);
 
+  void rebuildPrimitivePrefixSums(const Vector3& cameraPosition);
+
   void buildParticleSurfaceMapping(std::vector<uint32_t>& surfaceIndexMapping);
 
   bool validateUpdateMode(const VkAccelerationStructureBuildGeometryInfoKHR& oldInfo, const VkAccelerationStructureBuildGeometryInfoKHR& newInfo);

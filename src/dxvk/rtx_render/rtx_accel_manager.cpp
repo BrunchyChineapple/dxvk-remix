@@ -427,6 +427,52 @@ namespace dxvk {
     execBarriers.recordCommands(cb);
   }
 
+  void AccelManager::rebuildPrimitivePrefixSums(const Vector3& cameraPosition) {
+    m_reorderedSurfacesPrimitiveIDPrefixSumLastFrame = m_reorderedSurfacesPrimitiveIDPrefixSum;
+    m_reorderedSurfacesPrimitiveIDPrefixSum.resize(m_reorderedSurfaces.size() + 1);
+    m_reorderedSurfacesPrimitiveIDPrefixSum[0] = 0;
+
+    const bool cullingEnabled = RtxPointInstancerSystem::isEnabled();
+    const float cullingRadius = RtxPointInstancerSystem::getCullingRadius();
+    const float cullingRadiusSq = cullingRadius * cullingRadius;
+
+    uint32_t totalPrimitiveIDOffset = 0;
+    for (uint32_t i = 0; i < m_reorderedSurfaces.size(); ++i) {
+      const RtInstance* instance = m_reorderedSurfaces[i];
+      const RtSurface& surface = instance->surface;
+      bool admitted = true;
+
+      if (cullingEnabled && surface.instancesToObject != nullptr) {
+        assert(surface.surfaceIndexOfFirstInstance != SIZE_MAX);
+        assert(i >= surface.surfaceIndexOfFirstInstance);
+
+        const size_t instanceIndex = i - surface.surfaceIndexOfFirstInstance;
+        assert(instanceIndex < surface.instancesToObject->size());
+
+        const Matrix4 instanceToWorld = surface.objectToWorld * (*surface.instancesToObject)[instanceIndex];
+        const Vector3 worldPosition(instanceToWorld[3].x, instanceToWorld[3].y, instanceToWorld[3].z);
+        admitted = lengthSqr(worldPosition - cameraPosition) <= cullingRadiusSq;
+      }
+
+      uint32_t primitiveCount = 0;
+      if (admitted) {
+        for (const auto& buildRange : instance->getBlas()->buildRanges) {
+          primitiveCount += buildRange.primitiveCount;
+        }
+      }
+
+      totalPrimitiveIDOffset += primitiveCount;
+      m_reorderedSurfacesPrimitiveIDPrefixSum[i + 1] = totalPrimitiveIDOffset;
+    }
+
+    if (totalPrimitiveIDOffset > PRIMITIVE_INDEX_MAX_VALUE) {
+      ONCE(Logger::err(str::format("DxvkRaytrace: total primitive count (", totalPrimitiveIDOffset,
+        ") exceeds the maximum primitive index (", PRIMITIVE_INDEX_MAX_VALUE,
+        ") representable in ", PRIMITIVE_INDEX_BIT_COUNT, " bits. "
+        "Downstream systems (NEE cache, prefix-sum lookups) may produce incorrect results.")));
+    }
+  }
+
   void AccelManager::mergeInstancesIntoBlas(Rc<DxvkContext> ctx, 
                                             DxvkBarrierSet& execBarriers, 
                                             const std::vector<TextureRef>& textures,
@@ -474,8 +520,8 @@ namespace dxvk {
           // Process deferred OMM candidates even when the scene is static
           opacityMicromapManager->processOmmCandidates(instanceManager, textures);
         }
-        // Advance the prefix-sum last-frame snapshot so temporal lookups stay current
-        m_reorderedSurfacesPrimitiveIDPrefixSumLastFrame = m_reorderedSurfacesPrimitiveIDPrefixSum;
+        // Re-evaluate PointInstancer hard-radius admission before uploading prefixes.
+        rebuildPrimitivePrefixSums(cameraManager.getMainCamera().getPosition());
         // Upload per-surface GPU data (surface buffer, mapping buffer, prefix sums)
         uploadSurfaceData(ctx);
         // Continue building OMMs even when the scene is static — surface data must be
@@ -995,36 +1041,8 @@ namespace dxvk {
       m_reorderedSurfacesFirstIndexOffset.insert(m_reorderedSurfacesFirstIndexOffset.end(), blasBucket->indexOffsets.begin(), blasBucket->indexOffsets.end());
     }
 
-    // Build prefix sum array
-    // Collect primitive count for each surface object
-    // Because we use exclusive prefix sum here, we add one more element to record the scene's total primitive count
-    m_reorderedSurfacesPrimitiveIDPrefixSumLastFrame = m_reorderedSurfacesPrimitiveIDPrefixSum;
-    m_reorderedSurfacesPrimitiveIDPrefixSum.resize(m_reorderedSurfaces.size() + 1);
-    m_reorderedSurfacesPrimitiveIDPrefixSum[0] = 0;
-    for (uint32_t i = 0; i < m_reorderedSurfaces.size(); i++) {
-      auto surface = m_reorderedSurfaces[i];
-      int primitiveCount = 0;
-      for (const auto& buildRange: surface->getBlas()->buildRanges) {
-        primitiveCount += buildRange.primitiveCount;
-      }
-      m_reorderedSurfacesPrimitiveIDPrefixSum[i + 1] = primitiveCount;
-    }
-
-    // Calculate exclusive prefix sum
-    uint totalPrimitiveIDOffset = 0;
-    for (uint32_t i = 0; i < m_reorderedSurfacesPrimitiveIDPrefixSum.size(); i++) {
-      uint primitiveCount = m_reorderedSurfacesPrimitiveIDPrefixSum[i];
-      m_reorderedSurfacesPrimitiveIDPrefixSum[i] += totalPrimitiveIDOffset;
-      totalPrimitiveIDOffset += primitiveCount;
-    }
-
-    // Validate total primitive count against the engine-wide PRIMITIVE_INDEX_BIT_COUNT limit.
-    if (totalPrimitiveIDOffset > PRIMITIVE_INDEX_MAX_VALUE) {
-      ONCE(Logger::err(str::format("DxvkRaytrace: total primitive count (", totalPrimitiveIDOffset,
-        ") exceeds the maximum primitive index (", PRIMITIVE_INDEX_MAX_VALUE,
-        ") representable in ", PRIMITIVE_INDEX_BIT_COUNT, " bits. "
-        "Downstream systems (NEE cache, prefix-sum lookups) may produce incorrect results.")));
-    }
+    // Exclude hard-radius-rejected PointInstancer transforms before primitive-prefix accounting.
+    rebuildPrimitivePrefixSums(cameraManager.getMainCamera().getPosition());
 
     buildBlases(ctx, execBarriers, cameraManager, opacityMicromapManager, instanceManager, 
                 textures, instances, blasBuckets, blasToBuild, blasRangesToBuild, totalScratchMemory);

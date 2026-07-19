@@ -36,26 +36,28 @@ namespace dxvk {
   class InstanceManager;
 
   /**
-    * GPU-driven radius culling system for USD PointInstancer replacements.
+    * Radius culling system for USD PointInstancer replacements.
     *
     * PointInstancers produce large numbers of identical mesh instances (e.g. foliage,
-    * ground clutter) specified by per-instance transforms. This system performs
-    * camera-proximity culling entirely on the GPU to limit the number of instances
-    * that are visible in the TLAS, reducing BVH traversal cost.
+    * ground clutter) specified by per-instance transforms. Before primitive-prefix
+    * construction, AccelManager excludes transforms beyond the hard culling radius
+    * from primitive accounting. The GPU then applies the same hard radius plus the
+    * optional density fade while writing TLAS instances.
     *
     * Per-frame flow:
-    *  1. AccelManager::mergeInstancesIntoBlas pushes N placeholder entries
-    *     (mask=0) for each PointInstancer into m_mergedInstances/m_vkInstanceBuffer,
-    *     and records batch descriptors for the GPU work.
-    *  2. AccelManager::prepareSceneData uploads those placeholders to the GPU.
-    *  3. AccelManager::dispatchPointInstancerCulling calls this system's
-    *     dispatchCulling() method: a GPU compute shader evaluates each transform
-    *     against the camera, and overwrites visible placeholders with full
-    *     VkAccelerationStructureInstanceKHR entries (proper transform + mask).
-    *     Culled entries stay mask=0 and are skipped by RT hardware.
-    *  4. AccelManager::buildTlas proceeds normally.
+    *  1. AccelManager::mergeInstancesIntoBlas reserves N surface and TLAS slots for
+    *     each PointInstancer and records batch descriptors for the GPU work.
+    *  2. AccelManager rebuilds primitive-prefix sums, assigning zero primitives to
+    *     PointInstancer transforms outside the hard radius.
+    *  3. AccelManager::prepareSceneData uploads surface data and TLAS storage.
+    *  4. AccelManager::dispatchPointInstancerCulling calls this system's
+    *     dispatchCulling() method: a GPU compute shader evaluates each transform,
+    *     overwrites visible slots with full VkAccelerationStructureInstanceKHR
+    *     entries, and leaves rejected entries with mask=0.
+    *  5. AccelManager::buildTlas proceeds normally.
     *
-    * No CPU-side transform iteration occurs.
+    * CPU transform traversal is limited to primitive-prefix admission; TLAS writes
+    * and stochastic fade remain GPU-driven.
     */
 
   /**
