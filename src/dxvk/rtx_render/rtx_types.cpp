@@ -256,6 +256,11 @@ namespace dxvk {
         m_replacementIndex < m_replacementInstance->prims.size()) {
       PrimInstance& targetSlot = m_replacementInstance->prims[m_replacementIndex];
       if (targetSlot.getUntyped() != nullptr && targetSlot.getUntyped() != owner) {
+        // Transfer root ownership before detaching the displaced owner; its
+        // unlink path clears the root while it still points at that owner.
+        if (m_replacementInstance->root.getUntyped() == targetSlot.getUntyped()) {
+          m_replacementInstance->root = PrimInstance(owner, type);
+        }
         targetSlot.setReplacementInstance(nullptr, ReplacementInstance::kInvalidReplacementIndex);
       }
       targetSlot = PrimInstance(owner, type);
