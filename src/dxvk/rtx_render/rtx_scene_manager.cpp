@@ -80,8 +80,8 @@ namespace dxvk {
       uint8_t zWriteEnable;
       uint8_t zEnable;
       uint8_t skyAutoDetected;
+      uint8_t isRetainedExternal;
       uint8_t _pad0;
-      uint8_t _pad1;
       Matrix4 objectToWorld;
       Matrix4 textureTransform;
     };
@@ -111,6 +111,7 @@ namespace dxvk {
     data.zWriteEnable = drawCall.zWriteEnable ? 1u : 0u;
     data.zEnable = drawCall.zEnable ? 1u : 0u;
     data.skyAutoDetected = drawCall.skyAutoDetected ? 1u : 0u;
+    data.isRetainedExternal = drawCall.isRetainedExternal ? 1u : 0u;
     data.objectToWorld = transforms.objectToWorld;
     data.textureTransform = transforms.textureTransform;
 
@@ -128,8 +129,8 @@ namespace dxvk {
         &ExternalDrawIdentityHashData::zWriteEnable,
         &ExternalDrawIdentityHashData::zEnable,
         &ExternalDrawIdentityHashData::skyAutoDetected,
+        &ExternalDrawIdentityHashData::isRetainedExternal,
         &ExternalDrawIdentityHashData::_pad0,
-        &ExternalDrawIdentityHashData::_pad1,
         &ExternalDrawIdentityHashData::objectToWorld,
         &ExternalDrawIdentityHashData::textureTransform>(data);
   }

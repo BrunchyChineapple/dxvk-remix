@@ -181,6 +181,7 @@ namespace dxvk {
     m_isWorldSpaceUI = src.m_isWorldSpaceUI;
     m_isUnordered = src.m_isUnordered;
     m_isObjectToWorldMirrored = src.m_isObjectToWorldMirrored;
+    m_isRetainedExternal = src.m_isRetainedExternal;
     m_isSubsurface = src.m_isSubsurface;
     m_linkedBlas = src.m_linkedBlas;
     m_materialHash = src.m_materialHash;
@@ -988,6 +989,7 @@ namespace dxvk {
     const size_t previousInstancesToObjectSize = previousInstancesToObject ? previousInstancesToObject->size() : 0;
 
     currentInstance.m_categoryFlags = drawCall.getCategoryFlags();
+    currentInstance.m_isRetainedExternal = drawCall.isRetainedExternal;
     currentInstance.surface.instancesToObject = drawCall.getTransformData().instancesToObject;
 
     // setFrameLastUpdated() must be called first as it resets instance's state on a first call in a frame

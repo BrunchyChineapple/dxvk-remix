@@ -755,6 +755,8 @@ struct DrawCallState {
 
   uint32_t drawCallID = 0;
 
+  bool isRetainedExternal = false;
+
   bool isDrawingToRaytracedRenderTarget = false;
   bool isUsingRaytracedRenderTarget = false;
 

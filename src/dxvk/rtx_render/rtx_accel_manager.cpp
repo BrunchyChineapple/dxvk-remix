@@ -466,10 +466,115 @@ namespace dxvk {
     }
 
     if (totalPrimitiveIDOffset > PRIMITIVE_INDEX_MAX_VALUE) {
-      ONCE(Logger::err(str::format("DxvkRaytrace: total primitive count (", totalPrimitiveIDOffset,
-        ") exceeds the maximum primitive index (", PRIMITIVE_INDEX_MAX_VALUE,
-        ") representable in ", PRIMITIVE_INDEX_BIT_COUNT, " bits. "
-        "Downstream systems (NEE cache, prefix-sum lookups) may produce incorrect results.")));
+      auto logPrimitiveOverflow = [&]() {
+        struct Contribution {
+          uint64_t primitives = 0;
+          size_t surfaceEntries = 0;
+
+          void add(uint32_t primitiveCount) {
+            primitives += primitiveCount;
+            ++surfaceEntries;
+          }
+        };
+
+        Contribution retainedTerrain;
+        Contribution retainedNonTerrain;
+        Contribution activeReplacement;
+        Contribution rendererCreated;
+        Contribution other;
+        Contribution terrain;
+        Contribution particleBeamEmitter;
+        Contribution pointInstancer;
+        Contribution staticSurface;
+        Contribution nonStaticSurface;
+        Contribution multiRange;
+        size_t nonZeroSurfaceEntries = 0;
+        std::unordered_set<RtInstance*> uniqueInstances;
+        uniqueInstances.reserve(m_reorderedSurfaces.size());
+
+        assert(m_reorderedSurfacesPrimitiveIDPrefixSum.size() == m_reorderedSurfaces.size() + 1);
+
+        for (size_t i = 0; i < m_reorderedSurfaces.size(); ++i) {
+          RtInstance* const instance = m_reorderedSurfaces[i];
+          const uint32_t primitiveCount = m_reorderedSurfacesPrimitiveIDPrefixSum[i + 1]
+                                        - m_reorderedSurfacesPrimitiveIDPrefixSum[i];
+          const bool isTerrain = instance->testCategoryFlags(InstanceCategories::Terrain);
+          const ReplacementInstance* const replacementInstance =
+            instance->getPrimInstanceOwner().getReplacementInstance();
+
+          uniqueInstances.insert(instance);
+          nonZeroSurfaceEntries += primitiveCount > 0 ? 1 : 0;
+
+          if (instance->isRetainedExternal()) {
+            (isTerrain ? retainedTerrain : retainedNonTerrain).add(primitiveCount);
+          } else if (replacementInstance != nullptr && replacementInstance->activeReplacements != nullptr) {
+            activeReplacement.add(primitiveCount);
+          } else if (instance->isCreatedByRenderer()) {
+            rendererCreated.add(primitiveCount);
+          } else {
+            other.add(primitiveCount);
+          }
+
+          if (isTerrain) {
+            terrain.add(primitiveCount);
+          }
+          if (instance->testCategoryFlags(
+                  InstanceCategories::Particle,
+                  InstanceCategories::Beam,
+                  InstanceCategories::ParticleEmitter)) {
+            particleBeamEmitter.add(primitiveCount);
+          }
+          if (instance->surface.instancesToObject != nullptr) {
+            pointInstancer.add(primitiveCount);
+          }
+          (instance->surface.isStatic ? staticSurface : nonStaticSurface).add(primitiveCount);
+          if (instance->getBlas()->buildRanges.size() > 1) {
+            multiRange.add(primitiveCount);
+          }
+        }
+
+        const uint64_t classifiedPrimitives = retainedTerrain.primitives
+                                            + retainedNonTerrain.primitives
+                                            + activeReplacement.primitives
+                                            + rendererCreated.primitives
+                                            + other.primitives;
+        const size_t classifiedSurfaceEntries = retainedTerrain.surfaceEntries
+                                              + retainedNonTerrain.surfaceEntries
+                                              + activeReplacement.surfaceEntries
+                                              + rendererCreated.surfaceEntries
+                                              + other.surfaceEntries;
+
+        assert(classifiedPrimitives == totalPrimitiveIDOffset);
+        assert(classifiedSurfaceEntries == m_reorderedSurfaces.size());
+        assert(staticSurface.primitives + nonStaticSurface.primitives == totalPrimitiveIDOffset);
+        assert(staticSurface.surfaceEntries + nonStaticSurface.surfaceEntries == m_reorderedSurfaces.size());
+
+        Logger::err(str::format(
+          "DxvkRaytrace: total primitive count (", totalPrimitiveIDOffset,
+          ") exceeds the maximum primitive index (", PRIMITIVE_INDEX_MAX_VALUE,
+          ") representable in ", PRIMITIVE_INDEX_BIT_COUNT, " bits. "
+          "Downstream systems (NEE cache, prefix-sum lookups) may produce incorrect results.",
+          "\nDxvkRaytrace: primitive provenance (exclusive; primitives/entries): retainedTerrain=",
+          retainedTerrain.primitives, "/", retainedTerrain.surfaceEntries,
+          ", retainedNonTerrain=", retainedNonTerrain.primitives, "/", retainedNonTerrain.surfaceEntries,
+          ", activeReplacement=", activeReplacement.primitives, "/", activeReplacement.surfaceEntries,
+          ", rendererCreated=", rendererCreated.primitives, "/", rendererCreated.surfaceEntries,
+          ", other=", other.primitives, "/", other.surfaceEntries,
+          ", classified=", classifiedPrimitives, "/", classifiedSurfaceEntries, ".",
+          "\nDxvkRaytrace: primitive traits (overlapping; primitives/entries): terrain=",
+          terrain.primitives, "/", terrain.surfaceEntries,
+          ", particleBeamEmitter=", particleBeamEmitter.primitives, "/", particleBeamEmitter.surfaceEntries,
+          ", pointInstancer=", pointInstancer.primitives, "/", pointInstancer.surfaceEntries,
+          ", static=", staticSurface.primitives, "/", staticSurface.surfaceEntries,
+          ", nonStatic=", nonStaticSurface.primitives, "/", nonStaticSurface.surfaceEntries, ".",
+          "\nDxvkRaytrace: primitive topology: surfaceEntries=", m_reorderedSurfaces.size(),
+          ", nonZeroSurfaceEntries=", nonZeroSurfaceEntries,
+          ", uniqueInstances=", uniqueInstances.size(),
+          ", multiRangeEntries=", multiRange.surfaceEntries,
+          ", multiRangePrimitives=", multiRange.primitives, "."));
+      };
+
+      ONCE(logPrimitiveOverflow());
     }
   }
 

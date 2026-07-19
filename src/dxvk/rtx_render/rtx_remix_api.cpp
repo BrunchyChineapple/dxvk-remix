@@ -1481,6 +1481,7 @@ namespace {
     static_assert(sizeof(remixapi_InstanceHandle) == sizeof(identity));
     auto handle = reinterpret_cast<remixapi_InstanceHandle>(identity);
     auto drawState = convert::toRtDrawState(*info);
+    drawState->drawCall.isRetainedExternal = true;
 
     // Materialize any batched mesh definitions before the retained definition
     // reaches the CS thread, preserving create-mesh -> create-instance order.
@@ -1514,6 +1515,7 @@ namespace {
     }
 
     auto drawState = convert::toRtDrawState(*info);
+    drawState->drawCall.isRetainedExternal = true;
     flushPendingMeshes(remixDevice);
 
     std::lock_guard lock { s_mutex };

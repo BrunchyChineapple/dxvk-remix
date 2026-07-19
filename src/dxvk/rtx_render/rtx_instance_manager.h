@@ -173,6 +173,7 @@ uint32_t getFirstBillboardIndex() const { return m_firstBillboard; }
   bool isViewModelVirtual() const;
   bool isSubsurface() const { return m_isSubsurface; }
   bool isCreatedByRenderer() const { return m_isCreatedByRenderer; }
+  bool isRetainedExternal() const { return m_isRetainedExternal; }
 
   // Returns true if this instance has been modified since the last BLAS build
   // (transform, material, or geometry change).  New instances default to dirty.
@@ -241,6 +242,7 @@ private:
   bool m_isUnordered = false;
   bool m_isObjectToWorldMirrored = false;
   bool m_isCreatedByRenderer = false;
+  bool m_isRetainedExternal = false;
   bool m_isSubsurface = false;
   bool m_blasDirty = true;  // Needs reprocessing in mergeInstancesIntoBlas; starts dirty for new instances
   bool m_billboardGeometryDirty = true;  // Needs initial geometry info generation for billboard-derived layout
