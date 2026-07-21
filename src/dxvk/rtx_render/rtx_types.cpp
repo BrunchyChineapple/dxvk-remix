@@ -602,9 +602,9 @@ namespace dxvk {
     setCategory(InstanceCategories::Terrain, shouldBakeTerrain(*this));
   }
 
-  BlasEntry::BlasEntry(const DrawCallState& input_)
-    : input(input_) {
-    }
+  BlasEntry::BlasEntry(const DrawCallState& input_) {
+    setInput(input_);
+  }
 
   void BlasEntry::unlinkInstance(RtInstance* instance) {
     if (m_linkedInstances.erase(instance) == 0) {

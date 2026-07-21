@@ -215,6 +215,11 @@ private:
 
   void rebuildPrimitivePrefixSums(const Vector3& cameraPosition);
 
+  void finalizeRetainedInstanceUpload(
+      RtInstance& instance,
+      InstanceManager& instanceManager,
+      uint32_t currentFrameId);
+
   void buildParticleSurfaceMapping(std::vector<uint32_t>& surfaceIndexMapping);
 
   bool validateUpdateMode(const VkAccelerationStructureBuildGeometryInfoKHR& oldInfo, const VkAccelerationStructureBuildGeometryInfoKHR& newInfo);

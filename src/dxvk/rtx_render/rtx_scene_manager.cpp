@@ -279,10 +279,14 @@ namespace dxvk {
     // ReplacementInstances and resource pointers were just invalidated. Queue
     // one event-driven rematerialization for the next frame.
     m_retainedExternalInstancesPendingSubmission.clear();
-    m_retainedExternalInstancesPerFrame.clear();
+    while (!m_retainedExternalInstancesPerFrame.empty()) {
+      setRetainedExternalSubmissionMode(
+          *m_retainedExternalInstancesPerFrame.begin(),
+          nullptr,
+          RetainedExternalSubmissionMode::EventDriven);
+    }
     for (auto& [handle, retained] : m_retainedExternalInstances) {
       retained.materializedIdentity.reset();
-      retained.requiresPerFrameSubmission = false;
       m_retainedExternalInstancesPendingSubmission.insert(handle);
     }
     m_retainedExternalBlases.clear();
@@ -1399,7 +1403,6 @@ namespace dxvk {
     assert(pBlas != nullptr);
     assert(result != ObjectCacheState::kInvalid);
 
-    // Update the input state, so we always have a reference to the original draw call state
     pBlas->frameLastTouched = m_device->getCurrentFrameId();
 
     // Generate smooth normals for geometry that is flagged via the SmoothNormals texture category.
@@ -2433,6 +2436,32 @@ namespace dxvk {
 
   static_assert(std::is_same_v< decltype(RtSurface::objectPickingValue), ObjectPickingValue>);
 
+  void SceneManager::setRetainedExternalSubmissionMode(
+      remixapi_InstanceHandle handle,
+      ReplacementInstance* replacementInstance,
+      RetainedExternalSubmissionMode mode) {
+    const bool requiresPerFrameSubmission =
+        mode == RetainedExternalSubmissionMode::PerFrame;
+    const bool wasPerFrameSubmission =
+        m_retainedExternalInstancesPerFrame.find(handle) !=
+        m_retainedExternalInstancesPerFrame.end();
+
+    if (replacementInstance != nullptr) {
+      replacementInstance->requiresPerFrameRetainedSubmission =
+          requiresPerFrameSubmission;
+    }
+
+    if (requiresPerFrameSubmission) {
+      m_retainedExternalInstancesPerFrame.insert(handle);
+    } else {
+      m_retainedExternalInstancesPerFrame.erase(handle);
+    }
+
+    if (wasPerFrameSubmission != requiresPerFrameSubmission) {
+      m_retainedExternalResourcesDirty = true;
+    }
+  }
+
   void SceneManager::createRetainedExternalInstance(
       remixapi_InstanceHandle handle,
       std::unique_ptr<ExternalDrawState> state) {
@@ -2448,9 +2477,10 @@ namespace dxvk {
 
     m_retainedExternalInstances.insert_or_assign(
         handle,
-        RetainedExternalInstance { std::move(*state), std::nullopt, false });
+        RetainedExternalInstance { std::move(*state), std::nullopt });
+    setRetainedExternalSubmissionMode(
+        handle, nullptr, RetainedExternalSubmissionMode::EventDriven);
     m_retainedExternalInstancesPendingSubmission.insert(handle);
-    m_retainedExternalInstancesPerFrame.erase(handle);
     m_retainedExternalResourcesDirty = true;
   }
 
@@ -2465,9 +2495,9 @@ namespace dxvk {
 
     retireRetainedExternalInstance(entry->second);
     entry->second.state = std::move(*state);
-    entry->second.requiresPerFrameSubmission = false;
+    setRetainedExternalSubmissionMode(
+        handle, nullptr, RetainedExternalSubmissionMode::EventDriven);
     m_retainedExternalInstancesPendingSubmission.insert(handle);
-    m_retainedExternalInstancesPerFrame.erase(handle);
   }
 
   void SceneManager::destroyRetainedExternalInstance(remixapi_InstanceHandle handle) {
@@ -2478,7 +2508,8 @@ namespace dxvk {
 
     retireRetainedExternalInstance(entry->second);
     m_retainedExternalInstancesPendingSubmission.erase(handle);
-    m_retainedExternalInstancesPerFrame.erase(handle);
+    setRetainedExternalSubmissionMode(
+        handle, nullptr, RetainedExternalSubmissionMode::EventDriven);
     m_retainedExternalInstances.erase(entry);
   }
 
@@ -2659,12 +2690,12 @@ namespace dxvk {
     for (remixapi_InstanceHandle handle : handles) {
       auto retainedIter = m_retainedExternalInstances.find(handle);
       if (retainedIter == m_retainedExternalInstances.end()) {
-        m_retainedExternalInstancesPerFrame.erase(handle);
+        setRetainedExternalSubmissionMode(
+            handle, nullptr, RetainedExternalSubmissionMode::EventDriven);
         continue;
       }
 
       RetainedExternalInstance& retained = retainedIter->second;
-      const bool wasPerFrameSubmission = retained.requiresPerFrameSubmission;
       ReplacementInstance* replacementInstance =
           submitExternalDraw(ctx, std::make_unique<ExternalDrawState>(retained.state));
 
@@ -2678,28 +2709,13 @@ namespace dxvk {
         retained.materializedIdentity.reset();
       }
 
-      if (replacementInstance != nullptr &&
-          replacementInstance->root.getUntyped() != nullptr) {
-        retained.requiresPerFrameSubmission =
-            !canRetainExternalInstanceWithoutSubmission(retained, *replacementInstance);
-      } else {
-        retained.requiresPerFrameSubmission = true;
-      }
-
-      if (replacementInstance != nullptr) {
-        replacementInstance->requiresPerFrameRetainedSubmission =
-            retained.requiresPerFrameSubmission;
-      }
-
-      if (retained.requiresPerFrameSubmission) {
-        m_retainedExternalInstancesPerFrame.insert(handle);
-      } else {
-        m_retainedExternalInstancesPerFrame.erase(handle);
-      }
-
-      if (wasPerFrameSubmission != retained.requiresPerFrameSubmission) {
-        m_retainedExternalResourcesDirty = true;
-      }
+      const RetainedExternalSubmissionMode mode =
+          replacementInstance != nullptr &&
+          replacementInstance->root.getUntyped() != nullptr &&
+          canRetainExternalInstanceWithoutSubmission(retained, *replacementInstance)
+          ? RetainedExternalSubmissionMode::EventDriven
+          : RetainedExternalSubmissionMode::PerFrame;
+      setRetainedExternalSubmissionMode(handle, replacementInstance, mode);
     }
   }
 
@@ -2929,7 +2945,8 @@ namespace dxvk {
         if (entry->second.state.mesh == handle) {
           const remixapi_InstanceHandle retainedHandle = entry->first;
           m_retainedExternalInstancesPendingSubmission.erase(retainedHandle);
-          m_retainedExternalInstancesPerFrame.erase(retainedHandle);
+          setRetainedExternalSubmissionMode(
+              retainedHandle, nullptr, RetainedExternalSubmissionMode::EventDriven);
           entry = m_retainedExternalInstances.erase(entry);
           removedRetainedPlacement = true;
         } else {

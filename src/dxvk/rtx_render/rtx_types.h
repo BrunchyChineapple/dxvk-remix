@@ -222,8 +222,8 @@ struct ReplacementInstance {
   // Explicit API ownership bypasses frame-age/anti-culling GC. The owner clears
   // this RI through DrawCallTracker when the retained handle is updated or destroyed.
   bool isRetainedExternal = false;
-  // Unsupported camera/material/replacement features stay on dynamic submission.
-  // Resource refresh lists contain only event-driven retained instances.
+  // Mirrored from SceneManager's retained handle mode so resource traversal
+  // can exclude per-frame instances without a handle lookup.
   bool requiresPerFrameRetainedSubmission = false;
 
   // When true, the aggregate object-space bounding boxes (geometryBoundingBox,
@@ -926,13 +926,9 @@ struct PooledBlas : public RcObject {
 
 // Information about a geometry, such as vertex buffers, and possibly a static BLAS for that geometry
 struct BlasEntry {
-  // input contains legacy or replacements (the data can be on CPU or GPU)
-  //  - Data on CPU is guaranteed to be alive during draw call's submission.
-  //  - Data can be made alive on CPU for longer with an explicit ref hold on it
-  //  - For shader based games the data may contain various unsupported formats a game might deliver the data in. 
-  //    That is converted and optimized in RtxGeometryUtils::interleaveGeometry. 
-  //    Fixed function games always use supported buffer formats/encodings etc...
-  DrawCallState input; 
+  // Cached draw state. setInput() promotes replacement geometry from the
+  // transient override pointer into geometryData before retaining the state.
+  DrawCallState input;
   // modifiedGeometryData contains the same geometry as "input" but it (may) have been transformed (i.e.interleaved vertex data, 
   // converted to optimal vertex formats [we prefer float32], will always be a triangle list and could be skinned)
   // - Data is on GPU 
@@ -948,11 +944,10 @@ struct BlasEntry {
   // Frame when the vertex data of this geometry was last updated, used to detect static geometries
   uint32_t frameLastUpdated = kInvalidFrameIndex;
 
-  // A retained instance may keep this entry linked while no draw call touches it.
-  // Pinning prevents DrawCallCache's similarity heuristic from repurposing the
-  // geometry before retained resources are refreshed during scene preparation.
-  // The flag is derived from m_retainedExternalLinkCount.
-  bool isRetainedExternalPinned = false;
+  // Retained links exclude this entry from similarity-based reassociation.
+  bool isRetainedExternalPinned() const {
+    return m_retainedExternalLinkCount != 0;
+  }
 
   Rc<PooledBlas> dynamicBlas = nullptr;
 
@@ -1001,7 +996,6 @@ struct BlasEntry {
 
   void addRetainedExternalLink() {
     ++m_retainedExternalLinkCount;
-    isRetainedExternalPinned = true;
   }
 
   void removeRetainedExternalLink() {
@@ -1010,7 +1004,6 @@ struct BlasEntry {
       return;
     }
     --m_retainedExternalLinkCount;
-    isRetainedExternalPinned = m_retainedExternalLinkCount != 0;
   }
 
   const std::unordered_set<RtInstance*>& getLinkedInstances() const { return m_linkedInstances; }

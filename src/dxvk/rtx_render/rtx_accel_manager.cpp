@@ -1746,6 +1746,40 @@ namespace dxvk {
     std::swap(currIndex, prevIndex);
   }
 
+  void AccelManager::finalizeRetainedInstanceUpload(
+      RtInstance& instance,
+      InstanceManager& instanceManager,
+      uint32_t currentFrameId) {
+    if (!instance.isRetainedExternal()) {
+      return;
+    }
+
+    BlasEntry* pBlas = instance.getBlas();
+    if (pBlas == nullptr) {
+      return;
+    }
+
+    // Retained BLAS resources were registered once per unique BLAS before the
+    // bindless table was prepared. Copy their frame-scoped indices before upload.
+    instanceManager.processInstanceBuffers(*pBlas, instance);
+
+    // The materialization/update frame keeps real motion history. Event-free
+    // frames settle motion and advance listeners/OMM without draw translation.
+    if (instance.getFrameLastUpdated() == currentFrameId) {
+      return;
+    }
+
+    instance.setFrameLastUpdated(currentFrameId);
+    RtSurface& surface = instance.surface;
+    if (!surface.isStatic) {
+      surface.prevObjectToWorld = surface.objectToWorld;
+      surface.isStatic = true;
+    }
+    surface.hasMaterialChanged = false;
+    surface.isPreservePath = true;
+    instanceManager.preserveInstance(instance, pBlas->input, nullptr);
+  }
+
   void AccelManager::uploadSurfaceData(
       Rc<DxvkContext> ctx,
       InstanceManager& instanceManager) {
@@ -1779,34 +1813,14 @@ namespace dxvk {
     // Write surface data
     std::size_t dataOffset = 0;
     surfacesGPUData.resize(surfacesGPUSize);
+    const uint32_t currentFrameId = m_device->getCurrentFrameId();
 
     for (uint32_t i = 0; i < m_reorderedSurfaces.size(); ++i) {
       RtInstance& currentInstance = *m_reorderedSurfaces[i];
       RtSurface& currentSurface = currentInstance.surface;
 
-      // Retained BLAS resources were registered once per unique BLAS before the
-      // bindless table was prepared. Copy those fresh frame-scoped indices here,
-      // avoiding a separate per-placement preserve/replay pass.
-      if (currentInstance.isRetainedExternal() && currentInstance.getBlas() != nullptr) {
-        BlasEntry& blas = *currentInstance.getBlas();
-        instanceManager.processInstanceBuffers(blas, currentInstance);
-
-        // The materialization/update frame keeps real motion history. On later
-        // event-free frames, settle motion and run the lightweight listener
-        // finalization once per unique instance. This advances OMM frame age and
-        // completes deferred OMM calculations without replaying draw translation.
-        const uint32_t currentFrameId = m_device->getCurrentFrameId();
-        if (currentInstance.getFrameLastUpdated() != currentFrameId) {
-          currentInstance.setFrameLastUpdated(currentFrameId);
-          if (!currentSurface.isStatic) {
-            currentSurface.prevObjectToWorld = currentSurface.objectToWorld;
-            currentSurface.isStatic = true;
-          }
-          currentSurface.hasMaterialChanged = false;
-          currentSurface.isPreservePath = true;
-          instanceManager.preserveInstance(currentInstance, blas.input, nullptr);
-        }
-      }
+      finalizeRetainedInstanceUpload(
+          currentInstance, instanceManager, currentFrameId);
 
       // For PointInstancer entries beyond the first, do nothing.  The GPU culling shader will 
       // patch per-instance transforms and set per-instance customInstanceIndex later.

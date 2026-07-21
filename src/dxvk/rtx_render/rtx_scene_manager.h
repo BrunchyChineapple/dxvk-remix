@@ -338,11 +338,20 @@ private:
 
   void drawReplacements(Rc<DxvkContext> ctx, const DrawCallState* input, const std::vector<AssetReplacement>* pReplacements, MaterialData& renderMaterialData, ReplacementInstance* replacementInstance);
 
+  enum class RetainedExternalSubmissionMode {
+    EventDriven,
+    PerFrame,
+  };
+
   struct RetainedExternalInstance {
     ExternalDrawState state;
     std::optional<XXH64_hash_t> materializedIdentity;
-    bool requiresPerFrameSubmission = false;
   };
+
+  void setRetainedExternalSubmissionMode(
+      remixapi_InstanceHandle handle,
+      ReplacementInstance* replacementInstance,
+      RetainedExternalSubmissionMode mode);
 
   // Materializes only create/update/invalidation work. Static retained instances
   // remain owned by their handles and do not replay draw translation every frame.
