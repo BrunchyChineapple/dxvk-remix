@@ -185,6 +185,7 @@ uint32_t getFirstBillboardIndex() const { return m_firstBillboard; }
   bool isMarkedForGC() const { return m_isMarkedForGC; }
 
   PrimInstanceOwner& getPrimInstanceOwner() { return m_primInstanceOwner; }
+  const PrimInstanceOwner& getPrimInstanceOwner() const { return m_primInstanceOwner; }
   
   void printDebugInfo() const;
 
