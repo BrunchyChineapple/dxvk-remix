@@ -120,6 +120,7 @@ std::unique_ptr<MessageChannelServer> gpClientMessageChannel;
 typedef IDirect3D9* (WINAPI* D3DC9)(UINT);
 typedef HRESULT(WINAPI* D3DC9Ex)(UINT, IDirect3D9Ex**);
 HMODULE ghModule;
+PFN_remixapi_HasMeshReplacement g_remixapiHasMeshReplacement = nullptr;
 LPDIRECT3D9 gpD3D;
 
 bool gOverwriteConditionAlreadyActive = false;
@@ -3158,6 +3159,26 @@ void ProcessDeviceCommandQueue() {
         break;
       }
 
+      case RemixApi_HasMeshReplacement:
+      {
+        const uint64_t sourceHashLo = DeviceBridge::get_data();
+        const uint64_t sourceHashHi = DeviceBridge::get_data();
+        const uint64_t sourceMeshHash = sourceHashLo | (sourceHashHi << 32);
+
+        remixapi_Bool hasReplacement = 0;
+        remixapi_ErrorCode result = REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+        if (sourceMeshHash != 0) {
+          result = g_remixapiHasMeshReplacement
+            ? g_remixapiHasMeshReplacement(sourceMeshHash, &hasReplacement)
+            : REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
+        }
+
+        ServerMessage response(Commands::Bridge_Response, currentUID);
+        response.send_data(static_cast<uint32_t>(result));
+        response.send_data(static_cast<uint32_t>(hasReplacement != 0));
+        break;
+      }
+
       case RemixApi_SetupCamera:
       {
         // Parameterized-EXT camera (the only camera pNext the wrapper sends).
@@ -3803,6 +3824,8 @@ bool InitializeD3D() {
   // Now check if loading the dll actually succeeded or not, and try to
   // create the D3D instance used for the lifetime of this process.
   if (ghModule != nullptr) {
+    g_remixapiHasMeshReplacement = reinterpret_cast<PFN_remixapi_HasMeshReplacement>(
+      GetProcAddress(ghModule, "remixapi_HasMeshReplacement"));
     auto Direct3DCreate9 = (D3DC9) GetProcAddress(ghModule, "Direct3DCreate9");
     if (nullptr == (gpD3D = Direct3DCreate9(D3D_SDK_VERSION))) {
       Logger::err(format_string("D3D9 interface object creation failed: %ld\n", GetLastError()));

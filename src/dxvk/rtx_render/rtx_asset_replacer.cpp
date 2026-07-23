@@ -31,16 +31,20 @@
 
 namespace dxvk {
 
+XXH64_hash_t AssetReplacer::resolveSelectedVariantHash(XXH64_hash_t hash) const {
+  std::lock_guard<sync::Spinlock> lock(m_variantInfosSpinlock);
+  const auto variantInfo = m_variantInfos.find(hash);
+  if (variantInfo != m_variantInfos.end()) {
+    hash += variantInfo->second.selectedVariant;
+  }
+  return hash;
+}
+
 std::vector<AssetReplacement>* AssetReplacer::getReplacementsForMesh(XXH64_hash_t hash) {
   if (!RtxOptions::getEnableReplacementMeshes())
     return nullptr;
 
-  auto variantInfo = m_variantInfos.find(hash);
-
-  if (variantInfo != m_variantInfos.end()) {
-    hash += variantInfo->second.selectedVariant;
-  }
-
+  hash = resolveSelectedVariantHash(hash);
   for (auto& mod : m_modManager.mods()) {
     if (auto replacement = mod->replacements().get<AssetReplacement::eMesh>(hash)) {
       return replacement;
@@ -48,6 +52,20 @@ std::vector<AssetReplacement>* AssetReplacer::getReplacementsForMesh(XXH64_hash_
   }
 
   return nullptr;
+}
+
+bool AssetReplacer::hasReplacementForMesh(XXH64_hash_t hash) const {
+  if (!RtxOptions::getEnableReplacementMeshes())
+    return false;
+
+  hash = resolveSelectedVariantHash(hash);
+  for (const auto& mod : m_modManager.mods()) {
+    if (mod->replacements().contains<AssetReplacement::eMesh>(hash)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 std::vector<const WorldAnchoredInstancer*> AssetReplacer::getWorldAnchoredInstancers() {
@@ -135,6 +153,7 @@ std::vector<Mod::State> AssetReplacer::getReplacementStates() const {
 }
 
 void AssetReplacer::updateSecretReplacements() {
+  std::lock_guard<sync::Spinlock> lock(m_variantInfosSpinlock);
   bool updated = false;
 
   m_variantInfos.clear();

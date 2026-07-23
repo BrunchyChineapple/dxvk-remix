@@ -2651,6 +2651,15 @@ extern "C"
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
 
+  REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_HasMeshReplacement(
+    uint64_t       sourceMeshHash,
+    remixapi_Bool* out_hasReplacement) {
+    return dxvk::fork_hooks::hasMeshReplacement(
+      tryAsDxvk(),
+      static_cast<XXH64_hash_t>(sourceMeshHash),
+      out_hasReplacement);
+  }
+
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_InitializeLibrary(const remixapi_InitializeLibraryInfo* info,
                                                                        remixapi_Interface* out_result) {
     if (!info || info->sType != REMIXAPI_STRUCT_TYPE_INITIALIZE_LIBRARY_INFO) {

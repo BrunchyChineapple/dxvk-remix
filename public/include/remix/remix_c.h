@@ -361,7 +361,7 @@ extern "C" {
   typedef struct remixapi_MeshInfoReplacementEXT {
     remixapi_StructType sType;
     void*               pNext;
-    // Replacement/capture identity; MeshInfo.hash remains the independently owned resource handle.
+    // Source-draw identity used for replacement lookup; MeshInfo.hash remains the independently owned resource handle.
     uint64_t            replacementHash;
   } remixapi_MeshInfoReplacementEXT;
 
@@ -386,6 +386,15 @@ extern "C" {
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyMesh)(
     remixapi_MeshHandle       handle);
+
+  // Optional standalone query. This is intentionally not part of remixapi_Interface,
+  // so older runtimes remain compatible with the fixed-size interface table.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_HasMeshReplacement)(
+    uint64_t                  sourceMeshHash,
+    remixapi_Bool*            out_hasReplacement);
+  REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_HasMeshReplacement(
+    uint64_t                  sourceMeshHash,
+    remixapi_Bool*            out_hasReplacement);
 
 
 

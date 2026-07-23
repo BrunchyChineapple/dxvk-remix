@@ -456,6 +456,15 @@ namespace dxvk {
     // Implementation in rtx_fork_api_entry.cpp.
     void remixApiVtableInit(remixapi_Interface& interf);
 
+    // Queries whether the currently selected variant for a source draw has a
+    // loaded mesh replacement. The device lock contains both variant lookup and
+    // replacement-map membership testing; no replacement pointer escapes.
+    // Implementation in rtx_fork_api_entry.cpp.
+    remixapi_ErrorCode hasMeshReplacement(
+      D3D9DeviceEx*  remixDevice,
+      XXH64_hash_t   sourceMeshHash,
+      remixapi_Bool* out_hasReplacement);
+
     // Sets SceneManager's atomic VRAM-compaction request flag; the render
     // thread consumes it in manageTextureVram on the next tick. Returns
     // REMIX_DEVICE_WAS_NOT_REGISTERED if remixDevice is null. Lock-free;

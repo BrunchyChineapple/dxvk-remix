@@ -1002,6 +1002,36 @@ extern "C" {
     return result;
   }
 
+  DLLEXPORT remixapi_ErrorCode __stdcall remixapi_HasMeshReplacement(
+    uint64_t       sourceMeshHash,
+    remixapi_Bool* out_hasReplacement) {
+    ASSERT_REMIXAPI_PFN_TYPE(remixapi_HasMeshReplacement);
+    if (sourceMeshHash == 0 || out_hasReplacement == nullptr) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+    *out_hasReplacement = 0;
+
+    UID currentUID = 0;
+    {
+      ClientMessage c(Commands::RemixApi_HasMeshReplacement);
+      currentUID = c.get_uid();
+      c.send_data(static_cast<uint32_t>(sourceMeshHash & 0xFFFFFFFFull));
+      c.send_data(static_cast<uint32_t>(sourceMeshHash >> 32));
+    }
+    WAIT_FOR_SERVER_RESPONSE(
+      "remixapi_HasMeshReplacement",
+      REMIXAPI_ERROR_CODE_GENERAL_FAILURE,
+      currentUID);
+
+    const auto result = static_cast<remixapi_ErrorCode>(DeviceBridge::get_data());
+    const uint32_t hasReplacement = DeviceBridge::get_data();
+    DeviceBridge::pop_front();
+    if (result == REMIXAPI_ERROR_CODE_SUCCESS) {
+      *out_hasReplacement = hasReplacement != 0 ? 1u : 0u;
+    }
+    return result;
+  }
+
 }
 
 }

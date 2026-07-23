@@ -864,6 +864,42 @@ namespace fork_hooks {
   }
 
   // ---------------------------------------------------------------------------
+  // hasMeshReplacement
+  //
+  // Performs a lock-contained membership query against the loaded replacement
+  // maps, including the currently selected secret variant. This deliberately
+  // returns only a boolean; no replacement pointer escapes the device lock.
+  // ---------------------------------------------------------------------------
+  remixapi_ErrorCode hasMeshReplacement(
+      D3D9DeviceEx*  remixDevice,
+      XXH64_hash_t   sourceMeshHash,
+      remixapi_Bool* out_hasReplacement) {
+    if (!out_hasReplacement) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+    *out_hasReplacement = 0;
+    if (sourceMeshHash == 0) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+    if (!remixDevice) {
+      return REMIXAPI_ERROR_CODE_REMIX_DEVICE_WAS_NOT_REGISTERED;
+    }
+
+    auto devLock = remixDevice->LockDevice();
+    auto device = remixDevice->GetDXVKDevice();
+    if (!device || !device->getCommon()) {
+      return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+    }
+    auto& assetReplacer = device->getCommon()->getSceneManager().getAssetReplacer();
+    if (!assetReplacer) {
+      return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+    }
+
+    *out_hasReplacement = assetReplacer->hasReplacementForMesh(sourceMeshHash) ? 1u : 0u;
+    return REMIXAPI_ERROR_CODE_SUCCESS;
+  }
+
+  // ---------------------------------------------------------------------------
   // requestVramCompaction (migration #7d)
   //
   // Sets an atomic flag that the render thread consumes in

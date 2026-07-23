@@ -164,6 +164,15 @@ namespace dxvk {
       return nullptr;
     }
 
+    // Tests replacement presence while the backing map is locked. Unlike get(),
+    // no pointer escapes the critical section.
+    template<AssetReplacement::Type T>
+    bool contains(XXH64_hash_t hash) const {
+      std::lock_guard<sync::Spinlock> lock(m_spinlock);
+      const auto& map = T == AssetReplacement::eMesh ? m_meshReplacers : m_lightReplacers;
+      return map.find(hash) != map.end();
+    }
+
     // Stores replacements of type T for a hash value.
     template<AssetReplacement::Type T>
     void set(XXH64_hash_t hash, std::vector<AssetReplacement>&& v) {
@@ -298,6 +307,7 @@ namespace dxvk {
 
   struct AssetReplacer {
     std::vector<AssetReplacement>* getReplacementsForMesh(XXH64_hash_t hash);
+    bool hasReplacementForMesh(XXH64_hash_t hash) const;
     std::vector<AssetReplacement>* getReplacementsForLight(XXH64_hash_t hash);
     MaterialData* getReplacementMaterial(XXH64_hash_t hash);
 
@@ -332,9 +342,16 @@ namespace dxvk {
                            const bool bEnabled) {
       const size_t selectedVariant =
         bEnabled ? variantId : VariantInfo::kDefaultVariant;
-      auto& variantInfo = m_variantInfos[assetHash];
-      if (variantInfo.selectedVariant != selectedVariant) {
-        variantInfo.selectedVariant = selectedVariant;
+      bool changed = false;
+      {
+        std::lock_guard<sync::Spinlock> lock(m_variantInfosSpinlock);
+        auto& variantInfo = m_variantInfos[assetHash];
+        if (variantInfo.selectedVariant != selectedVariant) {
+          variantInfo.selectedVariant = selectedVariant;
+          changed = true;
+        }
+      }
+      if (changed) {
         AssetReplacements::notifyMeshReplacementLookupChanged();
       }
     }
@@ -351,6 +368,7 @@ namespace dxvk {
     void destroyExternalMesh(remixapi_MeshHandle handle);
 
   private:
+    XXH64_hash_t resolveSelectedVariantHash(XXH64_hash_t hash) const;
     void updateSecretReplacements();
 
     bool m_bSecretReplacementsUpdated = false;
@@ -361,6 +379,7 @@ namespace dxvk {
       size_t selectedVariant = kDefaultVariant;
     };
 
+    mutable sync::Spinlock m_variantInfosSpinlock;
     fast_unordered_cache<VariantInfo> m_variantInfos;
     SecretReplacements m_secretReplacements;
 
