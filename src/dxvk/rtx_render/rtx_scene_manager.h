@@ -29,8 +29,6 @@
 #include <unordered_map>
 #include <variant>
 
-#include <remix/remix_c.h>
-
 #include "../dxvk_buffer.h"
 #include "../dxvk_image.h"
 #include "../dxvk_staging.h"
