@@ -80,6 +80,7 @@ namespace dxvk {
 
   extern bool g_allowSrgbConversionForOutput;
   extern bool g_forceKeepObjectPickingImage;
+  extern bool g_combineGuiInFinalColor;
 
   extern std::array<uint8_t, 3> g_customHighlightColor;
 }
@@ -771,8 +772,9 @@ namespace {
       if (flags & REMIXAPI_INSTANCE_CATEGORY_BIT_IGNORE_TRANSPARENCY_LAYER){ result.set(InstanceCategories::IgnoreTransparencyLayer); }
       if (flags & REMIXAPI_INSTANCE_CATEGORY_BIT_PARTICLE_EMITTER)         { result.set(InstanceCategories::ParticleEmitter); }
       if (flags & REMIXAPI_INSTANCE_CATEGORY_BIT_SMOOTH_NORMALS)           { result.set(InstanceCategories::SmoothNormals); }
+      if (flags & REMIXAPI_INSTANCE_CATEGORY_BIT_HAIR_CARDS)               { result.set(InstanceCategories::HairCards); }
       
-      static_assert((int)InstanceCategories::Count == 25, "Instance categories changed, please update Remix SDK");
+      static_assert((int)InstanceCategories::Count == 26, "Instance categories changed, please update Remix SDK");
       return result;
     }
 
@@ -1885,6 +1887,7 @@ namespace {
       return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
     }
 
+    dxvk::g_combineGuiInFinalColor = info.combineGuiInFinalColor;
     dxvk::g_allowSrgbConversionForOutput = !info.disableSrgbConversionForOutput;
     dxvk::g_allowMappingLegacyHashToObjectPickingValue = !info.editorModeEnabled;
 
@@ -1892,6 +1895,7 @@ namespace {
     if (info.editorModeEnabled) {
       const_cast<dxvk::LightManager::FallbackLightMode&>(dxvk::LightManager::fallbackLightMode()) = dxvk::LightManager::FallbackLightMode::Never;
       const_cast<bool&>(dxvk::DxvkPostFx::desaturateOthersOnHighlight()) = false;
+      const_cast<bool&>(dxvk::RtxOptions::showUICursor()) = false;
     }
 
     *out_pD3D9 = d3d9ex;
@@ -1908,6 +1912,7 @@ namespace {
       i.disableSrgbConversionForOutput = editorModeEnabled;
       i.forceNoVkSwapchain = editorModeEnabled;
       i.editorModeEnabled = editorModeEnabled;
+      i.combineGuiInFinalColor = !editorModeEnabled;
       static_assert(sizeof(remixapi_StartupInfo) == 40, "If changing, also set defaults here");
     }
     return remixapi_dxvk_CreateD3D9(i, out_pD3D9);
@@ -2023,12 +2028,54 @@ namespace {
     case REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_NORMALS:
     case REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_OBJECT_PICKING:
       break;
+    case REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_GUI:
+      if (!dxvk::ImGUI::enableExternalPresenter()) {
+        return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+      }
+      break;
     default:
       return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
     }
 
+    dxvk::Rc<dxvk::DxvkImage> destImage = destTexInfo->GetImage();
+    dxvk::Rc<dxvk::DxvkImageView> destImageView = nullptr;
+    if (type == REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_GUI) {
+      destImageView = destTexInfo->GetSampleView(false);
+    }
+    if (!destImage.ptr() ||
+        (type == REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_GUI && !destImageView.ptr())) {
+      return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+    }
+
+    dxvk::Rc<dxvk::DxvkImage> backbuffer0 = nullptr;
+    if (type == REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_FINAL_COLOR) {
+      IDirect3DSurface9* backbuffer = nullptr;
+      const HRESULT result = remixDevice->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &backbuffer);
+      if (FAILED(result) || !backbuffer) {
+        if (backbuffer) {
+          backbuffer->Release();
+        }
+        return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+      }
+
+      dxvk::D3D9Surface* backbufferSurface = static_cast<dxvk::D3D9Surface*>(backbuffer);
+      dxvk::D3D9CommonTexture* backbufferTexInfo = backbufferSurface->GetCommonTexture();
+      if (backbufferTexInfo) {
+        backbuffer0 = backbufferTexInfo->GetImage();
+      }
+      backbuffer->Release();
+
+      if (!backbuffer0.ptr()) {
+        return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+      }
+    }
+
     std::lock_guard lock { s_mutex };
-    remixDevice->EmitCs([cDest = destTexInfo->GetImage(), type = type](dxvk::DxvkContext* dxvkCtx) {
+
+    remixDevice->EmitCs([cDest = std::move(destImage),
+                         cDestView = std::move(destImageView),
+                         cBackbuffer = std::move(backbuffer0),
+                         type = type] (dxvk::DxvkContext* dxvkCtx) {
       auto* ctx = static_cast<dxvk::RtxContext*>(dxvkCtx);
 
       dxvk::Resources& resourceManager = ctx->getCommonObjects()->getResources();
@@ -2037,7 +2084,7 @@ namespace {
       dxvk::Rc<dxvk::DxvkImage> srcImage = nullptr;
       switch (type) {
       case REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_FINAL_COLOR:
-        srcImage = rtOutput.m_finalOutput.resource(dxvk::Resources::AccessType::Read).image;
+        srcImage = cBackbuffer;
         break;
       case REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_DEPTH:
         srcImage = rtOutput.m_primaryDepth.image;
@@ -2048,6 +2095,15 @@ namespace {
       case REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_OBJECT_PICKING:
         srcImage = rtOutput.m_primaryObjectPicking.image;
         break;
+      case REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_GUI: {
+        dxvk::DxvkRenderTargets renderTargets;
+        renderTargets.color[0].view = cDestView;
+        renderTargets.color[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        ctx->bindRenderTargets(renderTargets);
+        ctx->getCommonObjects()->getImgui().render(ctx, { cDestView->imageInfo().extent.width, cDestView->imageInfo().extent.height });
+
+        break;
+      }
       default:
         assert(!"unexpected remixapi_dxvk_CopyRenderingOutputType value");
         return;

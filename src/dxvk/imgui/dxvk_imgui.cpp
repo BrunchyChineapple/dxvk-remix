@@ -184,6 +184,7 @@ namespace dxvk {
     {"lightmaptextures","Lightmap Textures (optional)", &RtxOptions::lightmapTexturesObject()},
     {"ignorelights", "Ignore Lights (optional)", &RtxOptions::ignoreLightsObject()},
     {"particletextures", "Particle Texture (optional)", &RtxOptions::particleTexturesObject()},
+    {"haircardtextures", "Hair Cards Texture (optional)", &RtxOptions::hairCardTexturesObject()},
     {"beamtextures", "Beam Texture (optional)", &RtxOptions::beamTexturesObject()},
     {"ignoretransparencytextures", "Ignore Transparency Layer Texture (optional)", &RtxOptions::ignoreTransparencyLayerTexturesObject()},
     {"lightconvertertextures", "Add Light to Textures (optional)", &RtxOptions::lightConverterObject()},
@@ -788,6 +789,8 @@ namespace dxvk {
           RemixGui::SliderFloat("Metallic Bias", &OpaqueMaterialOptions::metallicBiasObject(), -1.0f, 1.f, "%.3f", sliderFlags);
           RemixGui::SliderFloat("Roughness Scale", &OpaqueMaterialOptions::roughnessScaleObject(), 0.0f, 1.f, "%.3f", sliderFlags);
           RemixGui::SliderFloat("Roughness Bias", &OpaqueMaterialOptions::roughnessBiasObject(), -1.0f, 1.f, "%.3f", sliderFlags);
+          RemixGui::DragFloat("Hair Cards Mip Bias", &RtxOptions::hairCardMipBiasObject(), 0.25f, -32.0f, 16.0f, "%.2f", sliderFlags);
+          RemixGui::DragFloat("Hair Cards Roughness Scale", &RtxOptions::hairCardRoughnessScaleObject(), 0.01f, 0.0f, 4.0f, "%.3f", sliderFlags);
           RemixGui::SliderFloat("Normal Strength##1", &OpaqueMaterialOptions::normalIntensityObject(), -10.0f, 10.f, "%.3f", sliderFlags);
 
           RemixGui::Checkbox("Enable dual-layer animated water normal for Opaque", &OpaqueMaterialOptions::layeredWaterNormalEnableObject());
@@ -878,11 +881,6 @@ namespace dxvk {
   }
 
   void ImGUI::update(const Rc<DxvkContext>& ctx) {
-    ImGui_ImplDxvk::NewFrame();
-    ImGui_ImplWin32_NewFrame();
-
-    ImGui::NewFrame();
-
     processHotkeys();
     updateQuickActions(ctx);
 
@@ -2832,6 +2830,7 @@ namespace dxvk {
         ImGui::Indent();
         RemixGui::Checkbox("Capture Vertices from Shader", &D3D9Rtx::useVertexCaptureObject());
         RemixGui::Checkbox("Capture Normals from Shader", &D3D9Rtx::useVertexCapturedNormalsObject());
+        RemixGui::Checkbox("Capture Texcoords from Shader", &D3D9Rtx::useVertexCapturedTexcoordsObject());
         RemixGui::Separator();
         RemixGui::Checkbox("Use World Transforms", &D3D9Rtx::useWorldMatricesForShadersObject());
         ImGui::Unindent();
@@ -4245,18 +4244,19 @@ namespace dxvk {
     ImGui::PopItemWidth();
   }
 
-  void ImGUI::render(
-    const HWND gameHwnd,
-    const Rc<DxvkContext>& ctx,
-    VkExtent2D         surfaceSize,
-    bool               vsync) {
+  void ImGUI::render(const Rc<DxvkContext>& ctx, VkExtent2D surfaceSize) {
     ScopedGpuProfileZone(ctx, "ImGUI Render");
+
+    const HWND gameHwnd = ctx->getCommonObjects()->getLastKnownWindowHandle();
+    
+    // We need a window to render the GUI and for input to work correctly
+    if (gameHwnd == 0) {
+      return;
+    }
 
     if (m_overlayWin.ptr() != nullptr) {
       m_overlayWin->update(gameHwnd);
     }
-
-    m_lastRenderVsyncStatus = vsync;
 
     ImGui::SetCurrentContext(m_context);
     ImPlot::SetCurrentContext(m_plotContext);
@@ -4281,11 +4281,17 @@ namespace dxvk {
       m_init = true;
     }
 
+    ImGui_ImplDxvk::NewFrame();
+    ImGui_ImplWin32_NewFrame(); 
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2((float) surfaceSize.width, (float) surfaceSize.height);
+
+    ImGui::NewFrame();
+
     update(ctx);
 
     ImGui_ImplDxvk::RenderDrawData(ImGui::GetDrawData(), ctx.ptr(), surfaceSize.width, surfaceSize.height);
-
-    ctx->setSpecConstant(VK_PIPELINE_BIND_POINT_GRAPHICS, 0, 0);
   }
 
   void ImGUI::createFontsTexture(const Rc<DxvkContext>& ctx) {
