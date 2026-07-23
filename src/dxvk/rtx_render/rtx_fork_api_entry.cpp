@@ -887,7 +887,7 @@ namespace fork_hooks {
 
     auto devLock = remixDevice->LockDevice();
     auto device = remixDevice->GetDXVKDevice();
-    if (!device || !device->getCommon()) {
+    if (!device.ptr() || !device->getCommon()) {
       return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
     }
     auto& assetReplacer = device->getCommon()->getSceneManager().getAssetReplacer();
