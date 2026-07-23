@@ -47,6 +47,18 @@ namespace dxvk {
   // Make this static and not a member of AccelManager to make it safe updating the count from ~PooledBlas()
   static int g_blasCount = 0;
 
+  static bool isInstanceAccelerationStructureActive(const RtInstance& instance) {
+    if (!instance.isRetainedExternal()) {
+      return true;
+    }
+
+    const ReplacementInstance* replacementInstance =
+        instance.getPrimInstanceOwner().getReplacementInstance();
+    return replacementInstance == nullptr ||
+           (replacementInstance->isRetainedExternalActive &&
+            replacementInstance->isRetainedExternalOwnershipWinner);
+  }
+
   AccelManager::AccelManager(DxvkDevice* device)
     : CommonDeviceObject(device)
     // Note: The scratch buffer's device address must be aligned to the minimum alignment required by the Vulkan runtime, otherwise
@@ -675,7 +687,13 @@ namespace dxvk {
         anyBucketDirty = true;
         m_ommBindPending = false;
       } else {
-        std::unordered_set<RtInstance*> currentInstanceSet(instances.begin(), instances.end());
+        std::unordered_set<RtInstance*> currentInstanceSet;
+        currentInstanceSet.reserve(instances.size());
+        for (RtInstance* instance : instances) {
+          if (isInstanceAccelerationStructureActive(*instance)) {
+            currentInstanceSet.insert(instance);
+          }
+        }
         bucketDirty.resize(m_cachedBuckets.size(), false);
 
         for (uint32_t bi = 0; bi < m_cachedBuckets.size(); ++bi) {
@@ -806,6 +824,10 @@ namespace dxvk {
     std::unordered_map<BlasBucketKey, BlasBucket*, BlasBucketKeyHash> bucketMap;
 
     for (RtInstance* instance : instances) {
+      if (!isInstanceAccelerationStructureActive(*instance)) {
+        continue;
+      }
+
       if (instance->isHidden()) {
         continue;
       }
@@ -1524,7 +1546,9 @@ namespace dxvk {
       uint32_t index = 0;
 
       for (const auto& billboard : instanceManager.getBillboards()) {
-        if (billboard.instanceMask == 0 || !billboard.allowAsIntersectionPrimitive) {
+        if (!isInstanceAccelerationStructureActive(*billboard.instance) ||
+            billboard.instanceMask == 0 ||
+            !billboard.allowAsIntersectionPrimitive) {
           continue;
         }
 

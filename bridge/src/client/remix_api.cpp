@@ -279,6 +279,13 @@ static void sendInstanceInfo(ClientMessage& c, const remixapi_InstanceInfo* info
         serializeAndSend<serialize::InstanceInfoGpuInstancing>(c, *pGpuInstancing);
         break;
       }
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_RETAINED_STATIC_OWNERSHIP_EXT:
+      {
+        auto* pOwnership = static_cast<const remixapi_InstanceInfoRetainedStaticOwnershipEXT* const>(infoItr);
+        send(c, Bool::True);
+        serializeAndSend<serialize::InstanceInfoRetainedStaticOwnership>(c, *pOwnership);
+        break;
+      }
       default:
       {
         Logger::warn("[RemixApi_InstanceInfo] Unknown sType. Skipping.");
@@ -399,6 +406,49 @@ remixapi_ErrorCode REMIXAPI_CALL remixapi_DestroyRetainedInstance(
     sendHandle(c, instanceHandle);
   }
   if (!waitForRetainedMutationResponse("remixapi_DestroyRetainedInstance", currentUID)) {
+    return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
+  }
+
+  const auto result = static_cast<remixapi_ErrorCode>(DeviceBridge::get_data());
+  DeviceBridge::pop_front();
+  return result;
+}
+
+remixapi_ErrorCode REMIXAPI_CALL remixapi_SetRetainedInstanceActivityBatch(
+  const remixapi_RetainedInstanceActivity* updates,
+  uint32_t updateCount) {
+  ASSERT_REMIXAPI_PFN_TYPE(remixapi_SetRetainedInstanceActivityBatch);
+  if (updateCount == 0) {
+    return REMIXAPI_ERROR_CODE_SUCCESS;
+  }
+  if (!updates) {
+    return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+  }
+
+  std::vector<InstanceHandle> handles;
+  handles.reserve(updateCount);
+  for (uint32_t i = 0; i < updateCount; ++i) {
+    if (!updates[i].handle) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+    handles.emplace_back(updates[i].handle);
+    if (!handles.back().isValid()) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+  }
+
+  UID currentUID = 0;
+  {
+    ClientMessage c(Commands::RemixApi_SetRetainedInstanceActivityBatch);
+    currentUID = c.get_uid();
+    c.send_data(updateCount);
+    for (uint32_t i = 0; i < updateCount; ++i) {
+      sendHandle(c, handles[i]);
+      c.send_data(static_cast<uint32_t>(updates[i].active != 0));
+    }
+  }
+  if (!waitForRetainedMutationResponse(
+          "remixapi_SetRetainedInstanceActivityBatch", currentUID)) {
     return REMIXAPI_ERROR_CODE_GENERAL_FAILURE;
   }
 
@@ -771,6 +821,8 @@ extern "C" {
       interf.CreateRetainedInstance = remixapi_CreateRetainedInstance;
       interf.UpdateRetainedInstance = remixapi_UpdateRetainedInstance;
       interf.DestroyRetainedInstance = remixapi_DestroyRetainedInstance;
+      interf.SetRetainedInstanceActivityBatch =
+        remixapi_SetRetainedInstanceActivityBatch;
       interf.CreateLight = remixapi_CreateLight;
       interf.CreateLightBatched = remixapi_CreateLightBatched;
       interf.DestroyLight = remixapi_DestroyLight;

@@ -197,6 +197,9 @@ namespace remix {
     Result< remixapi_InstanceHandle > CreateRetainedInstance(uint64_t identity, const remixapi_InstanceInfo& info);
     Result< void >                    UpdateRetainedInstance(remixapi_InstanceHandle handle, const remixapi_InstanceInfo& info);
     Result< void >                    DestroyRetainedInstance(remixapi_InstanceHandle handle);
+    Result< void >                    SetRetainedInstanceActivityBatch(
+      const remixapi_RetainedInstanceActivity* updates,
+      uint32_t updateCount);
     Result< remixapi_LightHandle >    CreateLight(const remixapi_LightInfo& info);
     Result< remixapi_LightHandle >    CreateLightBatched(const remixapi_LightInfo& info);
     Result< void >                    DestroyLight(remixapi_LightHandle handle);
@@ -251,7 +254,7 @@ namespace remix {
         return status;
       }
 
-      static_assert(sizeof(remixapi_Interface) == 352,
+      static_assert(sizeof(remixapi_Interface) == 360,
                     "Change version, update C++ wrapper when adding new functions");
 
       remix::Interface interfaceInCpp = {};
@@ -929,6 +932,12 @@ namespace remix {
 
   inline Result< void > Interface::DestroyRetainedInstance(remixapi_InstanceHandle handle) {
     return m_CInterface.DestroyRetainedInstance(handle);
+  }
+
+  inline Result< void > Interface::SetRetainedInstanceActivityBatch(
+      const remixapi_RetainedInstanceActivity* updates,
+      uint32_t updateCount) {
+    return m_CInterface.SetRetainedInstanceActivityBatch(updates, updateCount);
   }
 
 

@@ -910,6 +910,9 @@ std::unique_ptr<dxvk::ExternalDrawState> dxvk::RemixAPIPrivateAccessor::toRtDraw
     prototype.drawCallID = objectPicking->objectPickingValue;
   }
 
+  state->retainedStaticOwnership =
+    pnext::find<remixapi_InstanceInfoRetainedStaticOwnershipEXT>(&info) != nullptr;
+
   if (auto extBones = pnext::find<remixapi_InstanceInfoBoneTransformsEXT>(&info)) {
     const uint32_t boneCount =
       extBones->boneTransforms_count < REMIXAPI_INSTANCE_INFO_MAX_BONES_COUNT ?
@@ -1556,6 +1559,41 @@ namespace {
     remixDevice->EmitCs([handle](dxvk::DxvkContext* ctx) {
       ctx->getCommonObjects()->getSceneManager().destroyRetainedExternalInstance(handle);
     });
+    return REMIXAPI_ERROR_CODE_SUCCESS;
+  }
+
+  remixapi_ErrorCode REMIXAPI_CALL remixapi_SetRetainedInstanceActivityBatch(
+      const remixapi_RetainedInstanceActivity* updates,
+      uint32_t updateCount) {
+    dxvk::D3D9DeviceEx* remixDevice = tryAsDxvk();
+    if (!remixDevice) {
+      return REMIXAPI_ERROR_CODE_REMIX_DEVICE_WAS_NOT_REGISTERED;
+    }
+    if (updateCount == 0) {
+      return REMIXAPI_ERROR_CODE_SUCCESS;
+    }
+    if (updates == nullptr) {
+      return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+    }
+
+    std::lock_guard lock { s_mutex };
+    std::vector<remixapi_RetainedInstanceActivity> ownedUpdates;
+    ownedUpdates.reserve(updateCount);
+    for (uint32_t i = 0; i < updateCount; ++i) {
+      if (!updates[i].handle ||
+          s_retainedInstanceMeshes.find(updates[i].handle) ==
+              s_retainedInstanceMeshes.end()) {
+        return REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+      }
+      ownedUpdates.push_back(updates[i]);
+    }
+
+    auto devLock = remixDevice->LockDevice();
+    remixDevice->EmitCs(
+        [activityUpdates = std::move(ownedUpdates)](dxvk::DxvkContext* ctx) {
+          ctx->getCommonObjects()->getSceneManager()
+              .setRetainedExternalInstanceActivity(activityUpdates);
+        });
     return REMIXAPI_ERROR_CODE_SUCCESS;
   }
 
@@ -2774,10 +2812,11 @@ extern "C"
       interf.CreateRetainedInstance = remixapi_CreateRetainedInstance;
       interf.UpdateRetainedInstance = remixapi_UpdateRetainedInstance;
       interf.DestroyRetainedInstance = remixapi_DestroyRetainedInstance;
+      interf.SetRetainedInstanceActivityBatch = remixapi_SetRetainedInstanceActivityBatch;
       // Fork-added vtable slots (extern-C exported; delegated to fork hook)
       dxvk::fork_hooks::remixApiVtableInit(interf);
     }
-    static_assert(sizeof(interf) == 352, "Add/remove function registration");
+    static_assert(sizeof(interf) == 360, "Add/remove function registration");
 
     *out_result = interf;
     return REMIXAPI_ERROR_CODE_SUCCESS;

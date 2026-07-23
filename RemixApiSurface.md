@@ -25,7 +25,7 @@ the API, see [`docs/RemixApi.md`](docs/RemixApi.md).
 | `REMIXAPI_VERSION_GET_MINOR(version)` | `(((uint64_t)(version) >> 16) & (uint64_t)0xFFFFFFFF)` |
 | `REMIXAPI_VERSION_GET_PATCH(version)` | `(((uint64_t)(version)      ) & (uint64_t)0xFFFF)` |
 | `REMIXAPI_VERSION_MAJOR` | `0` |
-| `REMIXAPI_VERSION_MINOR` | `1000` |
+| `REMIXAPI_VERSION_MINOR` | `1005` |
 | `REMIXAPI_VERSION_PATCH` | `0` |
 | `REMIX_WINAPI_LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` | `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` |
 | `REMIX_WINAPI_LOAD_LIBRARY_SEARCH_DEFAULT_DIRS` | `LOAD_LIBRARY_SEARCH_DEFAULT_DIRS` |
@@ -55,6 +55,7 @@ the API, see [`docs/RemixApi.md`](docs/RemixApi.md).
 | `remixapi_MeshHandle` | `struct remixapi_MeshHandle_T*` |
 | `remixapi_LightHandle` | `struct remixapi_LightHandle_T*` |
 | `remixapi_TextureHandle` | `struct remixapi_TextureHandle_T*` |
+| `remixapi_InstanceHandle` | `struct remixapi_InstanceHandle_T*` |
 | `remixapi_Path` | `const wchar_t*` |
 | `remixapi_InstanceCategoryFlags` | `uint32_t` |
 
@@ -95,6 +96,8 @@ the API, see [`docs/RemixApi.md`](docs/RemixApi.md).
 | `REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_PARTICLE_SYSTEM_EXT` | `26` |  |
 | `REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_GPU_INSTANCING_EXT` | `27` |  |
 | `REMIXAPI_STRUCT_TYPE_CAMERA_MEDIUM_INFO` | `28` |  |
+| `REMIXAPI_STRUCT_TYPE_MESH_INFO_REPLACEMENT_EXT` | `29` |  |
+| `REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_RETAINED_STATIC_OWNERSHIP_EXT` | `30` |  |
 
 ### `remixapi_ErrorCode`
 
@@ -170,6 +173,7 @@ toRtCategories(), so the bit values are free to match upstream and must.)
 | `REMIXAPI_INSTANCE_CATEGORY_BIT_IGNORE_TRANSPARENCY_LAYER` | `1 << 22` |  |
 | `REMIXAPI_INSTANCE_CATEGORY_BIT_PARTICLE_EMITTER` | `1 << 23` |  |
 | `REMIXAPI_INSTANCE_CATEGORY_BIT_SMOOTH_NORMALS` | `1 << 24` |  |
+| `REMIXAPI_INSTANCE_CATEGORY_BIT_HAIR_CARDS` | `1 << 25` |  |
 
 ### `remixapi_dxvk_CopyRenderingOutputType`
 
@@ -179,6 +183,7 @@ toRtCategories(), so the bit values are free to match upstream and must.)
 | `REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_DEPTH` | `1` |  |
 | `REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_NORMALS` | `2` |  |
 | `REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_OBJECT_PICKING` | `3` |  |
+| `REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_GUI` | `4` |  |
 
 ### `remixapi_Format`
 
@@ -251,6 +256,7 @@ Texture upload API
 | `remixapi_Bool` | `disableSrgbConversionForOutput` |  |
 | `remixapi_Bool` | `forceNoVkSwapchain` | If true, 'dxvk_GetExternalSwapchain' can be used to retrieve a raw VkImage, so the application can present it, for example by using OpenGL interop: converting VkImage to OpenGL, and presenting it via OpenGL. Default: false. Use VkSwapchainKHR to present frame into HWND. |
 | `remixapi_Bool` | `editorModeEnabled` |  |
+| `remixapi_Bool` | `combineGuiInFinalColor` | With this disabled, the user must fetch the GUI buffer using the, remixapi_dxvk_CopyRenderingOutputType, api with the, remixapi_dxvk_CopyRenderingOutputType, field set to: 'REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_GUI' Otherwise the GUI will be drawn in the final color buffer. |
 
 ### `remixapi_MaterialInfoOpaqueEXT`
 
@@ -379,6 +385,14 @@ Valid only if remixapi_MaterialInfo contains remixapi_MaterialInfoOpaqueEXT in p
 | `remixapi_Bool` | `skinning_hasvalue` |  |
 | `remixapi_MeshInfoSkinning` | `skinning_value` |  |
 | `remixapi_MaterialHandle` | `material` |  |
+
+### `remixapi_MeshInfoReplacementEXT`
+
+| Type | Field | Notes |
+| :-- | :-- | :-- |
+| `remixapi_StructType` | `sType` |  |
+| `void*` | `pNext` |  |
+| `uint64_t` | `replacementHash` | Source-draw identity used for replacement lookup; MeshInfo.hash remains the independently owned resource handle. |
 
 ### `remixapi_MeshInfo`
 
@@ -552,6 +566,16 @@ New particle system struct with animated curve support
 | `const remixapi_Transform*` | `instanceTransforms_values` |  |
 | `uint32_t` | `instanceTransforms_count` |  |
 
+### `remixapi_InstanceInfoRetainedStaticOwnershipEXT`
+
+Opts an explicitly retained, source-mapped static into renderer-owned
+near-scene ownership. Generated, unmapped, and terrain instances omit it.
+
+| Type | Field | Notes |
+| :-- | :-- | :-- |
+| `remixapi_StructType` | `sType` |  |
+| `void*` | `pNext` |  |
+
 ### `remixapi_InstanceInfo`
 
 | Type | Field | Notes |
@@ -562,6 +586,13 @@ New particle system struct with animated curve support
 | `remixapi_MeshHandle` | `mesh` |  |
 | `remixapi_Transform` | `transform` |  |
 | `remixapi_Bool` | `doubleSided` |  |
+
+### `remixapi_RetainedInstanceActivity`
+
+| Type | Field | Notes |
+| :-- | :-- | :-- |
+| `remixapi_InstanceHandle` | `handle` |  |
+| `remixapi_Bool` | `active` |  |
 
 ### `remixapi_LightInfoLightShaping`
 
@@ -805,6 +836,15 @@ Parameters:
 
 - `remixapi_MeshHandle handle`
 
+### `PFN_remixapi_HasMeshReplacement`
+
+Returns: `remixapi_ErrorCode`
+
+Parameters:
+
+- `uint64_t sourceMeshHash`
+- `remixapi_Bool* out_hasReplacement`
+
 ### `PFN_remixapi_SetupCamera`
 
 Returns: `remixapi_ErrorCode`
@@ -828,6 +868,42 @@ Returns: `remixapi_ErrorCode`
 Parameters:
 
 - `const remixapi_InstanceInfo* info`
+
+### `PFN_remixapi_CreateRetainedInstance`
+
+Returns: `remixapi_ErrorCode`
+
+Parameters:
+
+- `uint64_t identity`
+- `const remixapi_InstanceInfo* info`
+- `remixapi_InstanceHandle* out_handle`
+
+### `PFN_remixapi_UpdateRetainedInstance`
+
+Returns: `remixapi_ErrorCode`
+
+Parameters:
+
+- `remixapi_InstanceHandle handle`
+- `const remixapi_InstanceInfo* info`
+
+### `PFN_remixapi_DestroyRetainedInstance`
+
+Returns: `remixapi_ErrorCode`
+
+Parameters:
+
+- `remixapi_InstanceHandle handle`
+
+### `PFN_remixapi_SetRetainedInstanceActivityBatch`
+
+Returns: `remixapi_ErrorCode`
+
+Parameters:
+
+- `const remixapi_RetainedInstanceActivity* updates`
+- `uint32_t updateCount`
 
 ### `PFN_remixapi_CreateLight`
 
@@ -1163,3 +1239,7 @@ Reordering or inserting in the middle breaks backwards compatibility.
 | `PFN_remixapi_GetVramStats` | `GetVramStats` |  |
 | `PFN_remixapi_RequestTextureVramFree` | `RequestTextureVramFree` |  |
 | `PFN_remixapi_GetGameValue` | `GetGameValue` |  |
+| `PFN_remixapi_CreateRetainedInstance` | `CreateRetainedInstance` | Explicit-lifetime external geometry. Retained lifecycle slots start in v0.1001.0; batched acceleration-structure activity starts in v0.1004.0. |
+| `PFN_remixapi_UpdateRetainedInstance` | `UpdateRetainedInstance` |  |
+| `PFN_remixapi_DestroyRetainedInstance` | `DestroyRetainedInstance` |  |
+| `PFN_remixapi_SetRetainedInstanceActivityBatch` | `SetRetainedInstanceActivityBatch` |  |

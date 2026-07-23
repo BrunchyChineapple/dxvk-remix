@@ -3,6 +3,56 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1005.0]
+
+### Added
+- `remixapi_InstanceInfoRetainedStaticOwnershipEXT`, an instance `pNext` provenance marker for explicitly mapped retained statics that may own matching near-scene submissions.
+
+### Changed
+- Retained near-scene claims now require the marker, an independent `remixapi_MeshInfoReplacementEXT` source identity, and materialized renderable geometry. Generated or unmapped statics and Terrain remain fail-open and cannot suppress ordinary geometry.
+- The x64 `remixapi_Interface` remains 360 bytes because this release adds no function slot. Consumers must rebuild against the 0.1005.0 header.
+
+### Fixed
+- The 32-bit bridge now defines and transports the retained-static ownership extension and forwards `SetRetainedInstanceActivityBatch` atomically instead of exposing a null interface slot.
+- Equivalent retained claims with mixed activity now select the lowest active handle for acceleration-structure membership while retaining ordinary-geometry ownership when all claims are inactive.
+
+## [0.1004.0]
+
+### Added
+- `remixapi_RetainedInstanceActivity` and the append-only `SetRetainedInstanceActivityBatch` interface slot for changing retained acceleration-structure activity in one validated batch.
+
+### Changed
+- Retained instances remain active by default. Callers may omit selected retained geometry from BLAS/TLAS construction without destroying its identity or draw state; pooled acceleration structures may rebuild after reactivation.
+- The x64 `remixapi_Interface` size is now 360 bytes. Consumers must rebuild against the 0.1004.0 header.
+
+## [0.1003.0]
+
+### Added
+- `remixapi_StartupInfo.combineGuiInFinalColor` and `REMIXAPI_DXVK_COPY_RENDERING_OUTPUT_TYPE_GUI` from the NVIDIA GUI-output integration.
+- `REMIXAPI_INSTANCE_CATEGORY_BIT_HAIR_CARDS` for preserving alpha-tested hair geometry at distance.
+
+### Fixed
+- `remixapi_dxvk_CopyRenderingOutput` resource validation and ownership across the NVIDIA merge.
+- The `remixapi_HasMeshReplacement` implementation now tests `Rc<DxvkDevice>::ptr()` explicitly, fixing MSVC C2678/C2088 in DebugOptimized builds.
+
+## [0.1002.0]
+
+### Added
+- `remixapi_MeshInfoReplacementEXT`, which separates source-draw replacement/capture identity from the independently owned `remixapi_MeshInfo.hash` resource handle.
+- Standalone optional `remixapi_HasMeshReplacement`, including bridge forwarding, for querying loaded replacement maps without extending the fixed-size `remixapi_Interface` table.
+
+### Changed
+- External mesh capture and replacement lookup use `replacementHash` when the extension is present while preserving the mesh resource hash for ownership.
+
+## [0.1001.0]
+
+### Added
+- `remixapi_InstanceHandle` and the append-only `CreateRetainedInstance`, `UpdateRetainedInstance`, and `DestroyRetainedInstance` interface slots.
+- Renderer-owned retained-instance replay before generic scene garbage collection and TLAS preparation.
+
+### Fixed
+- Retained instances are destroyed before referenced external mesh storage during explicit mesh destruction and shutdown.
+
 ## [0.4.2]
 
 ### Added

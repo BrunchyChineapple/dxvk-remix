@@ -109,6 +109,9 @@ struct ExternalDrawState {
   // Caller-owned identity salt for explicitly retained draws. Transient external
   // draws leave this null and preserve their existing identity-hash behavior.
   remixapi_InstanceHandle retainedHandle {};
+  // Explicit provenance that this retained static maps to a captured near-scene
+  // source draw. Generated or otherwise unmapped geometry leaves this false.
+  bool retainedStaticOwnership {};
   CameraType::Enum cameraType {};
   CategoryFlags categories {};
   bool doubleSided {};
@@ -157,11 +160,14 @@ public:
   void submitDrawState(Rc<DxvkContext> ctx, const DrawCallState& input, const MaterialData* overrideMaterialData);
   ReplacementInstance* submitExternalDraw(const Rc<DxvkContext>& ctx, std::unique_ptr<ExternalDrawState> state);
 
-  // Explicit-lifetime external instances are owned by the renderer and refreshed
-  // before generic scene GC. All mutation methods run on the dxvk-cs thread.
+  // Explicit-lifetime external instances are owned by the renderer and
+  // materialized or refreshed for scene preparation only when required.
+  // All mutation methods run on the dxvk-cs thread.
   void createRetainedExternalInstance(remixapi_InstanceHandle handle, std::unique_ptr<ExternalDrawState> state);
   void updateRetainedExternalInstance(remixapi_InstanceHandle handle, std::unique_ptr<ExternalDrawState> state);
   void destroyRetainedExternalInstance(remixapi_InstanceHandle handle);
+  void setRetainedExternalInstanceActivity(
+      const std::vector<remixapi_RetainedInstanceActivity>& updates);
 
   // Submits all clean-path (world-anchored) UsdGeomPointInstancers once per frame. These are authored
   // under /RootNode/ScatterBrush and are not anchored to a captured game draw call, so they must be
@@ -346,7 +352,32 @@ private:
   struct RetainedExternalInstance {
     ExternalDrawState state;
     std::optional<XXH64_hash_t> materializedIdentity;
+    bool active = true;
   };
+
+  struct StaticOwnershipKey {
+    XXH64_hash_t sourceDrawHash = kEmptyHash;
+    Matrix4 objectToWorld;
+  };
+
+  struct RetainedStaticOwnershipClaim {
+    remixapi_InstanceHandle handle {};
+    XXH64_hash_t materializedIdentity = kEmptyHash;
+    Matrix4 objectToWorld;
+    bool active = true;
+  };
+
+  std::optional<StaticOwnershipKey> buildNativeStaticOwnershipKey(
+      const DrawCallState& drawCall) const;
+  std::optional<StaticOwnershipKey> buildExternalStaticOwnershipKey(
+      const ExternalDrawState& state,
+      bool requireIndependentSourceIdentity) const;
+  bool hasRenderableRetainedStaticGeometry(
+      const ReplacementInstance& replacementInstance) const;
+  void markRetainedStaticOwnershipDirty();
+  void rebuildRetainedStaticOwnershipClaims();
+  bool hasRetainedStaticOwnershipClaim(const StaticOwnershipKey& key);
+  void pruneOrdinaryStaticOwnershipDuplicates();
 
   void setRetainedExternalSubmissionMode(
       remixapi_InstanceHandle handle,
@@ -438,6 +469,14 @@ private:
   std::unordered_map<remixapi_InstanceHandle, RetainedExternalInstance> m_retainedExternalInstances;
   std::unordered_set<remixapi_InstanceHandle> m_retainedExternalInstancesPendingSubmission;
   std::unordered_set<remixapi_InstanceHandle> m_retainedExternalInstancesPerFrame;
+
+  // Successful retained replacement materializations claim matching ordinary
+  // source-draw/transform pairs. The registry is rebuilt only after ownership
+  // topology changes and keeps duplicate arbitration deterministic.
+  std::unordered_map<XXH64_hash_t, std::vector<RetainedStaticOwnershipClaim>>
+      m_retainedStaticOwnershipClaims;
+  bool m_retainedStaticOwnershipDirty = true;
+  bool m_retainedStaticOwnershipPrunePending = false;
 
   // Rebuilt only when retained topology/material ownership changes. These compact
   // unique-resource lists replace the old per-placement preserve walk.

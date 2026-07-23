@@ -19,6 +19,8 @@
 * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 * DEALINGS IN THE SOFTWARE.
 */
+#include <algorithm>
+#include <cmath>
 #include <limits>
 #include <mutex>
 #include <vector>
@@ -55,10 +57,50 @@
 #include "rtx/pass/particles/particle_system_common.h"
 
 namespace {
+  constexpr float kStaticOwnershipBasisTolerance = 1.0e-4f;
+  constexpr float kStaticOwnershipTranslationTolerance = 1.0e-3f;
+
   // helper function to ensure generating spatialMapHash for external draws is done the same way in multiple places.
   XXH64_hash_t spatialMapHashForExternalDrawMesh(remixapi_MeshHandle mesh) {
     const uintptr_t meshId = reinterpret_cast<uintptr_t>(mesh);
     return XXH3_64bits(&meshId, sizeof(meshId));
+  }
+
+  bool isStaticOwnershipTransformFinite(const dxvk::Matrix4& transform) {
+    for (uint32_t column = 0; column < 4; ++column) {
+      for (uint32_t row = 0; row < 4; ++row) {
+        if (!std::isfinite(transform[column][row])) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  bool staticOwnershipTransformsMatch(
+      const dxvk::Matrix4& a,
+      const dxvk::Matrix4& b) {
+    if (!isStaticOwnershipTransformFinite(a) ||
+        !isStaticOwnershipTransformFinite(b)) {
+      return false;
+    }
+
+    for (uint32_t column = 0; column < 4; ++column) {
+      for (uint32_t row = 0; row < 4; ++row) {
+        const bool isTranslation = column == 3 && row < 3;
+        const float tolerance = isTranslation
+            ? kStaticOwnershipTranslationTolerance
+            : kStaticOwnershipBasisTolerance;
+        if (std::fabs(a[column][row] - b[column][row]) > tolerance) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  uintptr_t retainedHandleValue(remixapi_InstanceHandle handle) {
+    return reinterpret_cast<uintptr_t>(handle);
   }
 } // namespace
 
@@ -292,6 +334,9 @@ namespace dxvk {
     m_retainedExternalBlases.clear();
     m_retainedExternalSurfaceMaterials.clear();
     m_retainedExternalResourcesDirty = true;
+    m_retainedStaticOwnershipClaims.clear();
+    m_retainedStaticOwnershipDirty = true;
+    m_retainedStaticOwnershipPrunePending = false;
 
     // Called before instance manager's clear, so that it resets all tracked instances in Opacity Micromap manager at once
     if (m_opacityMicromapManager.get())
@@ -362,6 +407,9 @@ namespace dxvk {
     m_retainedExternalInstancesPerFrame.clear();
     m_retainedExternalBlases.clear();
     m_retainedExternalSurfaceMaterials.clear();
+    m_retainedStaticOwnershipClaims.clear();
+    m_retainedStaticOwnershipDirty = true;
+    m_retainedStaticOwnershipPrunePending = false;
     m_accelManager.onDestroy();
     if (m_opacityMicromapManager) {
       m_opacityMicromapManager->onDestroy();
@@ -681,8 +729,23 @@ namespace dxvk {
       }
     }
 
+    const auto staticOwnershipKey = buildNativeStaticOwnershipKey(input);
+    if (staticOwnershipKey.has_value() &&
+        hasRetainedStaticOwnershipClaim(*staticOwnershipKey)) {
+      m_retainedStaticOwnershipPrunePending = true;
+    }
+
     ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(
         input, m_rayPortalManager, overrideMaterialData);
+    replacementInstance->hasStaticOwnershipKey = staticOwnershipKey.has_value();
+    if (staticOwnershipKey.has_value()) {
+      replacementInstance->staticOwnershipSourceHash =
+          staticOwnershipKey->sourceDrawHash;
+      replacementInstance->staticOwnershipTransform =
+          staticOwnershipKey->objectToWorld;
+    } else {
+      replacementInstance->staticOwnershipSourceHash = kEmptyHash;
+    }
 
     const uint32_t currentFrameId = m_device->getCurrentFrameId();
     const bool secondSubmissionThisFrame = (replacementInstance->frameLastSeen == currentFrameId);
@@ -2099,6 +2162,7 @@ namespace dxvk {
     // Materialize retained create/update/invalidation events before GC. Stable
     // retained geometry has explicit ownership and performs no draw replay here.
     submitRetainedExternalInstances(ctx);
+    pruneOrdinaryStaticOwnershipDuplicates();
 
   #ifdef REMIX_DEVELOPMENT
     if (m_device->getCurrentFrameId() == RtxOptions::dumpAllInstancesOnFrame()) {
@@ -2438,6 +2502,289 @@ namespace dxvk {
 
   static_assert(std::is_same_v< decltype(RtSurface::objectPickingValue), ObjectPickingValue>);
 
+  std::optional<SceneManager::StaticOwnershipKey>
+  SceneManager::buildNativeStaticOwnershipKey(const DrawCallState& drawCall) const {
+    if (drawCall.getSkinningState().numBones != 0 ||
+        drawCall.getCategoryFlags().test(InstanceCategories::ParticleEmitter) ||
+        drawCall.getCategoryFlags().test(InstanceCategories::Terrain)) {
+      return std::nullopt;
+    }
+
+    const RasterGeometry& geometry = drawCall.getGeometryData();
+    if (geometry.hashes[HashComponents::LegacyPositions0] == kEmptyHash ||
+        geometry.hashes[HashComponents::LegacyIndices] == kEmptyHash) {
+      return std::nullopt;
+    }
+
+    StaticOwnershipKey key;
+    key.sourceDrawHash =
+        geometry.getHashForRuleLegacy(rules::LegacyAssetHash0) ^
+        drawCall.getMaterialData().getHash();
+    key.objectToWorld = drawCall.getTransformData().objectToWorld;
+    if (key.sourceDrawHash == kEmptyHash ||
+        !isStaticOwnershipTransformFinite(key.objectToWorld)) {
+      return std::nullopt;
+    }
+    return key;
+  }
+
+  std::optional<SceneManager::StaticOwnershipKey>
+  SceneManager::buildExternalStaticOwnershipKey(
+      const ExternalDrawState& state,
+      bool requireIndependentSourceIdentity) const {
+    if (state.cameraType != CameraType::Main ||
+        state.optionalParticleDesc.has_value() ||
+        !state.gpuInstancingTransforms.empty() ||
+        state.drawCall.getSkinningState().numBones != 0 ||
+        state.drawCall.getCategoryFlags().test(InstanceCategories::ParticleEmitter) ||
+        state.drawCall.getCategoryFlags().test(InstanceCategories::Terrain) ||
+        (requireIndependentSourceIdentity && !state.retainedStaticOwnership)) {
+      return std::nullopt;
+    }
+
+    const std::vector<RasterGeometry>& submeshes =
+        m_pReplacer->accessExternalMesh(state.mesh);
+    if (submeshes.empty() || submeshes[0].externalMesh == nullptr) {
+      return std::nullopt;
+    }
+
+    const remixapi_MeshHandle sourceHandle = submeshes[0].externalMesh;
+    if (requireIndependentSourceIdentity && sourceHandle == state.mesh) {
+      return std::nullopt;
+    }
+
+    StaticOwnershipKey key;
+    key.sourceDrawHash = static_cast<XXH64_hash_t>(
+        reinterpret_cast<uintptr_t>(sourceHandle));
+    key.objectToWorld = state.drawCall.getTransformData().objectToWorld;
+    if (key.sourceDrawHash == kEmptyHash ||
+        !isStaticOwnershipTransformFinite(key.objectToWorld)) {
+      return std::nullopt;
+    }
+    return key;
+  }
+
+  bool SceneManager::hasRenderableRetainedStaticGeometry(
+      const ReplacementInstance& replacementInstance) const {
+    if (replacementInstance.root.getUntyped() == nullptr) {
+      return false;
+    }
+
+    for (const PrimInstance& prim : replacementInstance.prims) {
+      if (prim.getType() != PrimInstance::Type::Instance) {
+        continue;
+      }
+      const RtInstance* instance = prim.getInstance();
+      if (instance != nullptr &&
+          !instance->isMarkedForGC() &&
+          instance->getBlas() != nullptr) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void SceneManager::markRetainedStaticOwnershipDirty() {
+    m_retainedStaticOwnershipDirty = true;
+  }
+
+  void SceneManager::rebuildRetainedStaticOwnershipClaims() {
+    m_retainedStaticOwnershipClaims.clear();
+
+    std::unordered_map<XXH64_hash_t, bool> desiredWinnerByIdentity;
+    desiredWinnerByIdentity.reserve(m_retainedExternalInstances.size());
+
+    for (const auto& [handle, retained] : m_retainedExternalInstances) {
+      if (!retained.materializedIdentity.has_value()) {
+        continue;
+      }
+
+      ReplacementInstance* replacementInstance =
+          m_drawCallTracker.findReplacementInstanceByIdentity(
+              *retained.materializedIdentity);
+      if (replacementInstance == nullptr ||
+          !replacementInstance->isRetainedExternal) {
+        continue;
+      }
+
+      desiredWinnerByIdentity.emplace(*retained.materializedIdentity, true);
+      const auto key = buildExternalStaticOwnershipKey(
+          retained.state, true);
+      if (!key.has_value() ||
+          !hasRenderableRetainedStaticGeometry(*replacementInstance)) {
+        continue;
+      }
+
+      m_retainedStaticOwnershipClaims[key->sourceDrawHash].push_back({
+          handle,
+          *retained.materializedIdentity,
+          key->objectToWorld,
+          retained.active,
+      });
+    }
+
+    for (auto& claimsEntry : m_retainedStaticOwnershipClaims) {
+      auto& claims = claimsEntry.second;
+      std::sort(claims.begin(), claims.end(),
+          [](const RetainedStaticOwnershipClaim& a,
+             const RetainedStaticOwnershipClaim& b) {
+            if (a.objectToWorld[3].x != b.objectToWorld[3].x) {
+              return a.objectToWorld[3].x < b.objectToWorld[3].x;
+            }
+            if (a.objectToWorld[3].y != b.objectToWorld[3].y) {
+              return a.objectToWorld[3].y < b.objectToWorld[3].y;
+            }
+            if (a.objectToWorld[3].z != b.objectToWorld[3].z) {
+              return a.objectToWorld[3].z < b.objectToWorld[3].z;
+            }
+            return retainedHandleValue(a.handle) < retainedHandleValue(b.handle);
+          });
+
+      for (const RetainedStaticOwnershipClaim& claim : claims) {
+        const float minX =
+            claim.objectToWorld[3].x - kStaticOwnershipTranslationTolerance;
+        const float maxX =
+            claim.objectToWorld[3].x + kStaticOwnershipTranslationTolerance;
+        auto candidate = std::lower_bound(
+            claims.begin(), claims.end(), minX,
+            [](const RetainedStaticOwnershipClaim& value, float x) {
+              return value.objectToWorld[3].x < x;
+            });
+
+        uintptr_t winner = retainedHandleValue(claim.handle);
+        std::optional<uintptr_t> activeWinner;
+        for (; candidate != claims.end() &&
+               candidate->objectToWorld[3].x <= maxX;
+             ++candidate) {
+          if (!staticOwnershipTransformsMatch(
+                  claim.objectToWorld, candidate->objectToWorld)) {
+            continue;
+          }
+
+          const uintptr_t candidateHandle =
+              retainedHandleValue(candidate->handle);
+          winner = std::min(winner, candidateHandle);
+          if (candidate->active &&
+              (!activeWinner.has_value() ||
+               candidateHandle < *activeWinner)) {
+            activeWinner = candidateHandle;
+          }
+        }
+        if (activeWinner.has_value()) {
+          winner = *activeWinner;
+        }
+        desiredWinnerByIdentity[claim.materializedIdentity] =
+            retainedHandleValue(claim.handle) == winner;
+      }
+    }
+
+    bool accelerationMembershipChanged = false;
+    for (const auto& [identity, desiredWinner] : desiredWinnerByIdentity) {
+      ReplacementInstance* replacementInstance =
+          m_drawCallTracker.findReplacementInstanceByIdentity(identity);
+      if (replacementInstance == nullptr ||
+          replacementInstance->isRetainedExternalOwnershipWinner == desiredWinner) {
+        continue;
+      }
+      replacementInstance->isRetainedExternalOwnershipWinner = desiredWinner;
+      accelerationMembershipChanged = true;
+    }
+
+    m_retainedStaticOwnershipDirty = false;
+    m_retainedStaticOwnershipPrunePending = true;
+    if (accelerationMembershipChanged) {
+      m_instanceManager.notifySceneChanged();
+    }
+  }
+
+  bool SceneManager::hasRetainedStaticOwnershipClaim(
+      const StaticOwnershipKey& key) {
+    if (AssetReplacements::getMeshReplacementGeneration() !=
+        m_retainedExternalReplacementGeneration) {
+      return false;
+    }
+    if (m_retainedStaticOwnershipDirty) {
+      rebuildRetainedStaticOwnershipClaims();
+    }
+
+    const auto sourceClaims =
+        m_retainedStaticOwnershipClaims.find(key.sourceDrawHash);
+    if (sourceClaims == m_retainedStaticOwnershipClaims.end()) {
+      return false;
+    }
+
+    const auto& claims = sourceClaims->second;
+    const float minX =
+        key.objectToWorld[3].x - kStaticOwnershipTranslationTolerance;
+    const float maxX =
+        key.objectToWorld[3].x + kStaticOwnershipTranslationTolerance;
+    auto candidate = std::lower_bound(
+        claims.begin(), claims.end(), minX,
+        [](const RetainedStaticOwnershipClaim& value, float x) {
+          return value.objectToWorld[3].x < x;
+        });
+
+    for (; candidate != claims.end() &&
+           candidate->objectToWorld[3].x <= maxX;
+         ++candidate) {
+      if (!staticOwnershipTransformsMatch(
+              key.objectToWorld, candidate->objectToWorld)) {
+        continue;
+      }
+
+      const auto retained = m_retainedExternalInstances.find(candidate->handle);
+      if (retained == m_retainedExternalInstances.end() ||
+          !retained->second.materializedIdentity.has_value() ||
+          *retained->second.materializedIdentity != candidate->materializedIdentity) {
+        continue;
+      }
+
+      ReplacementInstance* replacementInstance =
+          m_drawCallTracker.findReplacementInstanceByIdentity(
+              candidate->materializedIdentity);
+      if (replacementInstance != nullptr &&
+          replacementInstance->isRetainedExternalOwnershipWinner &&
+          hasRenderableRetainedStaticGeometry(*replacementInstance)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void SceneManager::pruneOrdinaryStaticOwnershipDuplicates() {
+    if (m_retainedStaticOwnershipDirty &&
+        AssetReplacements::getMeshReplacementGeneration() ==
+            m_retainedExternalReplacementGeneration) {
+      rebuildRetainedStaticOwnershipClaims();
+    }
+    if (!m_retainedStaticOwnershipPrunePending) {
+      return;
+    }
+    m_retainedStaticOwnershipPrunePending = false;
+
+    std::vector<XXH64_hash_t> duplicateIdentities;
+    for (const auto& ownedReplacement :
+         m_drawCallTracker.getReplacementInstances()) {
+      const ReplacementInstance& replacementInstance = *ownedReplacement;
+      if (replacementInstance.isRetainedExternal ||
+          !replacementInstance.hasStaticOwnershipKey) {
+        continue;
+      }
+
+      const StaticOwnershipKey key {
+          replacementInstance.staticOwnershipSourceHash,
+          replacementInstance.staticOwnershipTransform,
+      };
+      if (hasRetainedStaticOwnershipClaim(key)) {
+        duplicateIdentities.push_back(replacementInstance.identityHash);
+      }
+    }
+
+    for (XXH64_hash_t identity : duplicateIdentities) {
+      m_drawCallTracker.removeReplacementInstanceByIdentity(identity);
+    }
+  }
+
   void SceneManager::setRetainedExternalSubmissionMode(
       remixapi_InstanceHandle handle,
       ReplacementInstance* replacementInstance,
@@ -2480,6 +2827,7 @@ namespace dxvk {
     m_retainedExternalInstances.insert_or_assign(
         handle,
         RetainedExternalInstance { std::move(*state), std::nullopt });
+    markRetainedStaticOwnershipDirty();
     setRetainedExternalSubmissionMode(
         handle, nullptr, RetainedExternalSubmissionMode::EventDriven);
     m_retainedExternalInstancesPendingSubmission.insert(handle);
@@ -2515,6 +2863,44 @@ namespace dxvk {
     m_retainedExternalInstances.erase(entry);
   }
 
+  void SceneManager::setRetainedExternalInstanceActivity(
+      const std::vector<remixapi_RetainedInstanceActivity>& updates) {
+    bool sceneChanged = false;
+
+    for (const remixapi_RetainedInstanceActivity& update : updates) {
+      auto entry = m_retainedExternalInstances.find(update.handle);
+      if (entry == m_retainedExternalInstances.end()) {
+        continue;
+      }
+
+      RetainedExternalInstance& retained = entry->second;
+      const bool active = update.active != 0;
+      if (retained.active == active) {
+        continue;
+      }
+      retained.active = active;
+      markRetainedStaticOwnershipDirty();
+
+      if (!retained.materializedIdentity.has_value()) {
+        continue;
+      }
+
+      ReplacementInstance* replacementInstance =
+          m_drawCallTracker.findReplacementInstanceByIdentity(
+              *retained.materializedIdentity);
+      if (replacementInstance == nullptr) {
+        continue;
+      }
+
+      replacementInstance->isRetainedExternalActive = active;
+      sceneChanged = true;
+    }
+
+    if (sceneChanged) {
+      m_instanceManager.notifySceneChanged();
+    }
+  }
+
   void SceneManager::queueAllRetainedExternalInstances() {
     for (const auto& [handle, retained] : m_retainedExternalInstances) {
       m_retainedExternalInstancesPendingSubmission.insert(handle);
@@ -2528,6 +2914,7 @@ namespace dxvk {
       retained.materializedIdentity.reset();
     }
     m_retainedExternalResourcesDirty = true;
+    markRetainedStaticOwnershipDirty();
   }
 
   bool SceneManager::canRetainExternalInstanceWithoutSubmission(
@@ -2639,6 +3026,7 @@ namespace dxvk {
         AssetReplacements::getMeshReplacementGeneration();
     if (replacementGeneration != m_retainedExternalReplacementGeneration) {
       m_retainedExternalReplacementGeneration = replacementGeneration;
+      markRetainedStaticOwnershipDirty();
       if (!m_retainedExternalInstances.empty()) {
         queueAllRetainedExternalInstances();
         m_retainedExternalResourcesDirty = true;
@@ -2698,6 +3086,21 @@ namespace dxvk {
       }
 
       RetainedExternalInstance& retained = retainedIter->second;
+      const auto ownershipKey = buildExternalStaticOwnershipKey(
+          retained.state, true);
+      const std::optional<XXH64_hash_t> previousMaterializedIdentity =
+          retained.materializedIdentity;
+      bool previouslyRenderableOwner = false;
+      if (ownershipKey.has_value() &&
+          previousMaterializedIdentity.has_value()) {
+        ReplacementInstance* previousReplacementInstance =
+            m_drawCallTracker.findReplacementInstanceByIdentity(
+                *previousMaterializedIdentity);
+        previouslyRenderableOwner =
+            previousReplacementInstance != nullptr &&
+            hasRenderableRetainedStaticGeometry(*previousReplacementInstance);
+      }
+
       ReplacementInstance* replacementInstance =
           submitExternalDraw(ctx, std::make_unique<ExternalDrawState>(retained.state));
 
@@ -2706,9 +3109,20 @@ namespace dxvk {
         // the exact owner record instead of leaving a GC-exempt orphan.
         retained.materializedIdentity = replacementInstance->identityHash;
         replacementInstance->isRetainedExternal = true;
+        replacementInstance->isRetainedExternalActive = retained.active;
         replacementInstance->dirtyFlags.clr(ReplacementInstance::kLookupDriftMask);
       } else {
         retained.materializedIdentity.reset();
+      }
+
+      const bool renderableOwner =
+          ownershipKey.has_value() &&
+          replacementInstance != nullptr &&
+          hasRenderableRetainedStaticGeometry(*replacementInstance);
+      if (previouslyRenderableOwner != renderableOwner ||
+          (renderableOwner &&
+           previousMaterializedIdentity != retained.materializedIdentity)) {
+        markRetainedStaticOwnershipDirty();
       }
 
       const RetainedExternalSubmissionMode mode =
@@ -2738,6 +3152,14 @@ namespace dxvk {
       state.drawCall.modifyTransformData().worldToView = rtCamera.getWorldToViewf();
       state.drawCall.modifyTransformData().viewToProjection = rtCamera.getViewToProjectionf();
       state.drawCall.modifyTransformData().objectToView = state.drawCall.getTransformData().worldToView * state.drawCall.getTransformData().objectToWorld;
+    }
+
+    const auto staticOwnershipKey = buildExternalStaticOwnershipKey(
+        state, false);
+    if (!state.drawCall.isRetainedExternal &&
+        staticOwnershipKey.has_value() &&
+        hasRetainedStaticOwnershipClaim(*staticOwnershipKey)) {
+      m_retainedStaticOwnershipPrunePending = true;
     }
 
     const XXH64_hash_t identityHash = state.computeExternalDrawIdentityHash();
@@ -2774,6 +3196,17 @@ namespace dxvk {
     };
     externalKey.isRetainedExternal = state.drawCall.isRetainedExternal;
     ReplacementInstance* replacementInstance = m_drawCallTracker.findOrCreateReplacementInstance(externalKey);
+    if (!state.drawCall.isRetainedExternal) {
+      replacementInstance->hasStaticOwnershipKey = staticOwnershipKey.has_value();
+      if (staticOwnershipKey.has_value()) {
+        replacementInstance->staticOwnershipSourceHash =
+            staticOwnershipKey->sourceDrawHash;
+        replacementInstance->staticOwnershipTransform =
+            staticOwnershipKey->objectToWorld;
+      } else {
+        replacementInstance->staticOwnershipSourceHash = kEmptyHash;
+      }
+    }
     std::vector<AssetReplacement>* pReplacements =
         fork_hooks::externalDrawMeshReplacement(*m_pReplacer, meshHash);
     if (replacementInstance->activeReplacements != pReplacements) {
@@ -2957,6 +3390,7 @@ namespace dxvk {
       }
       if (removedRetainedPlacement) {
         m_retainedExternalResourcesDirty = true;
+        markRetainedStaticOwnershipDirty();
       }
 
       // Remove all tracker ownership for this mesh in one bucket pass before

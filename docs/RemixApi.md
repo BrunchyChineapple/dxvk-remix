@@ -242,6 +242,113 @@ The vertex format is `remixapi_HardcodedVertex` — position(3) +
 normal(3) + texcoord(2) + color(uint32) + padding to 64 bytes. The
 padding is reserved for future runtime use; leave it zeroed.
 
+### Replacement identity and availability
+
+Attach `remixapi_MeshInfoReplacementEXT` to `remixapi_MeshInfo::pNext`
+when the mesh resource hash and the source draw used for replacement/capture
+lookup are different:
+
+```c
+remixapi_MeshInfoReplacementEXT replacement = {
+    REMIXAPI_STRUCT_TYPE_MESH_INFO_REPLACEMENT_EXT,
+    NULL,
+    sourceMeshHash
+};
+meshInfo.pNext = &replacement;
+```
+
+`remixapi_MeshInfo::hash` remains the caller-owned resource identity;
+`replacementHash` selects the captured source mesh whose active USD
+replacement should apply.
+
+`remixapi_HasMeshReplacement` is an optional standalone export rather than a
+`remixapi_Interface` slot, preserving compatibility with older fixed-size
+interface tables:
+
+```c
+remixapi_ErrorCode remixapi_HasMeshReplacement(
+    uint64_t       sourceMeshHash,
+    remixapi_Bool* out_hasReplacement);
+```
+
+Resolve it dynamically when supporting multiple runtime generations. It checks
+the loaded replacement maps, including the selected secret variant, and returns
+only a boolean; no replacement pointer escapes renderer ownership.
+
+---
+
+## Retained instances (explicit lifetime)
+
+```c
+remixapi_ErrorCode CreateRetainedInstance(
+    uint64_t                     identity,
+    const remixapi_InstanceInfo* info,
+    remixapi_InstanceHandle*     out_handle);
+remixapi_ErrorCode UpdateRetainedInstance(
+    remixapi_InstanceHandle      handle,
+    const remixapi_InstanceInfo* info);
+remixapi_ErrorCode DestroyRetainedInstance(remixapi_InstanceHandle handle);
+remixapi_ErrorCode SetRetainedInstanceActivityBatch(
+    const remixapi_RetainedInstanceActivity* updates,
+    uint32_t                                  updateCount);
+```
+
+When a retained static was created from an explicit captured near-scene mapping,
+attach `remixapi_InstanceInfoRetainedStaticOwnershipEXT` to its instance chain:
+
+```c
+remixapi_InstanceInfoRetainedStaticOwnershipEXT ownership = {
+    REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_RETAINED_STATIC_OWNERSHIP_EXT,
+    NULL
+};
+instanceInfo.pNext = &ownership;
+```
+
+The mesh must also carry an independent source-draw identity through
+`remixapi_MeshInfoReplacementEXT`. The marker allows the renderer to claim and
+deduplicate matching ordinary near-scene submissions only after the retained
+instance has materialized renderable geometry. Omit it for generated or unmapped
+statics and for terrain; those paths deliberately fail open to ordinary geometry.
+The marker does not change retained activity or introduce distance, occlusion, or
+interior policy.
+
+Use retained instances for geometry whose lifetime is owned explicitly by the
+host rather than refreshed by per-frame `DrawInstance` traffic. `identity` must
+be non-zero and unique. Callers do not replay retained entries each frame: the
+runtime materializes them when required and refreshes their referenced resources
+independently of acceleration-structure membership. Every retained instance is
+active by default, preserving the behavior of callers that never use the
+activity API.
+
+`SetRetainedInstanceActivityBatch` changes acceleration-structure membership
+without changing retained identity or draw state. Inactive geometry is omitted
+from BLAS/TLAS construction and billboard intersection emission, while its
+handle and mesh/material bindings remain retained. Pooled acceleration
+structures are not guaranteed to stay resident and may be rebuilt when geometry
+is reactivated. Activity does not relinquish retained near-scene ownership to an
+ordinary duplicate. When equivalent retained claims have mixed activity, the
+lowest active handle is the acceleration-structure representative; when all are
+inactive, no representative is emitted and the ordinary duplicate remains
+suppressed.
+
+```c
+remixapi_RetainedInstanceActivity updates[] = {
+    { architectureHandle, 1 },
+    { occludedSmallPropHandle, 0 },
+};
+remixapi_ErrorCode status =
+    iface.SetRetainedInstanceActivityBatch(updates, 2);
+```
+
+The runtime validates the complete batch before queuing it. A null or unknown
+handle returns `REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS` and applies none of the
+updates. An empty batch succeeds, including `updates == NULL` when
+`updateCount == 0`.
+
+Update or destroy retained instances only when owned content changes. Destroy
+retained instances before their referenced meshes. Duplicate creates and
+unknown update/destroy handles fail without mutating renderer state.
+
 ---
 
 ## Instances (per-frame draw)

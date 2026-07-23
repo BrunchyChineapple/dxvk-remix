@@ -459,6 +459,7 @@ namespace Commands {
     RemixApi_UpdateRetainedInstance,
     RemixApi_DestroyRetainedInstance,
     RemixApi_HasMeshReplacement,
+    RemixApi_SetRetainedInstanceActivityBatch,
   };
 
   // Maybe this will be useful...  
@@ -517,6 +518,7 @@ namespace Commands {
     case RemixApi_UpdateRetainedInstance: return "RemixApi_UpdateRetainedInstance";
     case RemixApi_DestroyRetainedInstance: return "RemixApi_DestroyRetainedInstance";
     case RemixApi_HasMeshReplacement: return "RemixApi_HasMeshReplacement";
+    case RemixApi_SetRetainedInstanceActivityBatch: return "RemixApi_SetRetainedInstanceActivityBatch";
 
     case Bridge_SharedHeap_AddSeg: return "SharedHeap_AddSeg";
     case Bridge_SharedHeap_Alloc: return "SharedHeap_Alloc";

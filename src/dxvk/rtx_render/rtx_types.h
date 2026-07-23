@@ -222,6 +222,20 @@ struct ReplacementInstance {
   // Explicit API ownership bypasses frame-age/anti-culling GC. The owner clears
   // this RI through DrawCallTracker when the retained handle is updated or destroyed.
   bool isRetainedExternal = false;
+  // Activity is independent from explicit ownership. Inactive retained instances
+  // keep their materialized identity and source bindings but are omitted from
+  // acceleration structures; pooled structures may rebuild after reactivation.
+  bool isRetainedExternalActive = true;
+  // Equivalent retained owners choose one acceleration-structure representative.
+  // This is independent from caller-controlled activity.
+  bool isRetainedExternalOwnershipWinner = true;
+
+  // A secondary source/transform key joins ordinary and retained submissions
+  // without changing their independent draw-call identities.
+  bool hasStaticOwnershipKey = false;
+  XXH64_hash_t staticOwnershipSourceHash = kEmptyHash;
+  Matrix4 staticOwnershipTransform;
+
   // Mirrored from SceneManager's retained handle mode so resource traversal
   // can exclude per-frame instances without a handle lookup.
   bool requiresPerFrameRetainedSubmission = false;

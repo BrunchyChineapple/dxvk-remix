@@ -124,6 +124,7 @@ template<> constexpr auto ToRemixApiStructEnum< remixapi_LightInfo              
 template<> constexpr auto ToRemixApiStructEnum< remixapi_MeshInfo                       > = REMIXAPI_STRUCT_TYPE_MESH_INFO;
 template<> constexpr auto ToRemixApiStructEnum< remixapi_MeshInfoReplacementEXT         > = REMIXAPI_STRUCT_TYPE_MESH_INFO_REPLACEMENT_EXT;
 template<> constexpr auto ToRemixApiStructEnum< remixapi_InstanceInfo                   > = REMIXAPI_STRUCT_TYPE_INSTANCE_INFO;
+template<> constexpr auto ToRemixApiStructEnum< remixapi_InstanceInfoRetainedStaticOwnershipEXT > = REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_RETAINED_STATIC_OWNERSHIP_EXT;
 template<> constexpr auto ToRemixApiStructEnum< remixapi_InstanceInfoBoneTransformsEXT  > = REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BONE_TRANSFORMS_EXT;
 template<> constexpr auto ToRemixApiStructEnum< remixapi_InstanceInfoBlendEXT           > = REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BLEND_EXT;
 template<> constexpr auto ToRemixApiStructEnum< remixapi_InstanceInfoObjectPickingEXT   > = REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_OBJECT_PICKING_EXT;
@@ -149,6 +150,7 @@ using MeshInfoReplacement = bridge_util::Serializable<remixapi_MeshInfoReplaceme
 
 // InstanceInfo
 using InstanceInfo = bridge_util::Serializable<remixapi_InstanceInfo,true>;
+using InstanceInfoRetainedStaticOwnership = bridge_util::Serializable<remixapi_InstanceInfoRetainedStaticOwnershipEXT,true>;
 using InstanceInfoObjectPicking = bridge_util::Serializable<remixapi_InstanceInfoObjectPickingEXT,true>;
 using InstanceInfoBlend = bridge_util::Serializable<remixapi_InstanceInfoBlendEXT,true>;
 using InstanceInfoTransforms = bridge_util::Serializable<remixapi_InstanceInfoBoneTransformsEXT,false>;

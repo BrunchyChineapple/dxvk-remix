@@ -159,6 +159,7 @@ struct InstanceExtensions {
   serialize::InstanceInfoTransforms boneXforms;
   serialize::InstanceInfoParticleSystem particleSystem;
   serialize::InstanceInfoGpuInstancing gpuInstancing;
+  serialize::InstanceInfoRetainedStaticOwnership retainedStaticOwnership;
 };
 
 static std::unordered_map<uint32_t, uint32_t> s_retainedInstanceMeshes;
@@ -225,6 +226,14 @@ static uint32_t deserializeInstanceInfo(
         deserializeFromQueue(exts.gpuInstancing);
         pInfoProto->pNext = &exts.gpuInstancing;
         pInfoProto = &getInfoProto(exts.gpuInstancing);
+        break;
+      }
+      case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_RETAINED_STATIC_OWNERSHIP_EXT:
+      {
+        assert(!exts.retainedStaticOwnership.pNext);
+        deserializeFromQueue(exts.retainedStaticOwnership);
+        pInfoProto->pNext = &exts.retainedStaticOwnership;
+        pInfoProto = &getInfoProto(exts.retainedStaticOwnership);
         break;
       }
       default:
@@ -3152,6 +3161,37 @@ void ProcessDeviceCommandQueue() {
             s_retainedInstanceMeshes.erase(bridgeHandle);
             InstanceHandle::s_handleMap.erase(instance);
           }
+        }
+
+        ServerMessage response(Commands::Bridge_Response, currentUID);
+        response.send_data(static_cast<uint32_t>(result));
+        break;
+      }
+
+      case RemixApi_SetRetainedInstanceActivityBatch:
+      {
+        const uint32_t updateCount = DeviceBridge::get_data();
+        std::vector<remixapi_RetainedInstanceActivity> updates;
+        updates.reserve(updateCount);
+        bool valid = true;
+
+        for (uint32_t i = 0; i < updateCount; ++i) {
+          const uint32_t bridgeHandle = DeviceBridge::get_data();
+          const remixapi_Bool active = DeviceBridge::get_data() != 0;
+          const auto instance = InstanceHandle::s_handleMap.find(bridgeHandle);
+          if (instance == InstanceHandle::s_handleMap.end()) {
+            valid = false;
+            continue;
+          }
+          updates.push_back({ instance->second, active });
+        }
+
+        remixapi_ErrorCode result = REMIXAPI_ERROR_CODE_INVALID_ARGUMENTS;
+        if (valid && updates.size() == updateCount) {
+          result = remixapi::g_remix.SetRetainedInstanceActivityBatch
+            ? remixapi::g_remix.SetRetainedInstanceActivityBatch(
+                updates.data(), updateCount)
+            : REMIXAPI_ERROR_CODE_NOT_INITIALIZED;
         }
 
         ServerMessage response(Commands::Bridge_Response, currentUID);

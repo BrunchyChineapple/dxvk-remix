@@ -40,20 +40,65 @@ check will enforce it if discipline slips.
 
 ---
 
+## bridge/src/client/remix_api.cpp
+
+**Category:** index-only
+
+- **Inline tweak** at retained instance extension/lifecycle forwarding.
+  *Serializes `remixapi_InstanceInfoRetainedStaticOwnershipEXT` across the 32-bit client bridge and forwards validated retained-activity batches synchronously, keeping the public interface slot non-null.*
+
+---
+
+## bridge/src/server/main.cpp
+
+**Category:** index-only
+
+- **Inline tweak** at retained instance deserialization and command dispatch.
+  *Reconstructs the retained-static ownership marker in the 64-bit instance `pNext` chain and atomically resolves every activity-batch handle before calling the native runtime; invalid batches apply no updates.*
+
+---
+
+## bridge/src/util/util_commands.h
+
+**Category:** index-only
+
+- **Inline tweak** at the append-only bridge command enum / name mapping.
+  *Adds `RemixApi_SetRetainedInstanceActivityBatch` after all established command values.*
+
+---
+
+## bridge/src/util/util_remixapi.cpp
+
+**Category:** index-only
+
+- **Inline tweak** at instance extension serialization.
+  *Defines the fixed-size serializer/deserializer for the payload-free retained-static ownership marker, carrying only its `sType` and rebuilding `pNext` server-side.*
+
+---
+
+## bridge/src/util/util_remixapi.h
+
+**Category:** index-only
+
+- **Inline tweak** at Remix struct-enum and serializable instance mappings.
+  *Registers the retained-static ownership marker for bridge serialization without adding an interface slot.*
+
+---
+
 ## public/include/remix/remix.h
 
 **Pre-refactor fork footprint:** +101 / -9 LOC (audit 2026-04-18)
 
 **Category:** migrate
 
-- **Block** at `Interface` class (method declarations) — ~16 LOC, planned target `N/A (public header)` in `N/A (public header)`.
-  *Declares fork-added C++ wrapper methods: `CreateMeshBatched`, `CreateRetainedInstance`, `UpdateRetainedInstance`, `DestroyRetainedInstance`, `GetUIState`, `SetUIState`, `AddTextureHash`, `RemoveTextureHash`, `dxvk_GetTextureHash`, `CreateLightBatched`, `UpdateLightDefinition`, `SetGameValue`.*
+- **Block** at `Interface` class (method declarations) — ~19 LOC, planned target `N/A (public header)` in `N/A (public header)`.
+  *Declares fork-added C++ wrapper methods: `CreateMeshBatched`, `CreateRetainedInstance`, `UpdateRetainedInstance`, `DestroyRetainedInstance`, `SetRetainedInstanceActivityBatch`, `GetUIState`, `SetUIState`, `AddTextureHash`, `RemoveTextureHash`, `dxvk_GetTextureHash`, `CreateLightBatched`, `UpdateLightDefinition`, `SetGameValue`.*
 
 - **Block** at `Interface::CreateMeshBatched` (inline definition) — ~9 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Inline C++ wrapper that calls `m_CInterface.CreateMeshBatched` for the batched mesh submission API slot.*
 
-- **Block** at `Interface::CreateRetainedInstance` / `Interface::UpdateRetainedInstance` / `Interface::DestroyRetainedInstance` (inline definitions) — ~21 LOC, planned target `N/A (public header)` in `N/A (public header)`.
-  *C++ wrappers for explicit-lifetime external instances. Create returns the opaque retained handle generated from the caller's stable identity; update and destroy dispatch by that handle.*
+- **Block** at `Interface::CreateRetainedInstance` / `Interface::UpdateRetainedInstance` / `Interface::DestroyRetainedInstance` / `Interface::SetRetainedInstanceActivityBatch` (inline definitions) — ~27 LOC, planned target `N/A (public header)` in `N/A (public header)`.
+  *C++ wrappers for explicit-lifetime external instances. Create returns the opaque retained handle generated from the caller's stable identity; update and destroy dispatch by that handle; the batch wrapper changes acceleration-structure activity without ending retained lifetime.*
 
 - **Block** at `Interface::GetUIState` / `Interface::SetUIState` (inline definitions) — ~16 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Inline C++ wrappers for UI state query/set API, guarding on nullptr slot before dispatching.*
@@ -74,7 +119,7 @@ check will enforce it if discipline slips.
   *C++ wrapper for the `remixapi_SetGameValue` C API slot introduced in workstream 10 (plugin-injected game-state write). Wrapper guards on nullptr vtable slot before dispatching, matching the `SetConfigVariable` shape. Companion readers are graph components `GameValueReadBool` / `GameValueReadNumber`; backing store lives in `rtx_fork_game_state.h`.*
 
 - **Block** at `remixapi_Interface` static_assert updates (file scope) — ~3 LOC (three separate assert sizes), planned target `N/A (public header)` in `N/A (public header)`.
-  *Updates `sizeof(remixapi_Interface)` static_asserts for append-only vtable extensions; retained-instance ABI v0.1001.0 sets the x64 interface size to 352 bytes.*
+  *Updates `sizeof(remixapi_Interface)` static assertions for append-only vtable extensions; ABI v0.1005.0 keeps the x64 interface size at 360 bytes because its retained-static ownership addition is a `pNext` type rather than an interface slot.*
 
 ---
 
@@ -85,16 +130,19 @@ check will enforce it if discipline slips.
 **Category:** migrate
 
 - **Block** at `REMIXAPI_VERSION_MAJOR/MINOR/PATCH` (file scope) — ~3 LOC, planned target `N/A (public header)` in `N/A (public header)`.
-  *Sets the Remix Plus ABI version to `0.1001.0`. The reserved MINOR range starts at `1000`, distinct from stock NVIDIA `0.6.x`; v0.1001.0 adds the retained-instance handle and three append-only interface slots. Because `isVersionCompatible` treats each minor as breaking while MAJOR==0, consumers compiled against older interface layouts are rejected.*
+  *Sets the current Remix Plus ABI version to `0.1005.0`. The reserved MINOR range starts at `1000`, distinct from stock NVIDIA `0.6.x`; v0.1001.0 added retained-instance lifecycle, v0.1002.0 added independent mesh replacement identity, v0.1003.0 incorporated NVIDIA's GUI-output and hair-card ABI additions, v0.1004.0 added batched retained acceleration-structure activity, and v0.1005.0 adds explicit retained-static ownership provenance. Because `isVersionCompatible` treats each minor as breaking while MAJOR==0, consumers compiled against older layouts are rejected.*
 
-- **Block** at `remixapi_StructType` enum (file scope) — ~3 LOC, planned target `N/A (public header)` in `N/A (public header)`.
-  *Adds `REMIXAPI_STRUCT_TYPE_TEXTURE_INFO`, `INSTANCE_INFO_PARTICLE_SYSTEM_EXT`, and `INSTANCE_INFO_GPU_INSTANCING_EXT` enumerators.*
+- **Block** at `PFN_remixapi_HasMeshReplacement` / `remixapi_HasMeshReplacement` (file scope) — ~9 LOC, planned target `rtx_fork_api_entry.cpp` in `src/dxvk/rtx_render/rtx_fork_api_entry.cpp`.
+  *Declares an optional standalone export that checks loaded replacement maps for a source mesh hash. It deliberately stays outside `remixapi_Interface`, allowing consumers to probe it dynamically without changing the fixed-size interface table.*
+
+- **Block** at `remixapi_StructType` enum (file scope), `remixapi_MeshInfoReplacementEXT`, and `remixapi_InstanceInfoRetainedStaticOwnershipEXT`.
+  *Appends source-identity and retained-static provenance extensions without reordering existing structure values. The ownership marker is valid only in an instance chain and carries no policy or payload beyond explicit caller provenance.*
 
 - **Block** at `remixapi_TextureHandle` / `remixapi_InstanceHandle` typedefs (file scope) — ~2 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Declares opaque handle types for texture uploads and caller-owned retained instances. A retained handle encodes the non-zero stable identity supplied at creation.*
 
-- **Block** at `PFN_remixapi_CreateRetainedInstance` / `PFN_remixapi_UpdateRetainedInstance` / `PFN_remixapi_DestroyRetainedInstance` typedefs (file scope) — ~15 LOC, planned target `N/A (public header)` in `N/A (public header)`.
-  *Declares explicit create/update/destroy operations for external instances whose lifetime is independent of per-frame `DrawInstance` traffic.*
+- **Block** at `PFN_remixapi_CreateRetainedInstance` / `PFN_remixapi_UpdateRetainedInstance` / `PFN_remixapi_DestroyRetainedInstance` / `PFN_remixapi_SetRetainedInstanceActivityBatch` typedefs (file scope) — ~27 LOC, planned target `N/A (public header)` in `N/A (public header)`.
+  *Declares explicit create/update/destroy operations for external instances whose lifetime is independent of per-frame `DrawInstance` traffic, plus the default-active `remixapi_RetainedInstanceActivity` record and validated batch function for changing acceleration-structure membership without ending retained lifetime.*
 
 - **Block** at `REMIXAPI_INSTANCE_CATEGORY_BIT_*` enum (file scope) — ~16 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Bit values match upstream NVIDIA exactly (reverted 2026-06-27 from an earlier fork build that shifted `IGNORE_ALPHA_CHANNEL` to bit 8 to mirror the internal `InstanceCategories` order). The C↔internal mapping in `toRtCategories()` is by-name, so the public bit values are free to match upstream and now do. No remaining fork delta — the enum now matches upstream exactly. (The misleadingly-named `LEGACY_EMISSIVE` alias of bit 24 / `SMOOTH_NORMALS` was removed 2026-06-28: its name implied emissive behavior but it routed to `SmoothNormals`, so callers got a silent wrong-category result; removing it converts that into a compile error.)*
@@ -141,8 +189,8 @@ check will enforce it if discipline slips.
 - **Block** at `PFN_remixapi_SetGameValue` typedef (file scope) — ~14 LOC (including the contract doc block), planned target `N/A (public header)` in `N/A (public header)`.
   *Declares the function-pointer type for the plugin-injected game-state write API introduced in workstream 10. The entrypoint stores a single string/string pair under a caller-chosen key in a fork-owned thread-safe map; graph components `GameValueReadBool` / `GameValueReadNumber` read those values by name. The contract doc block above the typedef describes key/value semantics, validation, and lifetime (store survives `Shutdown` / re-init).*
 
-- **Block** at `remixapi_Interface` vtable additions (struct fields) — ~18 LOC spread across the vtable struct, planned target `N/A (public header)` in `N/A (public header)`.
-  *Appends fork function-pointer slots to `remixapi_Interface`, including the v0.1001.0 retained-instance create/update/destroy slots at the tail. The x64 interface is 352 bytes. 2026-06-27: the upstream `SetCameraMediumMaterial` slot was moved out of the middle of the struct to immediately after `Present`, mirroring upstream's canonical tail layout; fork slots remain append-only after it.*
+- **Block** at `remixapi_Interface` vtable additions (struct fields) — ~19 LOC spread across the vtable struct, planned target `N/A (public header)` in `N/A (public header)`.
+  *Appends fork function-pointer slots to `remixapi_Interface`, including the v0.1001.0 retained lifecycle slots and the v0.1004.0 `SetRetainedInstanceActivityBatch` tail slot. ABI v0.1005.0 adds only a `pNext` structure, so the x64 interface remains 360 bytes. 2026-06-27: the upstream `SetCameraMediumMaterial` slot was moved out of the middle of the struct to immediately after `Present`, mirroring upstream's canonical tail layout; fork slots remain append-only after it.*
 
 ---
 
@@ -305,6 +353,15 @@ initializer list and can't be lifted into a separate TU.
 
 - **Inline tweak** at `components/` include list (~line 56) — 2-line addition. Not migrated: the include manifest is the intended extension point for new components, and adding two alphabetically-placed `#include` lines is the canonical way to register fork-owned graph components.
   *Registers `components/game_value_read_bool.h` and `components/game_value_read_number.h` in the component manifest. Both are fork-owned Sense components introduced in workstream 10 (plugin-injected game-state readers); their backing store is the fork-owned `rtx_fork_game_state.h`.*
+
+---
+
+## src/dxvk/rtx_render/rtx_accel_manager.cpp
+
+**Category:** index-only
+
+- **Inline tweak** at retained activity/ownership filtering in cached-bucket validation, BLAS/TLAS bucket construction, and billboard intersection emission.
+  *`isInstanceAccelerationStructureActive` treats ordinary instances as active, reads default-active activity plus deterministic ownership-winner state from retained `ReplacementInstance` ownership, and fails open when that owner is unavailable. Inactive or duplicate-loser retained geometry is absent from the current-instance validity set, merged BLAS/TLAS construction, and billboard TLAS emission instead of using a zero instance mask, so it avoids acceleration-build/count cost while retained resource refresh remains separately owned by `SceneManager`.*
 
 ---
 
@@ -676,8 +733,8 @@ initializer list and can't be lifted into a separate TU.
 - **Hook** at `remixapi_Shutdown` (callback + frame-state clear) → `fork_hooks::shutdownCallbacks` in `rtx_fork_api_entry.cpp` (migrated 2026-04-18, migration #7c).
   *One-liner call replacing the 4-line null/false reset. Clears `s_beginCallback`, `s_endCallback`, `s_presentCallback`, and `s_inFrame`.*
 
-- **Inline tweak** at `(anonymous namespace)` (`s_retainedInstanceMeshes` plus retained entry points) — ~100 LOC. Not migrated because validation, pending-mesh flushing, and device/CS ordering use the API translation unit's existing state.
-  *Tracks retained handle → mesh ownership on the API thread, rejects zero/duplicate/unknown identities, flushes batched mesh definitions before create/update, and schedules create/update/destroy mutations onto SceneManager's CS-thread registry.*
+- **Inline tweak** at `(anonymous namespace)` (`s_retainedInstanceMeshes` plus retained entry points) — ~135 LOC. Not migrated because validation, pending-mesh flushing, and device/CS ordering use the API translation unit's existing state.
+  *Tracks retained handle → mesh ownership on the API thread, rejects zero/duplicate/unknown identities, flushes batched mesh definitions before create/update, and schedules create/update/destroy mutations onto SceneManager's CS-thread registry. `remixapi_SetRetainedInstanceActivityBatch` validates every handle under the same mutex before emitting one owned CS batch, so an invalid handle queues no partial update.*
 
 - **Inline tweak** at `remixapi_DestroyMesh` / `remixapi_Shutdown` — ~20 LOC.
   *Erases retained ownership records before mesh teardown, clears retained/pending API state at shutdown, and relies on SceneManager's owner teardown to drop retained draw states before device resources are released.*
@@ -732,6 +789,9 @@ initializer list and can't be lifted into a separate TU.
 - **Inline tweak** at `remixapi_AutoInstancePersistentLights` / `remixapi_UpdateLightDefinition` bodies (extern-C fork-owned functions) — not extracted to hooks. These are `REMIXAPI`-exported entry points; their bodies are the fork's implementation of those API calls. The pending-queue state they access is documented as staying inline above. Tracked here per the fridge-list invariant.
   *2026-06-27: `remixapi_AutoInstancePersistentLights` now early-outs (skips the per-frame `LockDevice`+`EmitCs`) when no C-API scene work is queued and no external light has ever been registered, gated on the file-scope sticky `s_externalLightApiUsed` (set in `remixapi_CreateLight`, `remixapi_CreateLightBatched`, `remixapi_UpdateLightDefinition`). Fixes native-only consumers seeing all lights flicker from the empty per-frame dispatch on the native present path. The self-gating overlay flush still runs.*
 
+- **Inline tweak** at `RemixAPIPrivateAccessor::toRtDrawState` instance-extension conversion.
+  *Preserves `remixapi_InstanceInfoRetainedStaticOwnershipEXT` as explicit `ExternalDrawState` provenance; absence remains false and therefore fail-open for retained ownership claims.*
+
 - **Inline tweak** at bit-24 category routing (in `toRtCategories`) — ~1 LOC. Not migrated.
   *Routes `REMIXAPI_INSTANCE_CATEGORY_BIT_SMOOTH_NORMALS` (bit 24, upstream name) to `InstanceCategories::SmoothNormals`. (The misleadingly-named `LEGACY_EMISSIVE` alias of this bit was removed 2026-06-28 — it routed to `SmoothNormals` despite its name, a silent footgun.)*
 
@@ -739,10 +799,10 @@ initializer list and can't be lifted into a separate TU.
   *Implements the plugin-injected game-state write API introduced in workstream 10. Validates args, constructs `std::string` copies of the incoming C strings, and forwards to `dxvk::fork_game_state::GameStateStore::get().set(key, value)`. Does not take `s_mutex` — the store owns its own lock, and funnelling high-frequency plugin writes through the API-wide mutex has no benefit.*
 
 - **Block** at `extern "C"` vtable init block (fork-added anonymous-namespace slots) — inline assignment block in `remixapi_InitializeLibrary`. Not fully hookable: anonymous-namespace function pointers have internal linkage and cannot be named from another TU. Tracked here per the fridge-list invariant.
-  *Registers all fork-added API functions into `remixapi_Interface`, including the retained create/update/destroy slots appended for ABI v0.1001.0; externally-linked fork slots continue through `fork_hooks::remixApiVtableInit`.*
+  *Registers all fork-added API functions into `remixapi_Interface`, including the v0.1001.0 retained lifecycle slots and the v0.1004.0 retained-activity batch slot appended at the tail; externally-linked fork slots continue through `fork_hooks::remixApiVtableInit`.*
 
 - **Inline tweak** at `extern "C"` vtable size static_assert — 1 LOC. Not migrated (fridge-listed).
-  *The retained-instance ABI extends the x64 interface sentinel to `static_assert(sizeof(interf) == 352, ...)`.*
+  *ABI v0.1005.0 keeps the x64 interface sentinel at `static_assert(sizeof(interf) == 360, ...)`; the new ownership provenance is an instance `pNext` type and adds no slot.*
 
 ---
 
@@ -752,11 +812,11 @@ initializer list and can't be lifted into a separate TU.
 
 **Category:** index-only
 
-- **Inline tweak** at `pnext::detail` specialization list (~line 95) — 2-line addition.
-  *Adds `remixapi_CameraInfoParameterizedEXT` and `remixapi_TextureInfo` to the `pnext` type-list so `pnext::chain` can traverse these new struct types.*
+- **Inline tweak** at `pnext::detail` specialization list.
+  *Registers fork-added API types including `remixapi_MeshInfoReplacementEXT` and `remixapi_InstanceInfoRetainedStaticOwnershipEXT` so `pnext::find` can traverse their chains.*
 
-- **Inline tweak** at `pnext::detail::ToEnum` specialization (~line 123) — 1-line addition.
-  *Maps `remixapi_TextureInfo` to `REMIXAPI_STRUCT_TYPE_TEXTURE_INFO` in the sType enum specialization table.*
+- **Inline tweak** at `pnext::detail::ToEnum` / `Root` specializations.
+  *Maps the retained-static ownership marker to struct type 30 and constrains it to `remixapi_InstanceInfo` roots.*
 
 ---
 
@@ -794,7 +854,7 @@ initializer list and can't be lifted into a separate TU.
 ## src/dxvk/rtx_render/rtx_scene_manager.cpp
 
 **Pre-refactor footprint:** +73 / -2 LOC (migrated 2026-04-18)
-**Post-refactor footprint:** 4 hook call sites + retained-instance lifecycle inline tweaks + 1 `#include "rtx_fork_hooks.h"`
+**Post-refactor footprint:** 4 hook call sites + retained-instance lifecycle/activity/ownership inline tweaks + 1 `#include "rtx_fork_hooks.h"`
 
 - **Hook** at `SceneManager::submitExternalDraw` (before submesh loop) → `fork_hooks::externalDrawMeshReplacement` in `rtx_fork_submit.cpp`
   *Checks for USD mesh/light replacements keyed on the API mesh handle hash; call site handles the early-exit + `drawReplacements` dispatch since those are private SceneManager methods.*
@@ -808,8 +868,11 @@ initializer list and can't be lifted into a separate TU.
 - **Hook** at `SceneManager::submitExternalDraw` (after particle setup, before `processDrawCallState`) → `fork_hooks::externalDrawObjectPicking` in `rtx_fork_submit.cpp`
   *Stores per-draw texture hash metadata in `m_drawCallMeta` when object picking is active. Access to the private `m_drawCallMeta` member is granted via a `friend` declaration — see the `rtx_scene_manager.h` entry below.*
 
-- **Inline tweak** at `SceneManager::prepareSceneData` and retained lifecycle methods — ~50 LOC.
-  *Replays renderer-owned `ExternalDrawState` entries through the existing `submitExternalDraw()` path before generic scene GC/TLAS preparation. Create/update/destroy mutate only the CS-thread registry; updates and destroys retire the affected external-mesh spatial bucket before the remaining retained placements replay.*
+- **Inline tweak** at `SceneManager::prepareSceneData` and retained lifecycle/activity methods — ~90 LOC.
+  *Owns retained `ExternalDrawState` entries on the CS thread and materializes them through `submitExternalDraw()` when created, updated, invalidated, or required by the preserve-path fallback. Retained resource refresh runs independently of acceleration-structure activity. Create defaults active; batched activity updates propagate to materialized replacement owners and issue one scene-generation notification when effective membership changes. Update/destroy retire the exact materialized owner before resubmission or removal.*
+
+- **Inline tweak** at native/external submission and retained static-ownership arbitration.
+  *Builds a second ownership key from the canonical legacy source-draw hash and finite object transform without changing draw identity. A retained external claim requires explicit `remixapi_InstanceInfoRetainedStaticOwnershipEXT` provenance, an independent replacement identity, non-Terrain static admission, and materialized live mesh geometry. Missing provenance, generated/unmapped statics, Terrain, or stale materialization fail open to ordinary geometry. Matching native and transient external instances are pruned before GC only after a valid claim publishes. Equivalent retained claims choose the lowest active stable handle as the acceleration-structure representative, falling back to the lowest handle when every equivalent claim is inactive; activity never relinquishes ordinary-geometry ownership.*
 
 - **Inline tweak** at `SceneManager::destroyExternalMesh` / `SceneManager::onDestroy` — ~15 LOC.
   *Removes retained entries that reference a mesh before destroying external mesh storage, and clears the retained registry during owner teardown before device resources are released.*
@@ -828,8 +891,8 @@ initializer list and can't be lifted into a separate TU.
 - **Inline tweak** at `SceneManager` class body (top of class, before `public:`) — 5-line `friend` declaration granting `fork_hooks::externalDrawObjectPicking` access to `m_drawCallMeta`.
   *Canonical pattern for hooks that must read/write private upstream state — one inline tweak per such hook, tracked here.*
 
-- **Inline tweak** at `SceneManager` public/private declarations — ~12 LOC.
-  *Declares create/update/destroy retained mutations, private pre-GC replay, and the handle-keyed `ExternalDrawState` registry. Registry state is renderer-owned and independent of transient API draw traffic.*
+- **Inline tweak** at `SceneManager` public/private declarations.
+  *Declares create/update/destroy/activity retained mutations, event-driven/per-frame materialization bookkeeping, and the handle-keyed retained registry. Each entry stores default-active activity independently of transient API draw traffic and propagates it to its materialized `ReplacementInstance`. Private source-hash/transform claim records and rebuild/prune helpers consume the public provenance marker while keeping ownership policy inside the renderer.*
 
 ---
 
@@ -855,6 +918,15 @@ initializer list and can't be lifted into a separate TU.
 
 - **Inline tweak** — remove `rtx.tonemap.finalizeWithACES` RtxOption (superseded by `rtx.tonemap.tonemapOperator` in `rtx_fork_tonemap.cpp`); add `#include "rtx_fork_tonemap.h"`.
   *Adopts the fork operator enum.*
+
+---
+
+## src/dxvk/rtx_render/rtx_types.h
+
+**Category:** index-only
+
+- **Inline tweak** at `ReplacementInstance` retained-ownership state.
+  *Adds default-active `isRetainedExternalActive`, deterministic `isRetainedExternalOwnershipWinner`, and a secondary source-hash/transform key for ordinary submissions. `SceneManager` owns activity propagation and retained claim arbitration; `AccelManager` consumes activity and winner state together without changing retained identity or resource lifetime.*
 
 ---
 

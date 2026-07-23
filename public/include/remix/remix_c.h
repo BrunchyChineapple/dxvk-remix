@@ -63,7 +63,7 @@
 // Remix Plus ABIs whose struct layout and category bits differ. Bump MINOR on
 // every breaking ABI change.
 #define REMIXAPI_VERSION_MAJOR 0
-#define REMIXAPI_VERSION_MINOR 1003
+#define REMIXAPI_VERSION_MINOR 1005
 #define REMIXAPI_VERSION_PATCH 0
 
 
@@ -140,6 +140,7 @@ extern "C" {
     REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_GPU_INSTANCING_EXT     = 27,
     REMIXAPI_STRUCT_TYPE_CAMERA_MEDIUM_INFO                   = 28,
     REMIXAPI_STRUCT_TYPE_MESH_INFO_REPLACEMENT_EXT            = 29,
+    REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_RETAINED_STATIC_OWNERSHIP_EXT = 30,
     // NOTE: if adding a new struct, register it in 'rtx_remix_specialization.inl'
     //       and only extend this enum by appending, never adjust the order of these 
     //       as that will break backwards compatibility.
@@ -604,6 +605,13 @@ extern "C" {
     uint32_t                  instanceTransforms_count;
   } remixapi_InstanceInfoGpuInstancingEXT;
 
+  // Opts an explicitly retained, source-mapped static into renderer-owned
+  // near-scene ownership. Generated, unmapped, and terrain instances omit it.
+  typedef struct remixapi_InstanceInfoRetainedStaticOwnershipEXT {
+    remixapi_StructType sType;
+    void*               pNext;
+  } remixapi_InstanceInfoRetainedStaticOwnershipEXT;
+
   typedef struct remixapi_InstanceInfo {
     remixapi_StructType            sType;
     void*                          pNext;
@@ -617,8 +625,9 @@ extern "C" {
     const remixapi_InstanceInfo* info);
 
   // Registers an instance whose lifetime is explicitly owned by the caller.
-  // Retained instances are submitted internally every frame before scene GC;
-  // callers update or destroy them only when cell content changes.
+  // Retained instances remain active by default. Callers update or destroy them
+  // only when owned content changes, and may change acceleration-structure
+  // activity independently through SetRetainedInstanceActivityBatch.
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_CreateRetainedInstance)(
     uint64_t                     identity,
     const remixapi_InstanceInfo* info,
@@ -630,6 +639,19 @@ extern "C" {
 
   typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_DestroyRetainedInstance)(
     remixapi_InstanceHandle      handle);
+
+  typedef struct remixapi_RetainedInstanceActivity {
+    remixapi_InstanceHandle handle;
+    remixapi_Bool           active;
+  } remixapi_RetainedInstanceActivity;
+
+  // Updates acceleration-structure membership without changing retained identity
+  // or source/material bindings. Inactive geometry is omitted from builds; pooled
+  // acceleration structures may be rebuilt after reactivation.
+  // Existing instances are active until explicitly changed by the caller.
+  typedef remixapi_ErrorCode(REMIXAPI_PTR* PFN_remixapi_SetRetainedInstanceActivityBatch)(
+    const remixapi_RetainedInstanceActivity* updates,
+    uint32_t                                  updateCount);
 
 
   typedef struct remixapi_LightInfoLightShaping {
@@ -1095,10 +1117,12 @@ extern "C" {
     PFN_remixapi_RequestTextureVramFree     RequestTextureVramFree;
     PFN_remixapi_GetGameValue               GetGameValue;
 
-    // Explicit-lifetime external geometry. Append-only ABI slots (v0.1001.0).
-    PFN_remixapi_CreateRetainedInstance     CreateRetainedInstance;
-    PFN_remixapi_UpdateRetainedInstance     UpdateRetainedInstance;
-    PFN_remixapi_DestroyRetainedInstance    DestroyRetainedInstance;
+    // Explicit-lifetime external geometry. Retained lifecycle slots start in
+    // v0.1001.0; batched acceleration-structure activity starts in v0.1004.0.
+    PFN_remixapi_CreateRetainedInstance             CreateRetainedInstance;
+    PFN_remixapi_UpdateRetainedInstance             UpdateRetainedInstance;
+    PFN_remixapi_DestroyRetainedInstance            DestroyRetainedInstance;
+    PFN_remixapi_SetRetainedInstanceActivityBatch   SetRetainedInstanceActivityBatch;
   } remixapi_Interface;
 
   REMIXAPI remixapi_ErrorCode REMIXAPI_CALL remixapi_InitializeLibrary(

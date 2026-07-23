@@ -581,6 +581,20 @@ void InstanceInfo::_deserialize(void*& pDeserialize) {
 void InstanceInfo::_dtor() {
 }
 
+#define InstanceInfoRetainedStaticOwnershipVars sType
+uint32_t InstanceInfoRetainedStaticOwnership::_calcSize() const {
+  return fold_helper::calcSize(InstanceInfoRetainedStaticOwnershipVars);
+}
+void InstanceInfoRetainedStaticOwnership::_serialize(void*& pSerialize) const {
+  fold_helper::serialize(pSerialize, InstanceInfoRetainedStaticOwnershipVars);
+}
+void InstanceInfoRetainedStaticOwnership::_deserialize(void*& pDeserialize) {
+  pNext = nullptr;
+  fold_helper::deserialize(pDeserialize, InstanceInfoRetainedStaticOwnershipVars);
+}
+void InstanceInfoRetainedStaticOwnership::_dtor() {
+}
+
 
 //////////////////
 // CameraInfo   //
