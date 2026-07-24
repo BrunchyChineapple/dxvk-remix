@@ -119,7 +119,7 @@ check will enforce it if discipline slips.
   *C++ wrapper for the `remixapi_SetGameValue` C API slot introduced in workstream 10 (plugin-injected game-state write). Wrapper guards on nullptr vtable slot before dispatching, matching the `SetConfigVariable` shape. Companion readers are graph components `GameValueReadBool` / `GameValueReadNumber`; backing store lives in `rtx_fork_game_state.h`.*
 
 - **Block** at `remixapi_Interface` static_assert updates (file scope) — ~3 LOC (three separate assert sizes), planned target `N/A (public header)` in `N/A (public header)`.
-  *Updates `sizeof(remixapi_Interface)` static assertions for append-only vtable extensions; ABI v0.1005.0 keeps the x64 interface size at 360 bytes because its retained-static ownership addition is a `pNext` type rather than an interface slot.*
+  *Updates `sizeof(remixapi_Interface)` static assertions for append-only vtable extensions; ABI v0.1006.0 keeps the x64 interface size at 360 bytes because the view-model category adds no function slot or structure field.*
 
 ---
 
@@ -130,7 +130,7 @@ check will enforce it if discipline slips.
 **Category:** migrate
 
 - **Block** at `REMIXAPI_VERSION_MAJOR/MINOR/PATCH` (file scope) — ~3 LOC, planned target `N/A (public header)` in `N/A (public header)`.
-  *Sets the current Remix Plus ABI version to `0.1005.0`. The reserved MINOR range starts at `1000`, distinct from stock NVIDIA `0.6.x`; v0.1001.0 added retained-instance lifecycle, v0.1002.0 added independent mesh replacement identity, v0.1003.0 incorporated NVIDIA's GUI-output and hair-card ABI additions, v0.1004.0 added batched retained acceleration-structure activity, and v0.1005.0 adds explicit retained-static ownership provenance. Because `isVersionCompatible` treats each minor as breaking while MAJOR==0, consumers compiled against older layouts are rejected.*
+  *Sets the current Remix Plus API version to `0.1006.0`. The reserved MINOR range starts at `1000`, distinct from stock NVIDIA `0.6.x`; v0.1001.0 added retained-instance lifecycle, v0.1002.0 added independent mesh replacement identity, v0.1003.0 incorporated NVIDIA's GUI-output and hair-card ABI additions, v0.1004.0 added batched retained acceleration-structure activity, v0.1005.0 added explicit retained-static ownership provenance, and v0.1006.0 adds the required view-model category behavior. Because `isVersionCompatible` treats each minor as breaking while MAJOR==0, consumers compiled against older binary or behavioral contracts are rejected.*
 
 - **Block** at `PFN_remixapi_HasMeshReplacement` / `remixapi_HasMeshReplacement` (file scope) — ~9 LOC, planned target `rtx_fork_api_entry.cpp` in `src/dxvk/rtx_render/rtx_fork_api_entry.cpp`.
   *Declares an optional standalone export that checks loaded replacement maps for a source mesh hash. It deliberately stays outside `remixapi_Interface`, allowing consumers to probe it dynamically without changing the fixed-size interface table.*
@@ -145,7 +145,7 @@ check will enforce it if discipline slips.
   *Declares explicit create/update/destroy operations for external instances whose lifetime is independent of per-frame `DrawInstance` traffic, plus the default-active `remixapi_RetainedInstanceActivity` record and validated batch function for changing acceleration-structure membership without ending retained lifetime.*
 
 - **Block** at `REMIXAPI_INSTANCE_CATEGORY_BIT_*` enum (file scope) — ~16 LOC, planned target `N/A (public header)` in `N/A (public header)`.
-  *Bit values match upstream NVIDIA exactly (reverted 2026-06-27 from an earlier fork build that shifted `IGNORE_ALPHA_CHANNEL` to bit 8 to mirror the internal `InstanceCategories` order). The C↔internal mapping in `toRtCategories()` is by-name, so the public bit values are free to match upstream and now do. No remaining fork delta — the enum now matches upstream exactly. (The misleadingly-named `LEGACY_EMISSIVE` alias of bit 24 / `SMOOTH_NORMALS` was removed 2026-06-28: its name implied emissive behavior but it routed to `SmoothNormals`, so callers got a silent wrong-category result; removing it converts that into a compile error.)*
+  *Bit values match upstream NVIDIA exactly (reverted 2026-06-27 from an earlier fork build that shifted `IGNORE_ALPHA_CHANNEL` to bit 8 to mirror the internal `InstanceCategories` order). The C↔internal mapping in `toRtCategories()` is by-name, so the public bit values are free to match upstream and now do. `VIEW_MODEL` bit 26 selects `CameraType::ViewModel` separately from internal instance-category conversion. (The misleadingly-named `LEGACY_EMISSIVE` alias of bit 24 / `SMOOTH_NORMALS` was removed 2026-06-28: its name implied emissive behavior but it routed to `SmoothNormals`, so callers got a silent wrong-category result; removing it converts that into a compile error.)*
 
 - **Block** at `IDirect3DTexture9` forward declaration (file scope) — ~1 LOC, planned target `N/A (public header)` in `N/A (public header)`.
   *Forward-declares `IDirect3DTexture9` so the dxvk-extension function signatures compile without pulling in d3d9 headers.*
@@ -190,7 +190,7 @@ check will enforce it if discipline slips.
   *Declares the function-pointer type for the plugin-injected game-state write API introduced in workstream 10. The entrypoint stores a single string/string pair under a caller-chosen key in a fork-owned thread-safe map; graph components `GameValueReadBool` / `GameValueReadNumber` read those values by name. The contract doc block above the typedef describes key/value semantics, validation, and lifetime (store survives `Shutdown` / re-init).*
 
 - **Block** at `remixapi_Interface` vtable additions (struct fields) — ~19 LOC spread across the vtable struct, planned target `N/A (public header)` in `N/A (public header)`.
-  *Appends fork function-pointer slots to `remixapi_Interface`, including the v0.1001.0 retained lifecycle slots and the v0.1004.0 `SetRetainedInstanceActivityBatch` tail slot. ABI v0.1005.0 adds only a `pNext` structure, so the x64 interface remains 360 bytes. 2026-06-27: the upstream `SetCameraMediumMaterial` slot was moved out of the middle of the struct to immediately after `Present`, mirroring upstream's canonical tail layout; fork slots remain append-only after it.*
+  *Appends fork function-pointer slots to `remixapi_Interface`, including the v0.1001.0 retained lifecycle slots and the v0.1004.0 `SetRetainedInstanceActivityBatch` tail slot. ABI v0.1006.0 adds no interface slot, so the x64 interface remains 360 bytes. 2026-06-27: the upstream `SetCameraMediumMaterial` slot was moved out of the middle of the struct to immediately after `Present`, mirroring upstream's canonical tail layout; fork slots remain append-only after it.*
 
 ---
 
@@ -802,7 +802,7 @@ initializer list and can't be lifted into a separate TU.
   *Registers all fork-added API functions into `remixapi_Interface`, including the v0.1001.0 retained lifecycle slots and the v0.1004.0 retained-activity batch slot appended at the tail; externally-linked fork slots continue through `fork_hooks::remixApiVtableInit`.*
 
 - **Inline tweak** at `extern "C"` vtable size static_assert — 1 LOC. Not migrated (fridge-listed).
-  *ABI v0.1005.0 keeps the x64 interface sentinel at `static_assert(sizeof(interf) == 360, ...)`; the new ownership provenance is an instance `pNext` type and adds no slot.*
+  *ABI v0.1006.0 keeps the x64 interface sentinel at `static_assert(sizeof(interf) == 360, ...)`; the view-model category adds no interface slot or structure field.*
 
 ---
 

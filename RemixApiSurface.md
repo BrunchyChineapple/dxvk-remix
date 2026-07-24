@@ -25,7 +25,7 @@ the API, see [`docs/RemixApi.md`](docs/RemixApi.md).
 | `REMIXAPI_VERSION_GET_MINOR(version)` | `(((uint64_t)(version) >> 16) & (uint64_t)0xFFFFFFFF)` |
 | `REMIXAPI_VERSION_GET_PATCH(version)` | `(((uint64_t)(version)      ) & (uint64_t)0xFFFF)` |
 | `REMIXAPI_VERSION_MAJOR` | `0` |
-| `REMIXAPI_VERSION_MINOR` | `1005` |
+| `REMIXAPI_VERSION_MINOR` | `1006` |
 | `REMIXAPI_VERSION_PATCH` | `0` |
 | `REMIX_WINAPI_LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` | `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` |
 | `REMIX_WINAPI_LOAD_LIBRARY_SEARCH_DEFAULT_DIRS` | `LOAD_LIBRARY_SEARCH_DEFAULT_DIRS` |
@@ -174,6 +174,7 @@ toRtCategories(), so the bit values are free to match upstream and must.)
 | `REMIXAPI_INSTANCE_CATEGORY_BIT_PARTICLE_EMITTER` | `1 << 23` |  |
 | `REMIXAPI_INSTANCE_CATEGORY_BIT_SMOOTH_NORMALS` | `1 << 24` |  |
 | `REMIXAPI_INSTANCE_CATEGORY_BIT_HAIR_CARDS` | `1 << 25` |  |
+| `REMIXAPI_INSTANCE_CATEGORY_BIT_VIEW_MODEL` | `1 << 26` |  |
 
 ### `remixapi_dxvk_CopyRenderingOutputType`
 

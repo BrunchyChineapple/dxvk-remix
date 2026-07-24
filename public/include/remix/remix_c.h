@@ -60,10 +60,10 @@
 // (which is 0.6.x). The reserved MINOR range (starting at 1000) marks this fork
 // and, because the compat check treats every minor as breaking while MAJOR==0,
 // makes the runtime reject binaries built against stock Remix 0.6.x or older
-// Remix Plus ABIs whose struct layout and category bits differ. Bump MINOR on
-// every breaking ABI change.
+// Remix Plus ABIs whose struct layout, category bits, or required behavior differ.
+// Bump MINOR whenever one of those client-visible contracts changes.
 #define REMIXAPI_VERSION_MAJOR 0
-#define REMIXAPI_VERSION_MINOR 1005
+#define REMIXAPI_VERSION_MINOR 1006
 #define REMIXAPI_VERSION_PATCH 0
 
 

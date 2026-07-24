@@ -3,6 +3,18 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1006.0]
+
+### Added
+- `REMIXAPI_INSTANCE_CATEGORY_BIT_VIEW_MODEL` (bit 26), which routes Remix API instances and their replacements through the view-model camera domain.
+
+### Changed
+- The development API minor now distinguishes runtimes that support the view-model category from 0.1005.0 runtimes, which otherwise interpret bit 26 as a main-camera instance.
+- The x64 `remixapi_Interface` remains 360 bytes because this release changes no function slot or structure layout. Consumers must rebuild against the 0.1006.0 header.
+
+### Fixed
+- Preserved replacement instances now refresh their frame-local object-picking value and texture metadata instead of retaining expired draw identifiers.
+
 ## [0.1005.0]
 
 ### Added
