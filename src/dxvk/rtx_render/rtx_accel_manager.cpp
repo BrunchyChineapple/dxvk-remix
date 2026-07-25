@@ -1346,19 +1346,51 @@ namespace dxvk {
 
       // Start with clean buckets from the previous cache
       std::vector<CachedBucketState> newCachedBuckets;
-      m_instanceBucketIndex.clear();
 
+      // m_instanceBucketIndex is deliberately NOT cleared. Clearing it destroyed every one
+      // of its ~12.6k nodes and the loop below then allocated ~12.6k replacements, every
+      // frame, even when the bucket set had not changed at all. That heap traffic was the
+      // phase's cost: ~620 us at radius 6, or roughly 25 ns per node freed and reallocated.
+      //
+      // Clean buckets are compacted to the front in their existing relative order, so a
+      // clean bucket keeps its index unless an earlier bucket was dropped. When the index is
+      // unchanged its entries are already correct from last frame and need no work at all;
+      // when it shifts, assigning over the existing keys reuses the nodes instead of
+      // reallocating them.
       if (hasValidBucketCache) {
+        // The correctness of skipping unchanged indices rests on this: every cached bucket
+        // must have a dirty flag, or a bucket could be treated as clean and keep entries
+        // that no longer describe it.
+        assert(bucketDirty.size() == m_cachedBuckets.size());
+
         for (uint32_t bi = 0; bi < m_cachedBuckets.size(); ++bi) {
-          if (!bucketDirty[bi]) {
-            const uint32_t newIdx = static_cast<uint32_t>(newCachedBuckets.size());
-            // Map instances to the new bucket index
+          if (bucketDirty[bi]) {
+            // Drop this bucket's mappings. Its instances either went through the pipeline
+            // this frame and are re-added below, or no longer exist. Either way a surviving
+            // entry would be stale, and a stale entry is not benign: the main loop reads
+            // this map to decide an instance is in a clean bucket and skips emitting it.
+            //
+            // Erasing by pointer only hashes the address, so this is safe even for the
+            // pre-invalidated buckets whose instance pointers may already be dangling.
+            for (RtInstance* inst : m_cachedBuckets[bi].instances) {
+              m_instanceBucketIndex.erase(inst);
+            }
+            continue;
+          }
+
+          const uint32_t newIdx = static_cast<uint32_t>(newCachedBuckets.size());
+          if (newIdx != bi) {
+            // An earlier bucket was dropped, so this one moved. Assignment over an existing
+            // key reuses the node; no allocation.
             for (RtInstance* inst : m_cachedBuckets[bi].instances) {
               m_instanceBucketIndex[inst] = newIdx;
             }
-            newCachedBuckets.push_back(std::move(m_cachedBuckets[bi]));
           }
+          newCachedBuckets.push_back(std::move(m_cachedBuckets[bi]));
         }
+      } else {
+        // Nothing survives, so there is nothing worth preserving.
+        m_instanceBucketIndex.clear();
       }
 
       // Add newly-built dirty buckets from this frame.  The PooledBlas was
