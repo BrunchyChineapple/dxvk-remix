@@ -149,27 +149,6 @@ public:
   uint32_t getSurfaceIndex() const {
     return m_surfaceIndex;
   }
-  // AccelManager's cached BLAS bucket slot for this instance. Stored here rather than
-  // in a pointer-keyed map because the map was probed and rebuilt once per instance per
-  // frame, which dominated mergeInstancesIntoBlas at high instance counts.
-  //
-  // The epoch is what makes this safe. It only matches while AccelManager's bucket cache
-  // is the one that assigned the slot, so a stale index cannot be read after a cache
-  // rebuild, and a recycled allocation starts at epoch 0 and can never inherit one.
-  void setBucketCacheSlot(uint32_t bucketIndex, uint64_t cacheEpoch) {
-    m_bucketCacheIndex = bucketIndex;
-    m_bucketCacheEpoch = cacheEpoch;
-  }
-  void clearBucketCacheSlot() {
-    m_bucketCacheEpoch = 0;
-  }
-  bool getBucketCacheSlot(uint64_t cacheEpoch, uint32_t& bucketIndex) const {
-    if (m_bucketCacheEpoch == 0 || m_bucketCacheEpoch != cacheEpoch) {
-      return false;
-    }
-    bucketIndex = m_bucketCacheIndex;
-    return true;
-  }
   void setPreviousSurfaceIndex(uint32_t surfaceIndex) {
     m_previousSurfaceIndex = surfaceIndex;
   }
@@ -246,10 +225,6 @@ private:
 
   uint32_t m_surfaceIndex;        // Material surface index for reordered surfaces by AccelManager
   uint32_t m_previousSurfaceIndex;
-
-  // AccelManager bucket cache slot. Epoch 0 means "not in any cache".
-  uint32_t m_bucketCacheIndex = 0;
-  uint64_t m_bucketCacheEpoch = 0;
 
   // Object with Opacity Micromap per-instance data maintained by Opacity Micromap Manager.
   // Stored in instance object to avoid indirection of looking it up for an instance

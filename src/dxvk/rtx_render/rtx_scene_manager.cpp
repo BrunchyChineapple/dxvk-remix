@@ -374,11 +374,11 @@ namespace dxvk {
       m_opacityMicromapManager->clear();
 
     // Invalidate AccelManager's bucket cache before InstanceManager::clear() deletes
-    // every RtInstance. The cache holds raw RtInstance* in m_cachedBuckets[].instances
-    // and .surfaces, and the next frame's mergeInstancesIntoBlas dirty check would
-    // dereference those (now-freed) pointers. The per-instance onInstanceDestroyed ->
-    // removeInstanceFromBucketCache hook invalidates only the one bucket that held the
-    // instance, so a bulk reset must drop the cache wholesale.
+    // every RtInstance. The cache holds raw RtInstance* in m_cachedBuckets[].instances /
+    // .surfaces and m_instanceBucketIndex, and the next frame's mergeInstancesIntoBlas
+    // dirty check would dereference those (now-freed) pointers. The per-instance
+    // onInstanceDestroyed -> removeInstanceFromBucketCache hook invalidates only the
+    // one bucket that held the instance, so a bulk reset must drop the cache wholesale.
     m_accelManager.clear();
 
     m_instanceManager.clear();

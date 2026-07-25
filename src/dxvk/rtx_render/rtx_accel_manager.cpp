@@ -73,11 +73,10 @@ namespace dxvk {
   void AccelManager::clear() {
     m_blasPool.clear();
 
-    // Invalidate incremental rebuild cache. Advancing the epoch orphans every bucket
-    // slot recorded on an instance, including instances this manager can no longer see.
+    // Invalidate incremental rebuild cache
     m_cachedBuckets.clear();
     m_cachedBucketDirty.clear();
-    ++m_bucketCacheEpoch;
+    m_instanceBucketIndex.clear();
     m_cachedDynamicBlasEntries.clear();
     resetUniqueDynamicBlasGroups();
     m_lastProcessedGeneration = UINT64_MAX;
@@ -94,12 +93,13 @@ namespace dxvk {
   }
 
   void AccelManager::removeInstanceFromBucketCache(RtInstance* instance) {
-    uint32_t bucketIndex = 0;
-    if (!instance->getBucketCacheSlot(m_bucketCacheEpoch, bucketIndex)) {
+    const auto entry = m_instanceBucketIndex.find(instance);
+    if (entry == m_instanceBucketIndex.end()) {
       return;
     }
 
-    instance->clearBucketCacheSlot();
+    const uint32_t bucketIndex = entry->second;
+    m_instanceBucketIndex.erase(entry);
 
     // Invalidate only the bucket that held this instance. Discarding the whole cache
     // here meant the handful of ordinary instance removals every frame - particles,
@@ -892,10 +892,10 @@ namespace dxvk {
       // On the incremental path, skip instances that belong to a clean cached bucket.
       // Their surfaces and TLAS instances will be restored from cache after the loop.
       if (hasValidBucketCache) {
-        uint32_t cachedBucketIndex = 0;
-        if (instance->getBucketCacheSlot(m_bucketCacheEpoch, cachedBucketIndex) &&
-            cachedBucketIndex < bucketDirty.size() &&
-            !bucketDirty[cachedBucketIndex]) {
+        auto bucketIdxIt = m_instanceBucketIndex.find(instance);
+        if (bucketIdxIt != m_instanceBucketIndex.end() &&
+            bucketIdxIt->second < bucketDirty.size() &&
+            !bucketDirty[bucketIdxIt->second]) {
           // This instance is in a clean cached bucket — skip all per-instance work
           instance->clearBlasDirty();
           continue;
@@ -1229,19 +1229,17 @@ namespace dxvk {
     // Rebuild the cached bucket list: keep clean buckets as-is, replace dirty
     // buckets with fresh data from this frame's blasBuckets.
     {
-      // Start with clean buckets from the previous cache. Advancing the epoch first
-      // orphans every slot recorded against the outgoing cache, so instances that do
-      // not get re-stamped below are correctly treated as uncached.
+      // Start with clean buckets from the previous cache
       std::vector<CachedBucketState> newCachedBuckets;
-      ++m_bucketCacheEpoch;
+      m_instanceBucketIndex.clear();
 
       if (hasValidBucketCache) {
         for (uint32_t bi = 0; bi < m_cachedBuckets.size(); ++bi) {
           if (!bucketDirty[bi]) {
             const uint32_t newIdx = static_cast<uint32_t>(newCachedBuckets.size());
-            // Re-stamp instances with their slot in the new cache
+            // Map instances to the new bucket index
             for (RtInstance* inst : m_cachedBuckets[bi].instances) {
-              inst->setBucketCacheSlot(newIdx, m_bucketCacheEpoch);
+              m_instanceBucketIndex[inst] = newIdx;
             }
             newCachedBuckets.push_back(std::move(m_cachedBuckets[bi]));
           }
@@ -1293,7 +1291,7 @@ namespace dxvk {
 
         const uint32_t newIdx = static_cast<uint32_t>(newCachedBuckets.size());
         for (RtInstance* inst : cached.instances) {
-          inst->setBucketCacheSlot(newIdx, m_bucketCacheEpoch);
+          m_instanceBucketIndex[inst] = newIdx;
           inst->clearBlasDirty();
         }
         newCachedBuckets.push_back(std::move(cached));
