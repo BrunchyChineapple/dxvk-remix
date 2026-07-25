@@ -75,6 +75,7 @@ namespace dxvk {
 
     // Invalidate incremental rebuild cache
     m_cachedBuckets.clear();
+    m_cachedBucketDirty.clear();
     m_instanceBucketIndex.clear();
     m_cachedDynamicBlasEntries.clear();
     resetUniqueDynamicBlasGroups();
@@ -92,12 +93,24 @@ namespace dxvk {
   }
 
   void AccelManager::removeInstanceFromBucketCache(RtInstance* instance) {
-    if (m_instanceBucketIndex.erase(instance) == 0) {
+    const auto entry = m_instanceBucketIndex.find(instance);
+    if (entry == m_instanceBucketIndex.end()) {
       return;
     }
 
-    m_cachedBuckets.clear();
-    m_instanceBucketIndex.clear();
+    const uint32_t bucketIndex = entry->second;
+    m_instanceBucketIndex.erase(entry);
+
+    // Invalidate only the bucket that held this instance. Discarding the whole cache
+    // here meant the handful of ordinary instance removals every frame - particles,
+    // NPCs, dynamic objects - forced a from-scratch bucket rebuild of the entire
+    // scene, so the incremental path never applied in a live game.
+    if (bucketIndex < m_cachedBucketDirty.size()) {
+      m_cachedBucketDirty[bucketIndex] = true;
+    }
+
+    // This frame's surface ordering no longer matches the cached ordering, so the
+    // full-skip path must not be taken even though the rest of the cache is intact.
     m_lastProcessedGeneration = UINT64_MAX;
   }
 
@@ -694,9 +707,23 @@ namespace dxvk {
             currentInstanceSet.insert(instance);
           }
         }
-        bucketDirty.resize(m_cachedBuckets.size(), false);
+        // Seed from buckets already invalidated by instance destruction since the last
+        // build. Those are dirty regardless of what the scan below would conclude.
+        bucketDirty.assign(m_cachedBuckets.size(), false);
+        for (uint32_t bi = 0; bi < m_cachedBuckets.size() && bi < m_cachedBucketDirty.size(); ++bi) {
+          if (m_cachedBucketDirty[bi]) {
+            bucketDirty[bi] = true;
+            anyBucketDirty = true;
+          }
+        }
 
         for (uint32_t bi = 0; bi < m_cachedBuckets.size(); ++bi) {
+          // A pre-invalidated bucket may hold pointers to already-freed instances, so
+          // it must not be inspected.
+          if (bucketDirty[bi]) {
+            continue;
+          }
+
           const auto& cachedBucket = m_cachedBuckets[bi];
 
           if (cachedBucket.instances.size() != cachedBucket.instanceCacheIdentities.size()) {
@@ -1269,6 +1296,10 @@ namespace dxvk {
       }
 
       m_cachedBuckets = std::move(newCachedBuckets);
+
+      // Every bucket now in the cache was either rebuilt this frame or verified clean,
+      // so per-bucket invalidation restarts from a clean slate.
+      m_cachedBucketDirty.assign(m_cachedBuckets.size(), false);
 
       // Update the dynamic BlasEntry set for the full-skip path
       m_cachedDynamicBlasEntries.clear();

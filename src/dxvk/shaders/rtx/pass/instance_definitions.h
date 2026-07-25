@@ -138,10 +138,20 @@
 
 // Engine-wide index limits.
 // SurfaceIndex: 21 bits (fits in the 24-bit instanceCustomIndex alongside 2-bit material type + 1-bit view-model flag).
-// PrimitiveIndex: 26 bits (max ~67M triangles per scene).
+//
+// PrimitiveIndex: 24 bits (max ~16.7M triangles per scene). This is not an arbitrary
+// budget - it is the width of the scene-wide prefix-sum primitive ID where the NEE
+// cache stores it. In NEECell::insertSlotTask the ID occupies bits 0..23, bit 24 is the
+// isLightTask flag, and bits 25..31 are a luminance sort key that must sit above the ID
+// because the write is an InterlockedMax. NEECandidate packs the same ID against an
+// 8-bit range in bits 24..31. Overflow does not merely truncate: it sets bit 24, so the
+// reader misclassifies the entry as a light task and update_nee_cache.comp.slang
+// discards it. Widening this therefore requires repacking those words, not just raising
+// the constant. It was previously declared as 26, which reported no error until 4x past
+// the point where NEE entries were already being silently dropped.
 #define SURFACE_INDEX_BIT_COUNT       21
 #define SURFACE_INDEX_MAX_VALUE       ((1 << SURFACE_INDEX_BIT_COUNT) - 1)
-#define PRIMITIVE_INDEX_BIT_COUNT     26
+#define PRIMITIVE_INDEX_BIT_COUNT     24
 #define PRIMITIVE_INDEX_MAX_VALUE     ((1 << PRIMITIVE_INDEX_BIT_COUNT) - 1)
 
 // Custom Index encoding (24-bit VkAccelerationStructureInstanceKHR.instanceCustomIndex)

@@ -276,6 +276,12 @@ private:
   };
   std::vector<CachedBucketState> m_cachedBuckets;
 
+  // Buckets invalidated since the last build, parallel to m_cachedBuckets. An
+  // instance destroyed between builds dirties only its own bucket, so the rest of
+  // the cache survives. A dirty bucket's cached instance pointers may already be
+  // dangling and must not be dereferenced.
+  std::vector<bool> m_cachedBucketDirty;
+
   // Maps a merged instance pointer to its bucket index in m_cachedBuckets.
   // Allows O(1) "is this instance in a clean bucket?" check in the main loop.
   std::unordered_map<RtInstance*, uint32_t> m_instanceBucketIndex;

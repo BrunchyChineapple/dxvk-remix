@@ -544,6 +544,12 @@ private:
     uint32_t resourceRebuilds = 0;
     uint32_t sceneUnchangedFrames = 0;
     uint32_t submittedHandles = 0;
+    // Ordinary replacement instances removed because a retained instance owns the same
+    // source draw and transform. A sustained non-zero count means the legacy path is
+    // still submitting geometry the retained path already owns, which is the
+    // double-rendering question stated as a number instead of a visual judgement.
+    uint32_t prunePasses = 0;
+    uint32_t duplicatesPruned = 0;
   };
   RetainedPerfWindow m_retainedPerf;
   // Latches once any retained instance exists so the baseline (retained radius set

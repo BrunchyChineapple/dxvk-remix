@@ -377,8 +377,8 @@ namespace dxvk {
     // every RtInstance. The cache holds raw RtInstance* in m_cachedBuckets[].instances /
     // .surfaces and m_instanceBucketIndex, and the next frame's mergeInstancesIntoBlas
     // dirty check would dereference those (now-freed) pointers. The per-instance
-    // onInstanceDestroyed -> removeInstanceFromBucketCache hook only patches the index
-    // map, not the vectors, so a bulk reset must drop the cache wholesale.
+    // onInstanceDestroyed -> removeInstanceFromBucketCache hook invalidates only the
+    // one bucket that held the instance, so a bulk reset must drop the cache wholesale.
     m_accelManager.clear();
 
     m_instanceManager.clear();
@@ -2701,7 +2701,9 @@ namespace dxvk {
       " replacements=", m_drawCallTracker.getReplacementInstances().size(),
       " uniqueBlas=", m_retainedExternalBlases.size(),
       " uniqueMaterials=", m_retainedExternalSurfaceMaterials.size(),
-      " sceneUnchanged=", m_retainedPerf.sceneUnchangedFrames, "/", static_cast<uint32_t>(frames)));
+      " sceneUnchanged=", m_retainedPerf.sceneUnchangedFrames, "/", static_cast<uint32_t>(frames),
+      " prunePasses=", m_retainedPerf.prunePasses,
+      " duplicatesPruned=", m_retainedPerf.duplicatesPruned));
 
     m_retainedPerf = RetainedPerfWindow {};
   }
@@ -2997,6 +2999,9 @@ namespace dxvk {
         duplicateIdentities.push_back(replacementInstance.identityHash);
       }
     }
+
+    ++m_retainedPerf.prunePasses;
+    m_retainedPerf.duplicatesPruned += static_cast<uint32_t>(duplicateIdentities.size());
 
     for (XXH64_hash_t identity : duplicateIdentities) {
       m_drawCallTracker.removeReplacementInstanceByIdentity(identity);
