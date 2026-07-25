@@ -174,6 +174,11 @@ public:
   void removeInstanceFromBucketCache(RtInstance* instance);
   void invalidateOpacityMicromapBindings() { m_ommBindPending = true; }
 
+  // Scene-wide primitive total from the most recent prefix-sum rebuild. Reported in
+  // telemetry because the overflow diagnostic is ONCE()-gated and therefore samples a
+  // single arbitrary frame, which cannot answer how the count varies with scene size.
+  uint32_t getLastTotalPrimitiveCount() const { return m_lastTotalPrimitiveCount; }
+
 private:
   struct SurfaceInfo {
     uint32_t surfaceMaterialIndex;
@@ -282,9 +287,13 @@ private:
   // dangling and must not be dereferenced.
   std::vector<bool> m_cachedBucketDirty;
 
-  // Maps a merged instance pointer to its bucket index in m_cachedBuckets.
-  // Allows O(1) "is this instance in a clean bucket?" check in the main loop.
-  std::unordered_map<RtInstance*, uint32_t> m_instanceBucketIndex;
+  // Identifies the current generation of m_cachedBuckets. Each instance records this
+  // alongside its bucket index (RtInstance::setBucketCacheSlot), so a rebuild
+  // invalidates every recorded slot by advancing the epoch instead of clearing a map.
+  // Starts at 1 because 0 means "no slot" on the instance side.
+  uint64_t m_bucketCacheEpoch = 1;
+
+  uint32_t m_lastTotalPrimitiveCount = 0;
 
   // Set of BlasEntry* that went to the dynamic path on the last full rebuild.
   // Used for quick O(1) per-instance classification on the dynamics-only path.
