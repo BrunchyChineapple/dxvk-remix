@@ -156,7 +156,7 @@ namespace dxvk {
   namespace {
     template<int RtInstanceSize> struct CheckRtInstanceSize {
       // The second line of the build error should contain the new size of RtInstance in the template argument, i.e. `dxvk::CheckRtInstanceSize<newSize>`
-      static_assert(RtInstanceSize == 776, "RtInstance size has changed.  Fix the copy constructor above this message, then update the expected size.");
+      static_assert(RtInstanceSize == 792, "RtInstance size has changed.  Fix the copy constructor above this message, then update the expected size.");
     };
     CheckRtInstanceSize<sizeof(RtInstance)> _rtInstanceSizeTest;
   }
@@ -205,7 +205,11 @@ namespace dxvk {
     //   OMM request registration state,
     //   m_primInstanceOwner, buildGeometries, buildRanges,
     //   billboardIndices, indexOffsets, m_blasDirty,
-    //   m_billboardGeometryDirty, m_emitterMotionState
+    //   m_billboardGeometryDirty, m_emitterMotionState,
+    //   m_bucketCacheIndex / m_bucketCacheEpoch - a copy is a distinct instance that has
+    //     never been bucketed. Inheriting the source's slot would make
+    //     mergeInstancesIntoBlas treat the copy as already present in a clean bucket and
+    //     skip emitting it, so the copy keeps its epoch 0 default.
   }
 
   void RtInstance::updateFromReference(const RtInstance& src, const bool preserveTransforms) {
