@@ -80,7 +80,15 @@ class AccelManager : public CommonDeviceObject {
     uint8_t instanceMask = 0;
     bool usesUnorderedApproximations = false;
     bool isSubsurface = false;
-    uint8_t pad = 0;
+    // Retained statics are kept out of the same bucket as ordinary dynamic instances even
+    // though they are perfectly compatible geometry. A bucket is the unit of invalidation,
+    // so mixing them lets one churning NPC or particle rebuild thousands of never-changing
+    // distant statics. Measured at radius 10: 86% of the instances dragged into rebuilds
+    // were retained statics, with keyChanged flat at zero.
+    //
+    // Unlike a size cap this only splits each existing bucket in two, so it does not
+    // multiply the per-bucket fixed cost that made capping lose.
+    bool isRetainedExternal = false;
 
     bool operator==(const BlasBucketKey& other) const {
       return instanceMask == other.instanceMask &&
@@ -88,7 +96,8 @@ class AccelManager : public CommonDeviceObject {
              customIndexFlags == other.customIndexFlags &&
              instanceFlags == other.instanceFlags &&
              usesUnorderedApproximations == other.usesUnorderedApproximations &&
-             isSubsurface == other.isSubsurface;
+             isSubsurface == other.isSubsurface &&
+             isRetainedExternal == other.isRetainedExternal;
     }
   };
 
@@ -101,7 +110,7 @@ class AccelManager : public CommonDeviceObject {
           &BlasBucketKey::instanceMask,
           &BlasBucketKey::usesUnorderedApproximations,
           &BlasBucketKey::isSubsurface,
-          &BlasBucketKey::pad>(k));
+          &BlasBucketKey::isRetainedExternal>(k));
     }
   };
 
@@ -321,8 +330,9 @@ private:
     // Which TLAS type(s) this bucket was emitted to
     bool isUnordered = false;
     bool hasSssInstances = false;
-    // Whether this bucket holds retained statics, recorded at build time. A dirty bucket
-    // may hold dangling instance pointers, so this cannot be derived later by inspection.
+    // Whether this bucket holds retained statics. Part of BlasBucketKey, so it is uniform
+    // across the bucket and a change must invalidate it. Recorded at build time because a
+    // dirty bucket may hold dangling instance pointers by the time it is inspected.
     bool isRetained = false;
   };
   std::vector<CachedBucketState> m_cachedBuckets;

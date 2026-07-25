@@ -808,7 +808,9 @@ namespace dxvk {
               inst->getVkInstance().flags != cachedBucket.tlasInstance.flags ||
               customIndexFlags != cachedBucket.tlasInstance.instanceCustomIndex ||
               inst->usesUnorderedApproximations() != cachedBucket.isUnordered ||
-              inst->isSubsurface() != cachedBucket.hasSssInstances;
+              inst->isSubsurface() != cachedBucket.hasSssInstances ||
+              // Part of the bucket key now, so a change has to invalidate the bucket.
+              inst->isRetainedExternal() != cachedBucket.isRetained;
 
             const bool instanceBlasDirty = inst->isBlasDirty();
             const bool blasUpdatedThisFrame = inst->getBlas()->frameLastUpdated == currentFrame;
@@ -1065,6 +1067,7 @@ namespace dxvk {
         bucketKey.instanceFlags = instance->getVkInstance().flags;
         bucketKey.usesUnorderedApproximations = instance->usesUnorderedApproximations();
         bucketKey.isSubsurface = instance->isSubsurface();
+        bucketKey.isRetainedExternal = instance->isRetainedExternal();
 
         bool merged = false;
         auto bucketIt = bucketMap.find(bucketKey);
