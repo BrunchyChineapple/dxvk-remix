@@ -379,6 +379,25 @@ private:
   bool hasRetainedStaticOwnershipClaim(const StaticOwnershipKey& key);
   void pruneOrdinaryStaticOwnershipDuplicates();
 
+  // Winner selection for one already-sorted claim bucket. Accumulates the desired
+  // winner flag per materialized identity rather than applying it, so the full
+  // rebuild and the incremental activity path share identical arbitration logic.
+  void selectRetainedStaticOwnershipWinners(
+      const std::vector<RetainedStaticOwnershipClaim>& claims,
+      std::unordered_map<XXH64_hash_t, bool>& desiredWinnerByIdentity) const;
+  // Applies accumulated winner flags. Returns true if any acceleration-structure
+  // membership changed.
+  bool applyRetainedStaticOwnershipWinners(
+      const std::unordered_map<XXH64_hash_t, bool>& desiredWinnerByIdentity);
+  // Recomputes winners for buckets touched by an activity change.
+  void refreshRetainedStaticOwnershipWinners();
+  // Records an activity change against the claim registry without rebuilding it.
+  // Returns false if the registry cannot absorb the change and a full rebuild is
+  // required.
+  bool noteRetainedStaticOwnershipActivityChange(
+      remixapi_InstanceHandle handle,
+      bool active);
+
   void setRetainedExternalSubmissionMode(
       remixapi_InstanceHandle handle,
       ReplacementInstance* replacementInstance,
@@ -480,12 +499,58 @@ private:
   bool m_retainedStaticOwnershipDirty = true;
   bool m_retainedStaticOwnershipPrunePending = false;
 
+  // Locates a handle's claim so an activity change can update it in place. An
+  // activity flip does not alter ownership topology - which claims exist, their
+  // source-hash buckets, their transforms, or their sort order - it only alters
+  // winner selection among co-located claims. Rebuilding the whole registry for a
+  // flip was measured as the dominant cost of enabling occlusion culling on
+  // retained geometry, so flips now recompute winners for the affected bucket only.
+  struct RetainedStaticOwnershipLocation {
+    XXH64_hash_t sourceDrawHash = kEmptyHash;
+    uint32_t claimIndex = 0;
+  };
+  std::unordered_map<remixapi_InstanceHandle, RetainedStaticOwnershipLocation>
+      m_retainedStaticOwnershipClaimIndex;
+  std::unordered_set<XXH64_hash_t> m_retainedStaticOwnershipWinnerDirty;
+
   // Rebuilt only when retained topology/material ownership changes. These compact
   // unique-resource lists replace the old per-placement preserve walk.
   bool m_retainedExternalResourcesDirty = true;
   uint64_t m_retainedExternalReplacementGeneration = 0;
   std::vector<BlasEntry*> m_retainedExternalBlases;
   std::vector<uint32_t> m_retainedExternalSurfaceMaterials;
+
+  // Per-phase CPU cost of the retained-distant-world frame path, in nanoseconds,
+  // accumulated over a logging window. Retained geometry measures as GPU-starving
+  // (GPU idle waiting on CPU) rather than GPU-bound, and the 32-bit wrapper side
+  // accounts for under 3% of that cost, so the remainder has to be attributed to a
+  // specific phase in here before it can be optimized. Counts are logged alongside
+  // the timings because the cost was measured to saturate with instance count,
+  // which implicates a collection that saturates rather than one that scales.
+  // See .kiro/specs/rtx-retained-distant-world/handoff-perf-2026-07-25.md.
+  struct RetainedPerfWindow {
+    uint64_t submitNs = 0;
+    uint64_t ownershipPruneNs = 0;
+    uint64_t ownershipRebuildNs = 0;
+    uint64_t garbageCollectNs = 0;
+    uint64_t preserveWalkNs = 0;
+    uint64_t refreshResourcesNs = 0;
+    uint64_t resourceRebuildNs = 0;
+    uint64_t mergeBlasNs = 0;
+    uint64_t accelPrepareNs = 0;
+    uint64_t instanceFrameEndNs = 0;
+    uint32_t frames = 0;
+    uint32_t ownershipRebuilds = 0;
+    uint32_t resourceRebuilds = 0;
+    uint32_t sceneUnchangedFrames = 0;
+    uint32_t submittedHandles = 0;
+  };
+  RetainedPerfWindow m_retainedPerf;
+  // Latches once any retained instance exists so the baseline (retained radius set
+  // to 1.0 mid-session) is still reported, while games that never use the retained
+  // API log nothing.
+  bool m_retainedPerfEverActive = false;
+  void logRetainedPerfWindow();
 
   std::unique_ptr<TerrainBaker> m_terrainBaker;
 

@@ -20,6 +20,7 @@
 * DEALINGS IN THE SOFTWARE.
 */
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <mutex>
@@ -59,6 +60,34 @@
 namespace {
   constexpr float kStaticOwnershipBasisTolerance = 1.0e-4f;
   constexpr float kStaticOwnershipTranslationTolerance = 1.0e-3f;
+
+  // Frames per retained-performance log line. At the frame rates this path is being
+  // tuned at, 300 frames is roughly 20 seconds - long enough to average out noise,
+  // short enough to bracket a 60-second capture.
+  constexpr uint32_t kRetainedPerfWindowFrames = 300;
+
+  // Accumulates elapsed nanoseconds into a counter on scope exit. Several of the
+  // timed functions have early returns, so scope-exit accumulation is safer than
+  // threading a stop call through every path. Nanoseconds rather than microseconds
+  // because individual phases can sit below 1 us and would otherwise truncate away.
+  class PhaseTimer {
+  public:
+    explicit PhaseTimer(uint64_t& sink)
+      : m_sink(sink)
+      , m_start(std::chrono::steady_clock::now()) {
+    }
+    PhaseTimer(const PhaseTimer&) = delete;
+    PhaseTimer& operator=(const PhaseTimer&) = delete;
+    ~PhaseTimer() {
+      const auto elapsed = std::chrono::steady_clock::now() - m_start;
+      m_sink += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+    }
+
+  private:
+    uint64_t& m_sink;
+    std::chrono::steady_clock::time_point m_start;
+  };
 
   // helper function to ensure generating spatialMapHash for external draws is done the same way in multiple places.
   XXH64_hash_t spatialMapHashForExternalDrawMesh(remixapi_MeshHandle mesh) {
@@ -335,6 +364,8 @@ namespace dxvk {
     m_retainedExternalSurfaceMaterials.clear();
     m_retainedExternalResourcesDirty = true;
     m_retainedStaticOwnershipClaims.clear();
+    m_retainedStaticOwnershipClaimIndex.clear();
+    m_retainedStaticOwnershipWinnerDirty.clear();
     m_retainedStaticOwnershipDirty = true;
     m_retainedStaticOwnershipPrunePending = false;
 
@@ -408,6 +439,8 @@ namespace dxvk {
     m_retainedExternalBlases.clear();
     m_retainedExternalSurfaceMaterials.clear();
     m_retainedStaticOwnershipClaims.clear();
+    m_retainedStaticOwnershipClaimIndex.clear();
+    m_retainedStaticOwnershipWinnerDirty.clear();
     m_retainedStaticOwnershipDirty = true;
     m_retainedStaticOwnershipPrunePending = false;
     m_accelManager.onDestroy();
@@ -600,7 +633,13 @@ namespace dxvk {
     }
 
     m_cameraManager.onFrameEnd();
-    m_instanceManager.onFrameEnd();
+    {
+      // Covers InstanceManager::resetSurfaceIndices, an unconditional write to every
+      // instance in the table with no activity filter.
+      const PhaseTimer timer(m_retainedPerf.instanceFrameEndNs);
+      m_instanceManager.onFrameEnd();
+    }
+    logRetainedPerfWindow();
     m_previousFrameSceneAvailable = raytracedThisFrame && RtxOptions::enablePreviousTLAS();
 
     m_bufferCache.clear();
@@ -2173,8 +2212,14 @@ namespace dxvk {
 
     // Materialize retained create/update/invalidation events before GC. Stable
     // retained geometry has explicit ownership and performs no draw replay here.
-    submitRetainedExternalInstances(ctx);
-    pruneOrdinaryStaticOwnershipDuplicates();
+    {
+      const PhaseTimer timer(m_retainedPerf.submitNs);
+      submitRetainedExternalInstances(ctx);
+    }
+    {
+      const PhaseTimer timer(m_retainedPerf.ownershipPruneNs);
+      pruneOrdinaryStaticOwnershipDuplicates();
+    }
 
   #ifdef REMIX_DEVELOPMENT
     if (m_device->getCurrentFrameId() == RtxOptions::dumpAllInstancesOnFrame()) {
@@ -2186,12 +2231,16 @@ namespace dxvk {
     // Needs to happen before garbageCollection to avoid destroying dynamic lights
     m_lightManager.dynamicLightMatching();
 
-    garbageCollection();
+    {
+      const PhaseTimer timer(m_retainedPerf.garbageCollectNs);
+      garbageCollection();
+    }
 
     // Re-register buffers, textures, and materials for anti-culled instances.
     // Explicitly retained instances use the unique-resource refresh below and
     // never enter this per-placement preserve path.
     {
+      const PhaseTimer timer(m_retainedPerf.preserveWalkNs);
       const uint32_t currentFrameId = m_device->getCurrentFrameId();
       for (auto& ri : m_drawCallTracker.getReplacementInstances()) {
         if (ri->isRetainedExternal || ri->frameLastSeen == currentFrameId) {
@@ -2206,7 +2255,10 @@ namespace dxvk {
       }
     }
 
-    refreshRetainedExternalResources();
+    {
+      const PhaseTimer timer(m_retainedPerf.refreshResourcesNs);
+      refreshRetainedExternalResources();
+    }
 
     m_graphManager.applySceneOverrides(ctx);
 
@@ -2326,10 +2378,19 @@ namespace dxvk {
     m_instanceManager.createViewModelInstances(ctx, m_cameraManager, m_rayPortalManager);
     m_instanceManager.createPlayerModelVirtualInstances(ctx, m_cameraManager, m_rayPortalManager);
 
-    m_accelManager.mergeInstancesIntoBlas(ctx, execBarriers, textureManager.getTextureTable(), m_cameraManager, m_instanceManager, m_opacityMicromapManager.get());
+    {
+      const PhaseTimer timer(m_retainedPerf.mergeBlasNs);
+      m_accelManager.mergeInstancesIntoBlas(ctx, execBarriers, textureManager.getTextureTable(), m_cameraManager, m_instanceManager, m_opacityMicromapManager.get());
+    }
+    if (m_accelManager.wasSceneUnchangedThisFrame()) {
+      ++m_retainedPerf.sceneUnchangedFrames;
+    }
 
     // Call on the other managers to prepare their GPU data for the current scene
-    m_accelManager.prepareSceneData(ctx, execBarriers, m_instanceManager);
+    {
+      const PhaseTimer timer(m_retainedPerf.accelPrepareNs);
+      m_accelManager.prepareSceneData(ctx, execBarriers, m_instanceManager);
+    }
     m_lightManager.prepareSceneData(ctx, m_cameraManager);
 
     // Upload surface material buffer BEFORE the GPU culling dispatch so the
@@ -2596,12 +2657,185 @@ namespace dxvk {
     return false;
   }
 
+  void SceneManager::logRetainedPerfWindow() {
+    if (!m_retainedExternalInstances.empty()) {
+      m_retainedPerfEverActive = true;
+    }
+    if (!m_retainedPerfEverActive) {
+      return;
+    }
+
+    if (++m_retainedPerf.frames < kRetainedPerfWindowFrames) {
+      return;
+    }
+
+    const double frames = static_cast<double>(m_retainedPerf.frames);
+    const auto perFrameUs = [frames](uint64_t totalNs) {
+      return static_cast<double>(totalNs) / (frames * 1000.0);
+    };
+
+    // Phases are reported as mean microseconds per frame. ownershipRebuild and
+    // resourceRebuild are nested inside ownershipPrune/submit and refreshResources
+    // respectively, so they are not additive with their parents.
+    Logger::info(str::format(
+      "RetainedPerf: ", static_cast<uint32_t>(frames), "-frame us/frame"
+      " submit=", perFrameUs(m_retainedPerf.submitNs),
+      " ownPrune=", perFrameUs(m_retainedPerf.ownershipPruneNs),
+      " (ownRebuild=", perFrameUs(m_retainedPerf.ownershipRebuildNs),
+      " x", m_retainedPerf.ownershipRebuilds, ")",
+      " gc=", perFrameUs(m_retainedPerf.garbageCollectNs),
+      " preserve=", perFrameUs(m_retainedPerf.preserveWalkNs),
+      " refresh=", perFrameUs(m_retainedPerf.refreshResourcesNs),
+      " (resRebuild=", perFrameUs(m_retainedPerf.resourceRebuildNs),
+      " x", m_retainedPerf.resourceRebuilds, ")",
+      " mergeBlas=", perFrameUs(m_retainedPerf.mergeBlasNs),
+      " accelPrep=", perFrameUs(m_retainedPerf.accelPrepareNs),
+      " instEnd=", perFrameUs(m_retainedPerf.instanceFrameEndNs)));
+
+    Logger::info(str::format(
+      "RetainedPerf: counts"
+      " retained=", m_retainedExternalInstances.size(),
+      " perFrameSubmit=", m_retainedExternalInstancesPerFrame.size(),
+      " resubmitted=", static_cast<double>(m_retainedPerf.submittedHandles) / frames, "/frame",
+      " instanceTable=", m_instanceManager.getInstanceTable().size(),
+      " replacements=", m_drawCallTracker.getReplacementInstances().size(),
+      " uniqueBlas=", m_retainedExternalBlases.size(),
+      " uniqueMaterials=", m_retainedExternalSurfaceMaterials.size(),
+      " sceneUnchanged=", m_retainedPerf.sceneUnchangedFrames, "/", static_cast<uint32_t>(frames)));
+
+    m_retainedPerf = RetainedPerfWindow {};
+  }
+
   void SceneManager::markRetainedStaticOwnershipDirty() {
     m_retainedStaticOwnershipDirty = true;
   }
 
+  void SceneManager::selectRetainedStaticOwnershipWinners(
+      const std::vector<RetainedStaticOwnershipClaim>& claims,
+      std::unordered_map<XXH64_hash_t, bool>& desiredWinnerByIdentity) const {
+    // Claims must already be sorted by translation then handle: the tolerance window
+    // below is found with a binary search on x.
+    for (const RetainedStaticOwnershipClaim& claim : claims) {
+      const float minX =
+          claim.objectToWorld[3].x - kStaticOwnershipTranslationTolerance;
+      const float maxX =
+          claim.objectToWorld[3].x + kStaticOwnershipTranslationTolerance;
+      auto candidate = std::lower_bound(
+          claims.begin(), claims.end(), minX,
+          [](const RetainedStaticOwnershipClaim& value, float x) {
+            return value.objectToWorld[3].x < x;
+          });
+
+      uintptr_t winner = retainedHandleValue(claim.handle);
+      std::optional<uintptr_t> activeWinner;
+      for (; candidate != claims.end() &&
+             candidate->objectToWorld[3].x <= maxX;
+           ++candidate) {
+        if (!staticOwnershipTransformsMatch(
+                claim.objectToWorld, candidate->objectToWorld)) {
+          continue;
+        }
+
+        const uintptr_t candidateHandle =
+            retainedHandleValue(candidate->handle);
+        winner = std::min(winner, candidateHandle);
+        if (candidate->active &&
+            (!activeWinner.has_value() ||
+             candidateHandle < *activeWinner)) {
+          activeWinner = candidateHandle;
+        }
+      }
+      if (activeWinner.has_value()) {
+        winner = *activeWinner;
+      }
+      desiredWinnerByIdentity[claim.materializedIdentity] =
+          retainedHandleValue(claim.handle) == winner;
+    }
+  }
+
+  bool SceneManager::applyRetainedStaticOwnershipWinners(
+      const std::unordered_map<XXH64_hash_t, bool>& desiredWinnerByIdentity) {
+    bool accelerationMembershipChanged = false;
+    for (const auto& [identity, desiredWinner] : desiredWinnerByIdentity) {
+      ReplacementInstance* replacementInstance =
+          m_drawCallTracker.findReplacementInstanceByIdentity(identity);
+      if (replacementInstance == nullptr ||
+          replacementInstance->isRetainedExternalOwnershipWinner == desiredWinner) {
+        continue;
+      }
+      replacementInstance->isRetainedExternalOwnershipWinner = desiredWinner;
+      accelerationMembershipChanged = true;
+    }
+    return accelerationMembershipChanged;
+  }
+
+  bool SceneManager::noteRetainedStaticOwnershipActivityChange(
+      remixapi_InstanceHandle handle,
+      bool active) {
+    // A full rebuild is already queued, so it will observe the new activity state.
+    if (m_retainedStaticOwnershipDirty) {
+      return true;
+    }
+
+    const auto location = m_retainedStaticOwnershipClaimIndex.find(handle);
+    if (location == m_retainedStaticOwnershipClaimIndex.end()) {
+      // No claim for this handle, so no arbitration depends on it. Instances without
+      // an ownership key or without renderable retained geometry are never claimants
+      // and default to being their own winner.
+      return true;
+    }
+
+    const auto bucket =
+        m_retainedStaticOwnershipClaims.find(location->second.sourceDrawHash);
+    if (bucket == m_retainedStaticOwnershipClaims.end() ||
+        location->second.claimIndex >= bucket->second.size()) {
+      return false;
+    }
+
+    RetainedStaticOwnershipClaim& claim = bucket->second[location->second.claimIndex];
+    if (claim.handle != handle) {
+      // Index disagrees with the registry, so fall back rather than corrupt
+      // arbitration.
+      return false;
+    }
+
+    claim.active = active;
+    m_retainedStaticOwnershipWinnerDirty.insert(location->second.sourceDrawHash);
+    return true;
+  }
+
+  void SceneManager::refreshRetainedStaticOwnershipWinners() {
+    if (m_retainedStaticOwnershipWinnerDirty.empty()) {
+      return;
+    }
+
+    std::unordered_map<XXH64_hash_t, bool> desiredWinnerByIdentity;
+    for (const XXH64_hash_t sourceDrawHash : m_retainedStaticOwnershipWinnerDirty) {
+      const auto bucket = m_retainedStaticOwnershipClaims.find(sourceDrawHash);
+      if (bucket == m_retainedStaticOwnershipClaims.end()) {
+        continue;
+      }
+      selectRetainedStaticOwnershipWinners(bucket->second, desiredWinnerByIdentity);
+    }
+    m_retainedStaticOwnershipWinnerDirty.clear();
+
+    // Only a genuine winner change alters what renders, so the expensive prune walk
+    // and the acceleration-structure invalidation stay gated on that.
+    if (applyRetainedStaticOwnershipWinners(desiredWinnerByIdentity)) {
+      m_retainedStaticOwnershipPrunePending = true;
+      m_instanceManager.notifySceneChanged();
+    }
+  }
+
   void SceneManager::rebuildRetainedStaticOwnershipClaims() {
+    // Nested inside whichever phase triggered the rebuild (prune, submit, or a
+    // claim query), so this figure overlaps those and is not additive with them.
+    const PhaseTimer timer(m_retainedPerf.ownershipRebuildNs);
+    ++m_retainedPerf.ownershipRebuilds;
+
     m_retainedStaticOwnershipClaims.clear();
+    m_retainedStaticOwnershipClaimIndex.clear();
+    m_retainedStaticOwnershipWinnerDirty.clear();
 
     std::unordered_map<XXH64_hash_t, bool> desiredWinnerByIdentity;
     desiredWinnerByIdentity.reserve(m_retainedExternalInstances.size());
@@ -2652,55 +2886,19 @@ namespace dxvk {
             return retainedHandleValue(a.handle) < retainedHandleValue(b.handle);
           });
 
-      for (const RetainedStaticOwnershipClaim& claim : claims) {
-        const float minX =
-            claim.objectToWorld[3].x - kStaticOwnershipTranslationTolerance;
-        const float maxX =
-            claim.objectToWorld[3].x + kStaticOwnershipTranslationTolerance;
-        auto candidate = std::lower_bound(
-            claims.begin(), claims.end(), minX,
-            [](const RetainedStaticOwnershipClaim& value, float x) {
-              return value.objectToWorld[3].x < x;
-            });
-
-        uintptr_t winner = retainedHandleValue(claim.handle);
-        std::optional<uintptr_t> activeWinner;
-        for (; candidate != claims.end() &&
-               candidate->objectToWorld[3].x <= maxX;
-             ++candidate) {
-          if (!staticOwnershipTransformsMatch(
-                  claim.objectToWorld, candidate->objectToWorld)) {
-            continue;
-          }
-
-          const uintptr_t candidateHandle =
-              retainedHandleValue(candidate->handle);
-          winner = std::min(winner, candidateHandle);
-          if (candidate->active &&
-              (!activeWinner.has_value() ||
-               candidateHandle < *activeWinner)) {
-            activeWinner = candidateHandle;
-          }
-        }
-        if (activeWinner.has_value()) {
-          winner = *activeWinner;
-        }
-        desiredWinnerByIdentity[claim.materializedIdentity] =
-            retainedHandleValue(claim.handle) == winner;
+      // Index after sorting. The sort key is the transform plus the handle, and an
+      // activity change touches neither, so these positions stay valid until the
+      // registry is rebuilt.
+      for (uint32_t index = 0; index < claims.size(); ++index) {
+        m_retainedStaticOwnershipClaimIndex[claims[index].handle] =
+            RetainedStaticOwnershipLocation { claimsEntry.first, index };
       }
+
+      selectRetainedStaticOwnershipWinners(claims, desiredWinnerByIdentity);
     }
 
-    bool accelerationMembershipChanged = false;
-    for (const auto& [identity, desiredWinner] : desiredWinnerByIdentity) {
-      ReplacementInstance* replacementInstance =
-          m_drawCallTracker.findReplacementInstanceByIdentity(identity);
-      if (replacementInstance == nullptr ||
-          replacementInstance->isRetainedExternalOwnershipWinner == desiredWinner) {
-        continue;
-      }
-      replacementInstance->isRetainedExternalOwnershipWinner = desiredWinner;
-      accelerationMembershipChanged = true;
-    }
+    const bool accelerationMembershipChanged =
+        applyRetainedStaticOwnershipWinners(desiredWinnerByIdentity);
 
     m_retainedStaticOwnershipDirty = false;
     m_retainedStaticOwnershipPrunePending = true;
@@ -2764,10 +2962,18 @@ namespace dxvk {
   }
 
   void SceneManager::pruneOrdinaryStaticOwnershipDuplicates() {
-    if (m_retainedStaticOwnershipDirty &&
-        AssetReplacements::getMeshReplacementGeneration() ==
-            m_retainedExternalReplacementGeneration) {
-      rebuildRetainedStaticOwnershipClaims();
+    if (m_retainedStaticOwnershipDirty) {
+      if (AssetReplacements::getMeshReplacementGeneration() ==
+          m_retainedExternalReplacementGeneration) {
+        rebuildRetainedStaticOwnershipClaims();
+      }
+      // On a generation mismatch the registry is stale and claim queries already fail
+      // closed until the generation realigns, so leave winner arbitration untouched
+      // rather than deriving it from claims that are about to be discarded.
+    } else {
+      // Activity flips recorded since the last frame only need winner arbitration
+      // re-run for the buckets they touched.
+      refreshRetainedStaticOwnershipWinners();
     }
     if (!m_retainedStaticOwnershipPrunePending) {
       return;
@@ -2891,7 +3097,12 @@ namespace dxvk {
         continue;
       }
       retained.active = active;
-      markRetainedStaticOwnershipDirty();
+      // An activity flip changes winner selection among co-located claims, not the
+      // ownership topology, so absorb it into the existing registry. Only fall back
+      // to a full rebuild if the registry cannot represent the change.
+      if (!noteRetainedStaticOwnershipActivityChange(update.handle, active)) {
+        markRetainedStaticOwnershipDirty();
+      }
 
       if (!retained.materializedIdentity.has_value()) {
         continue;
@@ -2972,6 +3183,10 @@ namespace dxvk {
   }
 
   void SceneManager::rebuildRetainedExternalResources() {
+    // Nested inside refreshRetainedExternalResources, so not additive with it.
+    const PhaseTimer timer(m_retainedPerf.resourceRebuildNs);
+    ++m_retainedPerf.resourceRebuilds;
+
     m_retainedExternalBlases.clear();
     m_retainedExternalSurfaceMaterials.clear();
 
@@ -3088,6 +3303,10 @@ namespace dxvk {
       }
     }
     m_retainedExternalInstancesPendingSubmission.clear();
+
+    // Every scheduled handle replays the full draw-translation path below, so this
+    // count is the difference between "retained" and "resubmitted every frame".
+    m_retainedPerf.submittedHandles += static_cast<uint32_t>(handles.size());
 
     for (remixapi_InstanceHandle handle : handles) {
       auto retainedIter = m_retainedExternalInstances.find(handle);
