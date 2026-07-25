@@ -491,6 +491,16 @@ namespace dxvk {
     }
 #endif
 
+    // Explicit start/stop rather than scope-exit accumulation: the early returns below are
+    // frames where no rendering happened, and counting them would dilute the average with
+    // near-zero samples. Only frames that reach the end of the function are recorded, so
+    // the numerator and denominator always describe the same set of frames.
+    const auto injectStart = std::chrono::steady_clock::now();
+    auto elapsedNsSince = [](const std::chrono::steady_clock::time_point start) {
+      return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now() - start).count());
+    };
+
     commitGraphicsState<true, false>();
 
     auto common = getCommonObjects();
@@ -635,13 +645,19 @@ namespace dxvk {
       m_submitContainsInjectRtx = true;
       m_cachedReflexFrameId = cachedReflexFrameId;
 
+      m_framePerf.prepNs += elapsedNsSince(injectStart);
+
       // Update all the GPU buffers needed to describe the scene
+      const auto sceneDataStart = std::chrono::steady_clock::now();
       getSceneManager().prepareSceneData(this, m_execBarriers);
+      m_framePerf.sceneDataNs += elapsedNsSince(sceneDataStart);
       
       // If we really don't have any RT to do, just bail early (could be UI/menus rendering)
       if (getSceneManager().getSurfaceBuffer() != nullptr) {
 
+        const auto frameBeginStart = std::chrono::steady_clock::now();
         VkExtent3D downscaledExtent = onInjectRtxFrameBegin(targetImage->info().extent);
+        m_framePerf.frameBeginNs += elapsedNsSince(frameBeginStart);
 
         Resources::RaytracingOutput& rtOutput = getResourceManager().getRaytracingOutput();
 
@@ -656,22 +672,42 @@ namespace dxvk {
         getCommonObjects()->getTextureManager().prepareSamplerFeedback(this);
 
         // Generate ray tracing constant buffer
-        updateRaytraceArgsConstantBuffer(rtOutput, downscaledExtent, targetImage->info().extent);
+        {
+          const auto phaseStart = std::chrono::steady_clock::now();
+          updateRaytraceArgsConstantBuffer(rtOutput, downscaledExtent, targetImage->info().extent);
+          m_framePerf.rtArgsNs += elapsedNsSince(phaseStart);
+        }
 
         // Volumetric Lighting
-        dispatchVolumetrics(rtOutput);
-        
+        {
+          const auto phaseStart = std::chrono::steady_clock::now();
+          dispatchVolumetrics(rtOutput);
+          m_framePerf.volumetricsNs += elapsedNsSince(phaseStart);
+        }
+
         // Path Tracing
-        dispatchPathTracing(rtOutput);
+        {
+          const auto phaseStart = std::chrono::steady_clock::now();
+          dispatchPathTracing(rtOutput);
+          m_framePerf.pathTraceNs += elapsedNsSince(phaseStart);
+        }
 
         // Neural Radiance Cache
-        m_common->metaNeuralRadianceCache().dispatchTrainingAndResolve(*this, rtOutput);
+        {
+          const auto phaseStart = std::chrono::steady_clock::now();
+          m_common->metaNeuralRadianceCache().dispatchTrainingAndResolve(*this, rtOutput);
+          m_framePerf.nrcNs += elapsedNsSince(phaseStart);
+        }
 
-        // RTXDI confidence
-        m_common->metaRtxdiRayQuery().dispatchConfidence(this, rtOutput);
+        {
+          const auto phaseStart = std::chrono::steady_clock::now();
+          // RTXDI confidence
+          m_common->metaRtxdiRayQuery().dispatchConfidence(this, rtOutput);
 
-        // ReSTIR GI
-        m_common->metaReSTIRGIRayQuery().dispatch(this, rtOutput);
+          // ReSTIR GI
+          m_common->metaReSTIRGIRayQuery().dispatch(this, rtOutput);
+          m_framePerf.rtxdiRestirNs += elapsedNsSince(phaseStart);
+        }
         
         if (captureScreenImage && captureDebugImage) {
           takeScreenshot("baseReflectivity", rtOutput.m_primaryBaseReflectivity.image(Resources::AccessType::Read));
@@ -680,7 +716,11 @@ namespace dxvk {
         }
 
         // Demodulation
-        dispatchDemodulate(rtOutput);
+        {
+          const auto phaseStart = std::chrono::steady_clock::now();
+          dispatchDemodulate(rtOutput);
+          m_framePerf.demodulateNs += elapsedNsSince(phaseStart);
+        }
 
         // Note: Primary direct diffuse/specular radiance textures noisy and in a demodulated state after demodulation step.
         if (captureScreenImage && captureDebugImage) {
@@ -689,7 +729,11 @@ namespace dxvk {
         }
 
         // Denoising
-        dispatchDenoise(rtOutput);
+        {
+          const auto phaseStart = std::chrono::steady_clock::now();
+          dispatchDenoise(rtOutput);
+          m_framePerf.denoiseNs += elapsedNsSince(phaseStart);
+        }
 
         // Note: Primary direct diffuse/specular radiance textures denoised but in a still demodulated state after denoising step.
         if (captureScreenImage && captureDebugImage) {
@@ -697,11 +741,15 @@ namespace dxvk {
           takeScreenshot("denoisedSpecular", rtOutput.m_primaryDirectSpecularRadiance.image(Resources::AccessType::Read));
         }
 
-        // Composition
-        dispatchComposite(rtOutput);
+        {
+          const auto phaseStart = std::chrono::steady_clock::now();
+          // Composition
+          dispatchComposite(rtOutput);
 
-        // Post composite Debug View that may overwrite Composite output
-        dispatchReplaceCompositeWithDebugView(rtOutput);
+          // Post composite Debug View that may overwrite Composite output
+          dispatchReplaceCompositeWithDebugView(rtOutput);
+          m_framePerf.compositeNs += elapsedNsSince(phaseStart);
+        }
         
         if (captureScreenImage && captureDebugImage) {
           takeScreenshot("rtxImagePostComposite", rtOutput.m_compositeOutput.resource(Resources::AccessType::Read).image);
@@ -710,6 +758,7 @@ namespace dxvk {
         getCommonObjects()->getTextureManager().copySamplerFeedbackToHost(this);
         dispatchObjectPicking(rtOutput, downscaledExtent, targetImage->info().extent);
 
+        const auto upscaleStart = std::chrono::steady_clock::now();
         // Upscaling if DLSS/NIS enabled, or the Composition Pass will do upscaling
         if (m_currentUpscaler == InternalUpscaler::DLSS) {
           // xxxnsubtil: the DLSS indicator reads our exposure texture even with DLSS autoexposure on
@@ -737,7 +786,9 @@ namespace dxvk {
             rtOutput.m_compositeOutputExtent);
         }
         m_previousUpscaler = m_currentUpscaler;
+        m_framePerf.upscaleNs += elapsedNsSince(upscaleStart);
 
+        const auto postfxStart = std::chrono::steady_clock::now();
         RtxDustParticles& dust = m_common->metaDustParticles();
         dust.simulateAndDraw(this, m_state, rtOutput);
 
@@ -767,6 +818,7 @@ namespace dxvk {
 
         // Composite screen overlay (from external C API) after tone mapping, before screenshot capture.
         dispatchScreenOverlay(rtOutput);
+        m_framePerf.postfxNs += elapsedNsSince(postfxStart);
 
         if (captureScreenImage) {
           if (m_common->metaDebugView().debugViewIdx() == DEBUG_VIEW_DISABLED) {
@@ -784,6 +836,8 @@ namespace dxvk {
         // Set up output src
         Rc<DxvkImage> srcImage = rtOutput.m_finalOutput.resource(Resources::AccessType::Read).image;
 
+        const auto debugBlitStart = std::chrono::steady_clock::now();
+
         // Debug view
         dispatchDebugView(srcImage, rtOutput, captureScreenImage);
 
@@ -798,6 +852,7 @@ namespace dxvk {
           assert(srcImage->info().extent == targetImage->info().extent);
           blitImageHelper(this, srcImage, targetImage, VkFilter::VK_FILTER_NEAREST);
         }
+        m_framePerf.debugBlitNs += elapsedNsSince(debugBlitStart);
 
         // Log stats when an image is taken
         if (captureScreenImage) {
@@ -828,7 +883,11 @@ namespace dxvk {
       }
     }
 
-    onInjectRtxFrameEnd(raytracedThisFrame);
+    {
+      const auto phaseStart = std::chrono::steady_clock::now();
+      onInjectRtxFrameEnd(raytracedThisFrame);
+      m_framePerf.frameEndNs += elapsedNsSince(phaseStart);
+    }
 
     // apply changes to RtxOptions after the frame has ended
     RtxOptionManager::applyPendingValues(m_device.ptr(), /* forceOnChange */ false);
@@ -837,6 +896,101 @@ namespace dxvk {
     updateMetrics(gpuIdleTimeMilliseconds);
 
     m_resetHistory = false;
+
+    m_framePerf.injectNs += elapsedNsSince(injectStart);
+    ++m_framePerf.frames;
+    logFramePerfWindow();
+  }
+
+  void RtxContext::logFramePerfWindow() {
+    // Matches the RetainedPerf window so the two log lines can be read as one picture.
+    constexpr uint32_t kFramePerfWindowFrames = 300;
+
+    const DxvkStatCounters counters = m_device->getStatCounters();
+    const auto counterValue = [&counters](DxvkStatCounter counter) {
+      return static_cast<uint64_t>(counters.getCtr(counter));
+    };
+
+    // The stat counters are monotonic process-wide totals, so the first window only
+    // establishes a baseline and reports nothing.
+    if (!m_framePerf.statsPrimed) {
+      m_framePerf.statsPrimed = true;
+      m_framePerf.statGpuSyncCount = counterValue(DxvkStatCounter::GpuSyncCount);
+      m_framePerf.statGpuSyncTicks = counterValue(DxvkStatCounter::GpuSyncTicks);
+      m_framePerf.statCsSyncCount = counterValue(DxvkStatCounter::CsSyncCount);
+      m_framePerf.statCsSyncTicks = counterValue(DxvkStatCounter::CsSyncTicks);
+      m_framePerf.statGpuIdleTicks = counterValue(DxvkStatCounter::GpuIdleTicks);
+      m_framePerf.statSubmits = counterValue(DxvkStatCounter::QueueSubmitCount);
+      m_framePerf.statPresents = counterValue(DxvkStatCounter::QueuePresentCount);
+      m_framePerf.statDispatches = counterValue(DxvkStatCounter::CmdDispatchCalls);
+      m_framePerf.statTraceRays = counterValue(DxvkStatCounter::CmdTraceRaysCalls);
+      m_framePerf.statBarriers = counterValue(DxvkStatCounter::CmdBarrierCount);
+      return;
+    }
+
+    if (m_framePerf.frames < kFramePerfWindowFrames) {
+      return;
+    }
+
+    const double frames = static_cast<double>(m_framePerf.frames);
+    const auto perFrameUs = [frames](uint64_t totalNs) {
+      return static_cast<double>(totalNs) / (frames * 1000.0);
+    };
+    // Counter deltas are already in microseconds for the *Ticks counters.
+    const auto perFrameDelta = [frames](uint64_t now, uint64_t before) {
+      return static_cast<double>(now >= before ? now - before : 0) / frames;
+    };
+
+    // inject is the parent of every phase below it, so the phases should very nearly sum
+    // to it. A large unexplained remainder means work inside injectRTX that is not on this
+    // list; a small inject total against a much larger PresentMon CPUBusy means the time
+    // is on another thread entirely.
+    Logger::info(str::format(
+      "FramePerf: ", static_cast<uint32_t>(frames), "-frame us/frame"
+      " inject=", perFrameUs(m_framePerf.injectNs),
+      " prep=", perFrameUs(m_framePerf.prepNs),
+      " sceneData=", perFrameUs(m_framePerf.sceneDataNs),
+      " frameBegin=", perFrameUs(m_framePerf.frameBeginNs),
+      " rtArgs=", perFrameUs(m_framePerf.rtArgsNs),
+      " volumetrics=", perFrameUs(m_framePerf.volumetricsNs),
+      " pathTrace=", perFrameUs(m_framePerf.pathTraceNs),
+      " nrc=", perFrameUs(m_framePerf.nrcNs),
+      " rtxdiRestir=", perFrameUs(m_framePerf.rtxdiRestirNs),
+      " demodulate=", perFrameUs(m_framePerf.demodulateNs),
+      " denoise=", perFrameUs(m_framePerf.denoiseNs),
+      " composite=", perFrameUs(m_framePerf.compositeNs),
+      " upscale=", perFrameUs(m_framePerf.upscaleNs),
+      " postfx=", perFrameUs(m_framePerf.postfxNs),
+      " debugBlit=", perFrameUs(m_framePerf.debugBlitNs),
+      " frameEnd=", perFrameUs(m_framePerf.frameEndNs)));
+
+    // gpuSyncUs and csSyncUs are CPU time spent blocked, not work. If they dominate, the
+    // frame is limited by synchronisation and removing CPU work will not shorten it.
+    Logger::info(str::format(
+      "FramePerf: sync/frame"
+      " gpuSyncCount=", perFrameDelta(counterValue(DxvkStatCounter::GpuSyncCount), m_framePerf.statGpuSyncCount),
+      " gpuSyncUs=", perFrameDelta(counterValue(DxvkStatCounter::GpuSyncTicks), m_framePerf.statGpuSyncTicks),
+      " csSyncCount=", perFrameDelta(counterValue(DxvkStatCounter::CsSyncCount), m_framePerf.statCsSyncCount),
+      " csSyncUs=", perFrameDelta(counterValue(DxvkStatCounter::CsSyncTicks), m_framePerf.statCsSyncTicks),
+      " gpuIdleUs=", perFrameDelta(counterValue(DxvkStatCounter::GpuIdleTicks), m_framePerf.statGpuIdleTicks),
+      " submits=", perFrameDelta(counterValue(DxvkStatCounter::QueueSubmitCount), m_framePerf.statSubmits),
+      " presents=", perFrameDelta(counterValue(DxvkStatCounter::QueuePresentCount), m_framePerf.statPresents),
+      " dispatches=", perFrameDelta(counterValue(DxvkStatCounter::CmdDispatchCalls), m_framePerf.statDispatches),
+      " traceRays=", perFrameDelta(counterValue(DxvkStatCounter::CmdTraceRaysCalls), m_framePerf.statTraceRays),
+      " barriers=", perFrameDelta(counterValue(DxvkStatCounter::CmdBarrierCount), m_framePerf.statBarriers)));
+
+    m_framePerf = FramePerfWindow {};
+    m_framePerf.statsPrimed = true;
+    m_framePerf.statGpuSyncCount = counterValue(DxvkStatCounter::GpuSyncCount);
+    m_framePerf.statGpuSyncTicks = counterValue(DxvkStatCounter::GpuSyncTicks);
+    m_framePerf.statCsSyncCount = counterValue(DxvkStatCounter::CsSyncCount);
+    m_framePerf.statCsSyncTicks = counterValue(DxvkStatCounter::CsSyncTicks);
+    m_framePerf.statGpuIdleTicks = counterValue(DxvkStatCounter::GpuIdleTicks);
+    m_framePerf.statSubmits = counterValue(DxvkStatCounter::QueueSubmitCount);
+    m_framePerf.statPresents = counterValue(DxvkStatCounter::QueuePresentCount);
+    m_framePerf.statDispatches = counterValue(DxvkStatCounter::CmdDispatchCalls);
+    m_framePerf.statTraceRays = counterValue(DxvkStatCounter::CmdTraceRaysCalls);
+    m_framePerf.statBarriers = counterValue(DxvkStatCounter::CmdBarrierCount);
   }
 
   void RtxContext::endFrame(std::uint64_t cachedReflexFrameId, Rc<DxvkImage> targetImage, bool callInjectRtx) {

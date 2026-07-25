@@ -306,6 +306,60 @@ namespace dxvk {
     uint32_t m_framesWithoutValidScene = 0;
     IntegrateIndirectMode m_prevIntegrateIndirectMode = IntegrateIndirectMode::Count;
 
+    // Frame-wide CPU accounting for injectRTX.
+    //
+    // Motivation: at radius 10 PresentMon reports ~56 ms of CPU per frame while the
+    // existing RetainedPerf timers account for only ~13 ms of it. Optimising the retained
+    // path further is chasing a shrinking share of the problem, so the rest of the frame
+    // has to be attributed before any more work is spent on it.
+    //
+    // Three outcomes are possible and the fields are chosen so they can be told apart:
+    //   1. inject is large and the phases account for it -> real work on the CS thread.
+    //   2. inject is large but gpuSync/csSync dominate  -> CPU stalling on the GPU or the
+    //      CS thread, so removing CPU work would not shorten the frame at all.
+    //   3. inject is small -> the time is on the D3D9 game thread (draw-call translation
+    //      in D3D9Rtx::internalPrepareDraw), which is a different thread inside the same
+    //      process, and instrumentation has to move there next.
+    //
+    // injectRTX runs on the DXVK CS worker thread via EmitCs, not the game's calling
+    // thread, so these numbers are not automatically comparable to a process-wide CPUBusy.
+    struct FramePerfWindow {
+      uint32_t frames = 0;
+
+      uint64_t injectNs = 0;        // whole injectRTX, the parent of everything below
+      uint64_t prepNs = 0;          // state commit, hot reload, particles, texture upload
+      uint64_t sceneDataNs = 0;     // SceneManager::prepareSceneData (RetainedPerf's parent)
+      uint64_t frameBeginNs = 0;    // onInjectRtxFrameBegin, resource validation
+      uint64_t rtArgsNs = 0;        // updateRaytraceArgsConstantBuffer
+      uint64_t volumetricsNs = 0;
+      uint64_t pathTraceNs = 0;
+      uint64_t nrcNs = 0;
+      uint64_t rtxdiRestirNs = 0;
+      uint64_t demodulateNs = 0;
+      uint64_t denoiseNs = 0;
+      uint64_t compositeNs = 0;
+      uint64_t upscaleNs = 0;
+      uint64_t postfxNs = 0;        // dust, bloom, motion blur, tonemap, lens, sRGB, overlay
+      uint64_t debugBlitNs = 0;     // debug view, DLFG, blit to game
+      uint64_t frameEndNs = 0;      // onInjectRtxFrameEnd
+
+      // Snapshot of DxvkStatCounters at the window start. These counters already exist and
+      // are already maintained, so stall time costs nothing extra to report.
+      uint64_t statGpuSyncCount = 0;
+      uint64_t statGpuSyncTicks = 0;   // microseconds blocked in waitForResource
+      uint64_t statCsSyncCount = 0;
+      uint64_t statCsSyncTicks = 0;    // microseconds blocked on the CS thread
+      uint64_t statGpuIdleTicks = 0;
+      uint64_t statSubmits = 0;
+      uint64_t statPresents = 0;
+      uint64_t statDispatches = 0;
+      uint64_t statTraceRays = 0;
+      uint64_t statBarriers = 0;
+      bool statsPrimed = false;
+    };
+    FramePerfWindow m_framePerf;
+    void logFramePerfWindow();
+
     DxvkRaytracingInstanceState m_rtState;
 
     struct {
