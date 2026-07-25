@@ -1106,6 +1106,8 @@ namespace dxvk {
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - mainLoopStart).count());
 
+    const auto dynBlasStart = std::chrono::steady_clock::now();
+
     // Build/Update the dynamic BLAS
     for (uint32_t uniqueBlasIdx = 0; uniqueBlasIdx < m_uniqueDynamicBlasCount; ++uniqueBlasIdx) {
       const UniqueBlasInstances& uniqueBlasEntry = m_uniqueDynamicBlas[uniqueBlasIdx];
@@ -1263,6 +1265,10 @@ namespace dxvk {
     // Clean cached buckets: restore surfaces + TLAS instances directly, touch BLAS.
     // Dirty/new buckets: their surfaces were already added by the main loop via
     // the bucket pipeline; their TLAS instances will be emitted by createBlasBuffersAndInstances.
+    m_mergeBlasStats.dynBlasNs += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - dynBlasStart).count());
+
     const auto restoreStart = std::chrono::steady_clock::now();
     if (hasValidBucketCache) {
       for (uint32_t bi = 0; bi < m_cachedBuckets.size(); ++bi) {
@@ -1336,6 +1342,8 @@ namespace dxvk {
     // Rebuild the cached bucket list: keep clean buckets as-is, replace dirty
     // buckets with fresh data from this frame's blasBuckets.
     {
+      const ScopedNsAccumulator cacheRebuildTimer(m_mergeBlasStats.cacheRebuildNs);
+
       // Start with clean buckets from the previous cache
       std::vector<CachedBucketState> newCachedBuckets;
       m_instanceBucketIndex.clear();
@@ -1937,6 +1945,8 @@ namespace dxvk {
       return;
     }
 
+    ++m_mergeBlasStats.retainedFinalized;
+
     instance.setFrameLastUpdated(currentFrameId);
     RtSurface& surface = instance.surface;
     if (!surface.isStatic) {
@@ -1984,6 +1994,9 @@ namespace dxvk {
     surfacesGPUData.resize(surfacesGPUSize);
     const uint32_t currentFrameId = m_device->getCurrentFrameId();
 
+    m_mergeBlasStats.surfacesIterated += static_cast<uint32_t>(m_reorderedSurfaces.size());
+    const auto surfaceWriteStart = std::chrono::steady_clock::now();
+
     for (uint32_t i = 0; i < m_reorderedSurfaces.size(); ++i) {
       RtInstance& currentInstance = *m_reorderedSurfaces[i];
       RtSurface& currentSurface = currentInstance.surface;
@@ -2011,6 +2024,10 @@ namespace dxvk {
       }
     }
 
+    m_mergeBlasStats.surfaceWriteNs += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - surfaceWriteStart).count());
+
     // The GPU's SharedSurfaceIndex texture may reference any surface index from the
     // previous frame.  Ensure the mapping covers at least the previous frame's surface
     // count so those GPU lookups read SURFACE_INDEX_INVALID rather than stale buffer data.
@@ -2023,7 +2040,12 @@ namespace dxvk {
     assert(dataOffset == surfacesGPUSize);
     assert(surfacesGPUData.size() == surfacesGPUSize);
 
-    ctx->writeToBuffer(m_surfaceBuffer, 0, surfacesGPUData.size(), surfacesGPUData.data());
+    {
+      const ScopedNsAccumulator uploadTimer(m_mergeBlasStats.bufferUploadNs);
+      ctx->writeToBuffer(m_surfaceBuffer, 0, surfacesGPUData.size(), surfacesGPUData.data());
+    }
+
+    const auto surfIndexStart = std::chrono::steady_clock::now();
 
     // Allocate and initialize the surface mapping buffer
     surfaceIndexMapping.resize(maxPreviousSurfaceIndex + 1);
@@ -2060,6 +2082,11 @@ namespace dxvk {
     if (RtxOptions::trackParticleObjects()) {
       buildParticleSurfaceMapping(surfaceIndexMapping);
     }
+
+    m_mergeBlasStats.surfIndexNs += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - surfIndexStart).count());
+    const ScopedNsAccumulator tailUploadTimer(m_mergeBlasStats.bufferUploadNs);
 
     // Create and upload the primitive id prefix sum buffer
     auto updatePrefixSumBuffer = [&info, this, ctx](std::vector<uint32_t>& prefixSumList, Rc<DxvkBuffer>& prefixSumBuffer) {
@@ -2107,6 +2134,7 @@ namespace dxvk {
     // unconditionally because buildGeometries are cached across frames and the
     // bucket copies them via tryAddInstance — a stale pNext from a previous bind
     // would otherwise survive even when OMMs are completely disabled.
+    const auto ommStart = std::chrono::steady_clock::now();
     for (auto& blasBucket : blasBuckets) {
       for (auto& geo : blasBucket->geometries) {
         geo.geometry.triangles.pNext = nullptr;
@@ -2130,9 +2158,17 @@ namespace dxvk {
 
       opacityMicromapManager->onBlasBuild(ctx);
     }
+    m_mergeBlasStats.ommNs += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - ommStart).count());
 
     // Blas buffers must be created after opacity micromaps were generated to calculate correct acceleration structure sizes
-    createBlasBuffersAndInstances(ctx, blasBuckets, blasToBuild, blasRangesToBuild, totalScratchMemory);
+    {
+      const ScopedNsAccumulator timer(m_mergeBlasStats.blasBuffersNs);
+      createBlasBuffersAndInstances(ctx, blasBuckets, blasToBuild, blasRangesToBuild, totalScratchMemory);
+    }
+
+    const auto blasBuildStart = std::chrono::steady_clock::now();
 
     // Make sure we have enough scratch memory for this build job
     if (totalScratchMemory > 0) {
@@ -2171,6 +2207,10 @@ namespace dxvk {
 
       ctx->getCommandList()->trackResource<DxvkAccess::Read>(m_scratchBuffer);
     }
+
+    m_mergeBlasStats.blasBuildNs += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - blasBuildStart).count());
   }
 
   void AccelManager::buildTlas(Rc<DxvkContext> ctx) {

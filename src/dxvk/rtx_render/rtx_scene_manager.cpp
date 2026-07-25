@@ -2747,6 +2747,26 @@ namespace dxvk {
         " pipeline=", mergeAvg(merge.pipelineInstances),
         " skippedClean=", mergeAvg(merge.skippedCleanInstances)));
 
+      // Decomposition of uploadSurface and of the remainder no timer covered. surfaceWrite,
+      // surfIndex and bufferUpload sum to uploadSurface. omm, blasBuffers, blasBuild,
+      // dynBlas and cacheRebuild account for the rest of mergeBlas.
+      //
+      // finalized against surfaces is the ratio that matters: uploadSurface has no
+      // incremental path, so if the finalize fires for nearly every surface every frame the
+      // per-instance event dispatch is the cost rather than the GPU data write.
+      Logger::info(str::format(
+        "RetainedPerf: mergeBlas parts"
+        " surfaceWrite=", mergeUs(merge.surfaceWriteNs),
+        " surfIndex=", mergeUs(merge.surfIndexNs),
+        " bufferUpload=", mergeUs(merge.bufferUploadNs),
+        " omm=", mergeUs(merge.ommNs),
+        " blasBuffers=", mergeUs(merge.blasBuffersNs),
+        " blasBuild=", mergeUs(merge.blasBuildNs),
+        " dynBlas=", mergeUs(merge.dynBlasNs),
+        " cacheRebuild=", mergeUs(merge.cacheRebuildNs),
+        " surfaces=", mergeAvg(merge.surfacesIterated),
+        " finalized=", mergeAvg(merge.retainedFinalized)));
+
       // Counts sum to bucketsDirty. Whichever term dominates is the mechanism to attack
       // once the cap has bounded the per-bucket cost.
       Logger::info(str::format(

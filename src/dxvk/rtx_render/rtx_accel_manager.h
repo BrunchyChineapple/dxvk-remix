@@ -206,6 +206,32 @@ public:
     uint64_t prefixSumNs = 0;       // rebuildPrimitivePrefixSums
     uint64_t uploadSurfaceNs = 0;   // uploadSurfaceData, including the retained finalize
 
+    // Decomposition of uploadSurfaceNs. It is the only phase with no incremental path: it
+    // walks every surface every frame while mainLoop skips clean buckets, and it scales
+    // harder with instance count than anything else (10x for 18x instances).
+    //
+    // These wrap whole loops rather than iterations. Timing inside a ~30k-iteration loop
+    // would add ~3 ms of clock reads and swamp the measurement, so where per-instance
+    // detail is needed it is counted instead.
+    uint64_t surfaceWriteNs = 0;    // loop 1: finalize retained + RtSurface::writeGPUData
+    uint64_t surfIndexNs = 0;       // loop 2: surface index assignment and prev-frame mapping
+    uint64_t bufferUploadNs = 0;    // ctx->writeToBuffer for surface, mapping, prefix sums
+
+    // Decomposition of the mergeBlas remainder that no timer covered. Roughly 1.0-1.6 ms at
+    // radius 6 and completely unattributed before this.
+    uint64_t ommNs = 0;             // stale-binding clear, buildOpacityMicromaps, tryBind loops
+    uint64_t blasBuffersNs = 0;     // createBlasBuffersAndInstances: size query, pool search, hashing
+    uint64_t blasBuildNs = 0;       // scratch alloc, barriers, vkCmdBuildAccelerationStructuresKHR
+    uint64_t dynBlasNs = 0;         // the unique-dynamic-BLAS build/update loop
+    uint64_t cacheRebuildNs = 0;    // rebuilding m_cachedBuckets and m_instanceBucketIndex
+
+    // Surfaces iterated versus instances that actually ran the full retained finalize
+    // (processInstanceBuffers plus a preserveInstance event dispatch). If finalize fires for
+    // nearly every retained instance every frame, the event dispatch is the cost to attack
+    // and no timer is needed to establish it.
+    uint32_t surfacesIterated = 0;
+    uint32_t retainedFinalized = 0;
+
     uint32_t buckets = 0;                   // cached buckets seen this frame
     uint32_t bucketsDirty = 0;              // of those, how many needed a rebuild
     uint32_t instancesInDirtyBuckets = 0;   // instances forced through the pipeline by bucket granularity
