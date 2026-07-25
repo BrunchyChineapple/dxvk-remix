@@ -651,6 +651,18 @@ namespace dxvk {
     auto& instances = instanceManager.getInstanceTable();
     const uint32_t currentFrame = m_device->getCurrentFrameId();
 
+    // The cap decides bucket membership, so changing it live has to discard the cache.
+    // Otherwise the existing over-sized buckets would survive until something else
+    // happened to dirty them, and a sweep of cap values would measure a mixture.
+    const uint32_t bucketInstanceCap = RtxOptions::maxInstancesPerMergedBlasBucket();
+    if (bucketInstanceCap != m_lastBucketInstanceCap) {
+      m_lastBucketInstanceCap = bucketInstanceCap;
+      m_cachedBuckets.clear();
+      m_cachedBucketDirty.clear();
+      m_instanceBucketIndex.clear();
+      m_lastProcessedGeneration = UINT64_MAX;
+    }
+
     // --- Full-skip fast path ---
     // If no scene changes occurred since the last build, we can reuse all cached
     // BLAS/TLAS data and skip the expensive per-instance iteration, bucket merging,
@@ -747,6 +759,7 @@ namespace dxvk {
           if (m_cachedBucketDirty[bi]) {
             bucketDirty[bi] = true;
             anyBucketDirty = true;
+            ++m_mergeBlasStats.dirtyPreInvalidated;
           }
         }
 
@@ -762,6 +775,7 @@ namespace dxvk {
           if (cachedBucket.instances.size() != cachedBucket.instanceCacheIdentities.size()) {
             bucketDirty[bi] = true;
             anyBucketDirty = true;
+            ++m_mergeBlasStats.dirtySizeMismatch;
             continue;
           }
 
@@ -776,12 +790,14 @@ namespace dxvk {
             if (currentInstanceSet.find(inst) == currentInstanceSet.end()) {
               bucketDirty[bi] = true;
               anyBucketDirty = true;
+              ++m_mergeBlasStats.dirtyRemoved;
               break;
             }
 
             if (inst->getCacheIdentity() != cachedBucket.instanceCacheIdentities[ii]) {
               bucketDirty[bi] = true;
               anyBucketDirty = true;
+              ++m_mergeBlasStats.dirtyIdentity;
               break;
             }
 
@@ -794,11 +810,20 @@ namespace dxvk {
               inst->usesUnorderedApproximations() != cachedBucket.isUnordered ||
               inst->isSubsurface() != cachedBucket.hasSssInstances;
 
-            if (inst->isBlasDirty() ||
-                inst->getBlas()->frameLastUpdated == currentFrame ||
-                bucketKeyChanged) {
+            const bool instanceBlasDirty = inst->isBlasDirty();
+            const bool blasUpdatedThisFrame = inst->getBlas()->frameLastUpdated == currentFrame;
+
+            if (instanceBlasDirty || blasUpdatedThisFrame || bucketKeyChanged) {
               bucketDirty[bi] = true;
               anyBucketDirty = true;
+              // Attributed in priority order so the counters sum to bucketsDirty.
+              if (instanceBlasDirty) {
+                ++m_mergeBlasStats.dirtyBlasDirty;
+              } else if (blasUpdatedThisFrame) {
+                ++m_mergeBlasStats.dirtyBlasUpdated;
+              } else {
+                ++m_mergeBlasStats.dirtyKeyChanged;
+              }
               break;
             }
           }
@@ -817,9 +842,12 @@ namespace dxvk {
     m_mergeBlasStats.buckets += static_cast<uint32_t>(m_cachedBuckets.size());
     for (uint32_t bi = 0; bi < m_cachedBuckets.size(); ++bi) {
       if (bi < bucketDirty.size() && bucketDirty[bi]) {
+        const uint32_t bucketInstances = static_cast<uint32_t>(m_cachedBuckets[bi].instances.size());
         ++m_mergeBlasStats.bucketsDirty;
-        m_mergeBlasStats.instancesInDirtyBuckets +=
-            static_cast<uint32_t>(m_cachedBuckets[bi].instances.size());
+        m_mergeBlasStats.instancesInDirtyBuckets += bucketInstances;
+        if (m_cachedBuckets[bi].isRetained) {
+          m_mergeBlasStats.retainedInstancesInDirtyBuckets += bucketInstances;
+        }
       }
     }
 
@@ -1041,7 +1069,16 @@ namespace dxvk {
         bool merged = false;
         auto bucketIt = bucketMap.find(bucketKey);
         if (bucketIt != bucketMap.end()) {
-          merged = bucketIt->second->tryAddInstance(instance);
+          // A bucket is the unit of incremental-rebuild invalidation, so it is closed at
+          // the cap even though further instances would still be compatible with it. One
+          // changed instance then rebuilds at most cap instances instead of every
+          // compatible instance in the scene. Splitting only ever produces more, smaller
+          // BLASes covering the same geometry, so it cannot drop or duplicate anything.
+          const bool bucketHasRoom = bucketInstanceCap == 0 ||
+              bucketIt->second->originalInstances.size() < static_cast<size_t>(bucketInstanceCap);
+          if (bucketHasRoom) {
+            merged = bucketIt->second->tryAddInstance(instance);
+          }
         }
 
         // The instance couldn't be merged into any bucket - make a new one
@@ -1326,6 +1363,10 @@ namespace dxvk {
         cached.indexOffsets = bucket->indexOffsets;
         cached.isUnordered = bucket->usesUnorderedApproximations;
         cached.hasSssInstances = bucket->hasSssInstances;
+        // Captured here because the pointers are still known-good; once a bucket is dirty
+        // its cached instance pointers may already be dangling.
+        cached.isRetained = !cached.instances.empty() &&
+            cached.instances.front()->isRetainedExternal();
 
         // Capture the assigned BLAS (stored on bucket by createBlasBuffersAndInstances)
         if (bucket->assignedBlas) {

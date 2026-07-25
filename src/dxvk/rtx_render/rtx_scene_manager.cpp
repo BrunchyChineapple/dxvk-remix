@@ -2736,11 +2736,25 @@ namespace dxvk {
       // dirty bucket drags back through the rebuild.
       Logger::info(str::format(
         "RetainedPerf: mergeBlas buckets"
+        " cap=", RtxOptions::maxInstancesPerMergedBlasBucket(),
         " buckets=", mergeAvg(merge.buckets),
         " dirty=", mergeAvg(merge.bucketsDirty),
         " dirtyInstances=", mergeAvg(merge.instancesInDirtyBuckets),
+        " dirtyRetained=", mergeAvg(merge.retainedInstancesInDirtyBuckets),
         " pipeline=", mergeAvg(merge.pipelineInstances),
         " skippedClean=", mergeAvg(merge.skippedCleanInstances)));
+
+      // Counts sum to bucketsDirty. Whichever term dominates is the mechanism to attack
+      // once the cap has bounded the per-bucket cost.
+      Logger::info(str::format(
+        "RetainedPerf: mergeBlas dirtyWhy"
+        " preInvalidated=", mergeAvg(merge.dirtyPreInvalidated),
+        " sizeMismatch=", mergeAvg(merge.dirtySizeMismatch),
+        " removed=", mergeAvg(merge.dirtyRemoved),
+        " identity=", mergeAvg(merge.dirtyIdentity),
+        " blasDirty=", mergeAvg(merge.dirtyBlasDirty),
+        " blasUpdated=", mergeAvg(merge.dirtyBlasUpdated),
+        " keyChanged=", mergeAvg(merge.dirtyKeyChanged)));
 
       m_accelManager.resetMergeBlasStats();
     }

@@ -197,9 +197,21 @@ public:
     uint32_t buckets = 0;                   // cached buckets seen this frame
     uint32_t bucketsDirty = 0;              // of those, how many needed a rebuild
     uint32_t instancesInDirtyBuckets = 0;   // instances forced through the pipeline by bucket granularity
+    uint32_t retainedInstancesInDirtyBuckets = 0;  // of those, how many are retained statics
     uint32_t pipelineInstances = 0;         // instances that ran the full main-loop body
     uint32_t skippedCleanInstances = 0;     // instances skipped because their bucket was clean
     uint32_t samples = 0;                   // frames that took the incremental path
+
+    // Which predicate actually dirtied each bucket. Capping bucket size bounds the
+    // amplification whatever the cause, but the residual can only be attacked once the
+    // cause is known, and the cause cannot be read off the source.
+    uint32_t dirtyPreInvalidated = 0;  // an instance was destroyed since the last build
+    uint32_t dirtySizeMismatch = 0;    // cached instance/identity arrays disagreed
+    uint32_t dirtyRemoved = 0;         // a cached instance is no longer live
+    uint32_t dirtyIdentity = 0;        // pointer reused by a different allocation
+    uint32_t dirtyBlasDirty = 0;       // instance marked itself dirty
+    uint32_t dirtyBlasUpdated = 0;     // the shared BlasEntry was rebuilt this frame
+    uint32_t dirtyKeyChanged = 0;      // bucket key no longer matches
   };
   const MergeBlasStats& getMergeBlasStats() const { return m_mergeBlasStats; }
   void resetMergeBlasStats() { m_mergeBlasStats = MergeBlasStats {}; }
@@ -309,6 +321,9 @@ private:
     // Which TLAS type(s) this bucket was emitted to
     bool isUnordered = false;
     bool hasSssInstances = false;
+    // Whether this bucket holds retained statics, recorded at build time. A dirty bucket
+    // may hold dangling instance pointers, so this cannot be derived later by inspection.
+    bool isRetained = false;
   };
   std::vector<CachedBucketState> m_cachedBuckets;
 
@@ -321,6 +336,9 @@ private:
   uint32_t m_lastTotalPrimitiveCount = 0;
 
   MergeBlasStats m_mergeBlasStats;
+
+  // Cap in force when the current bucket cache was built. A live change invalidates it.
+  uint32_t m_lastBucketInstanceCap = UINT32_MAX;
 
   // Maps a merged instance pointer to its bucket index in m_cachedBuckets.
   // Allows O(1) "is this instance in a clean bucket?" check in the main loop.
