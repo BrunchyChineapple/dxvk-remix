@@ -196,7 +196,10 @@ public:
     // Sub-phase timings. liveSet, dirtyScan, mainLoop, restore and prefixSum are disjoint
     // and sum to slightly less than mergeBlas. uploadSurface is nested inside buildBlases,
     // which the mainLoop timer does not cover, so it is additive with the rest.
-    uint64_t liveSetNs = 0;         // building the validity set of live instances
+    // The liveness-set build was deleted; unconditional teardown notification replaced it.
+    // Kept for one measurement cycle so the log reading 0 is direct confirmation the phase
+    // is gone rather than merely cheaper. Drop this field once that is confirmed.
+    uint64_t liveSetNs = 0;
     uint64_t dirtyScanNs = 0;       // scanning cached buckets for invalidation
     uint64_t mainLoopNs = 0;        // per-instance bucket routing
     uint64_t restoreNs = 0;         // restoring surfaces from clean cached buckets
@@ -214,9 +217,11 @@ public:
     // Which predicate actually dirtied each bucket. Capping bucket size bounds the
     // amplification whatever the cause, but the residual can only be attacked once the
     // cause is known, and the cause cannot be read off the source.
+    // preInvalidated now accounts for every destruction-driven dirty, since teardown
+    // eviction is the only thing that detects a removal. It is therefore also the signal
+    // for whether a scene is actually static, a role the old removed counter used to play.
     uint32_t dirtyPreInvalidated = 0;  // an instance was destroyed since the last build
     uint32_t dirtySizeMismatch = 0;    // cached instance/identity arrays disagreed
-    uint32_t dirtyRemoved = 0;         // a cached instance is no longer live
     uint32_t dirtyIdentity = 0;        // pointer reused by a different allocation
     uint32_t dirtyBlasDirty = 0;       // instance marked itself dirty
     uint32_t dirtyBlasUpdated = 0;     // the shared BlasEntry was rebuilt this frame

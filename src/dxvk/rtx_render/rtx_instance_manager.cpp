@@ -1404,7 +1404,19 @@ namespace dxvk {
     // Always clean up replacement instance references, even for renderer-created instances
     // to avoid use-after-free bugs in ReplacementInstance.prims
     instance->getPrimInstanceOwner().setReplacementInstance(nullptr, ReplacementInstance::kInvalidReplacementIndex, instance, PrimInstance::Type::Instance);
-    
+
+    // Teardown fires for every removal without exception, before the renderer-created
+    // early return below. Caches that hold raw RtInstance pointers need to hear about
+    // renderer-created instances too, and this is the single chokepoint: both clear() and
+    // garbageCollection() call removeInstance immediately before destroyInstanceAllocation.
+    // Complete coverage here is what lets the acceleration-structure bucket cache drop its
+    // per-frame liveness scan over the whole instance table.
+    for (auto& event : m_eventHandlers) {
+      if (event.onInstanceTeardownCallback) {
+        event.onInstanceTeardownCallback(*instance);
+      }
+    }
+
     // In these cases we skip calling onInstanceDestroyed:
     //   Some view model and player instances are created in the renderer and don't have onInstanceAdded called,
     //   so not call onInstanceDestroyed either.

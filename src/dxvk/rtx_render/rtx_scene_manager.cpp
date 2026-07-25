@@ -231,6 +231,9 @@ namespace dxvk {
     instanceEvents.onInstanceAddedCallback = [this](RtInstance& instance) { onInstanceAdded(instance); };
     instanceEvents.onInstanceUpdatedCallback = [this](RtInstance& instance, const DrawCallState& drawCall, const MaterialData* material, bool hasTransformChanged, bool hasVerticesChanged, bool isFirstUpdateThisFrame) { onInstanceUpdated(instance, drawCall, material, hasTransformChanged, hasVerticesChanged, isFirstUpdateThisFrame); };
     instanceEvents.onInstanceDestroyedCallback = [this](RtInstance& instance) { onInstanceDestroyed(instance); };
+    // Bucket-cache eviction moved off onInstanceDestroyed because that callback is skipped
+    // for renderer-created instances, which the cache can still hold by raw pointer.
+    instanceEvents.onInstanceTeardownCallback = [this](RtInstance& instance) { m_accelManager.removeInstanceFromBucketCache(&instance); };
     m_instanceManager.addEventHandler(instanceEvents);
     
     if (env::getEnvVar("DXVK_RTX_CAPTURE_ENABLE_ON_FRAME") != "") {
@@ -1460,8 +1463,8 @@ namespace dxvk {
   }
 
   void SceneManager::onInstanceDestroyed(RtInstance& instance) {
-    // Evict from the AccelManager bucket cache to prevent stale pointer ABA issues.
-    m_accelManager.removeInstanceFromBucketCache(&instance);
+    // Bucket-cache eviction is handled by onInstanceTeardownCallback, which fires for every
+    // removal including the renderer-created instances this callback never sees.
 
     const bool wasRetainedExternal = instance.isRetainedExternal();
 
@@ -2750,7 +2753,6 @@ namespace dxvk {
         "RetainedPerf: mergeBlas dirtyWhy"
         " preInvalidated=", mergeAvg(merge.dirtyPreInvalidated),
         " sizeMismatch=", mergeAvg(merge.dirtySizeMismatch),
-        " removed=", mergeAvg(merge.dirtyRemoved),
         " identity=", mergeAvg(merge.dirtyIdentity),
         " blasDirty=", mergeAvg(merge.dirtyBlasDirty),
         " blasUpdated=", mergeAvg(merge.dirtyBlasUpdated),

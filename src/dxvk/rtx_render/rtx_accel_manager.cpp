@@ -134,6 +134,14 @@ namespace dxvk {
     // scene, so the incremental path never applied in a live game.
     if (bucketIndex < m_cachedBucketDirty.size()) {
       m_cachedBucketDirty[bucketIndex] = true;
+    } else {
+      // The index map and the dirty array are kept in lockstep, so this is unreachable.
+      // If it ever happens the flag would be silently dropped and the dirty scan would go
+      // on to dereference a freed instance, so fail safe by discarding the whole cache.
+      // The scan no longer performs an independent liveness check to catch that.
+      m_cachedBuckets.clear();
+      m_cachedBucketDirty.clear();
+      m_instanceBucketIndex.clear();
     }
 
     // This frame's surface ordering no longer matches the cached ordering, so the
@@ -741,16 +749,17 @@ namespace dxvk {
         anyBucketDirty = true;
         m_ommBindPending = false;
       } else {
-        std::unordered_set<RtInstance*> currentInstanceSet;
-        {
-          const ScopedNsAccumulator timer(m_mergeBlasStats.liveSetNs);
-          currentInstanceSet.reserve(instances.size());
-          for (RtInstance* instance : instances) {
-            if (isInstanceAccelerationStructureActive(*instance)) {
-              currentInstanceSet.insert(instance);
-            }
-          }
-        }
+        // No liveness set is built here any more. It cost 2.5 ms/frame at radius 10 -- 3.6x
+        // the scan it served -- because it walked and hashed all ~60k instances, including
+        // the ~17k that exit the routing loop early and never reach a bucket at all.
+        //
+        // Its job was to catch cached pointers to freed instances. That is now guaranteed
+        // upstream instead: InstanceManager::removeInstance fires onInstanceTeardownCallback
+        // for every removal without exception, including renderer-created instances, and
+        // every instance in a cached bucket's .instances is present in m_instanceBucketIndex,
+        // so eviction always finds and dirties the owning bucket. Dirty buckets are skipped
+        // without dereferencing, and removeInstanceFromBucketCache discards the entire cache
+        // if it ever fails to record the flag.
         const ScopedNsAccumulator dirtyScanTimer(m_mergeBlasStats.dirtyScanNs);
         // Seed from buckets already invalidated by instance destruction since the last
         // build. Those are dirty regardless of what the scan below would conclude.
@@ -782,18 +791,12 @@ namespace dxvk {
           for (size_t ii = 0; ii < cachedBucket.instances.size(); ++ii) {
             RtInstance* inst = cachedBucket.instances[ii];
 
-            // Validity check MUST come first: if the cached instance is no longer
-            // in the live set (per-instance GC, or any path that bypasses the
-            // bucket-vector cleanup), the pointer is dangling and must not be
-            // dereferenced. Mark the bucket dirty so it gets rebuilt without
-            // touching the stale entry.
-            if (currentInstanceSet.find(inst) == currentInstanceSet.end()) {
-              bucketDirty[bi] = true;
-              anyBucketDirty = true;
-              ++m_mergeBlasStats.dirtyRemoved;
-              break;
-            }
-
+            // Safe to dereference: a destroyed instance dirtied this bucket via
+            // onInstanceTeardownCallback, and dirty buckets are skipped above.
+            //
+            // The identity check still guards pointer reuse, where a new allocation lands on
+            // a freed instance's address. Both the removal and the reuse are legal states;
+            // this catches the case where they cancel out and the pointer looks unchanged.
             if (inst->getCacheIdentity() != cachedBucket.instanceCacheIdentities[ii]) {
               bucketDirty[bi] = true;
               anyBucketDirty = true;

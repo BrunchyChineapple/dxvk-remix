@@ -285,6 +285,15 @@ struct InstanceEventHandler {
   std::function<void(RtInstance&, const DrawCallState& drawCall, const MaterialData*, bool, bool, bool)> onInstanceUpdatedCallback;
   // Callback triggered whenever an instance has been removed from the database
   std::function<void(RtInstance&)> onInstanceDestroyedCallback;
+  // Fired for *every* removal, including renderer-created view-model and player instances
+  // that never received onInstanceAdded and therefore deliberately never receive
+  // onInstanceDestroyed. Those instances still reach m_reorderedSurfaces and can still be
+  // held by raw pointer in acceleration-structure caches, so a cache cannot rely on the
+  // destroy callback for lifetime correctness. Keeping this separate preserves the
+  // "no onInstanceAdded means no onInstanceDestroyed" contract for ordinary listeners.
+  //
+  // Optional: check the std::function before invoking it.
+  std::function<void(RtInstance&)> onInstanceTeardownCallback;
 
   InstanceEventHandler() = delete;
   InstanceEventHandler(void* _eventHandlerOwnerAddress) : eventHandlerOwnerAddress(_eventHandlerOwnerAddress) { }
