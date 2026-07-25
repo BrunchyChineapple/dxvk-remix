@@ -2706,6 +2706,45 @@ namespace dxvk {
       " duplicatesPruned=", m_retainedPerf.duplicatesPruned,
       " primitives=", m_accelManager.getLastTotalPrimitiveCount()));
 
+    // mergeBlas breakdown. Averaged over the frames that actually took the incremental
+    // path, which is not necessarily the whole window, so these are not directly
+    // comparable to the us/frame line above unless mergeFrames equals the window size.
+    // uploadSurface is nested inside buildBlases and is additive with the other phases;
+    // liveSet, dirtyScan, mainLoop, restore and prefixSum are disjoint.
+    {
+      const AccelManager::MergeBlasStats& merge = m_accelManager.getMergeBlasStats();
+      const double mergeFrames = static_cast<double>(std::max(merge.samples, 1u));
+      const auto mergeUs = [mergeFrames](uint64_t totalNs) {
+        return static_cast<double>(totalNs) / (mergeFrames * 1000.0);
+      };
+      const auto mergeAvg = [mergeFrames](uint32_t total) {
+        return static_cast<double>(total) / mergeFrames;
+      };
+
+      Logger::info(str::format(
+        "RetainedPerf: mergeBlas us/frame"
+        " mergeFrames=", merge.samples,
+        " liveSet=", mergeUs(merge.liveSetNs),
+        " dirtyScan=", mergeUs(merge.dirtyScanNs),
+        " mainLoop=", mergeUs(merge.mainLoopNs),
+        " restore=", mergeUs(merge.restoreNs),
+        " prefixSum=", mergeUs(merge.prefixSumNs),
+        " uploadSurface=", mergeUs(merge.uploadSurfaceNs)));
+
+      // pipeline vs skippedClean shows how much the clean-bucket gate actually saves.
+      // dirtyInstances/bucketsDirty is the amplification factor: how many instances one
+      // dirty bucket drags back through the rebuild.
+      Logger::info(str::format(
+        "RetainedPerf: mergeBlas buckets"
+        " buckets=", mergeAvg(merge.buckets),
+        " dirty=", mergeAvg(merge.bucketsDirty),
+        " dirtyInstances=", mergeAvg(merge.instancesInDirtyBuckets),
+        " pipeline=", mergeAvg(merge.pipelineInstances),
+        " skippedClean=", mergeAvg(merge.skippedCleanInstances)));
+
+      m_accelManager.resetMergeBlasStats();
+    }
+
     m_retainedPerf = RetainedPerfWindow {};
   }
 

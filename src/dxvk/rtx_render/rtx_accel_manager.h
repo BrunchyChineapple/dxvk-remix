@@ -174,6 +174,36 @@ public:
   void removeInstanceFromBucketCache(RtInstance* instance);
   void invalidateOpacityMicromapBindings() { m_ommBindPending = true; }
 
+  // Per-phase breakdown of mergeInstancesIntoBlas. The phase as a whole is the largest
+  // remaining cost at high retained-instance counts, and it contains six separate full
+  // sweeps of the instance population, so a single total cannot say which one to attack.
+  //
+  // The counters exist to answer a question the source alone cannot: buckets are keyed by
+  // BlasBucketKey, so a scene of near-identical statics may collapse into very few buckets
+  // holding thousands of instances each. Because dirty tracking is per-bucket, one churning
+  // instance can drag its whole bucket back through the rebuild pipeline. Whether the cost
+  // is the sweeps or that amplification decides which fix is correct.
+  struct MergeBlasStats {
+    // Sub-phase timings. liveSet, dirtyScan, mainLoop, restore and prefixSum are disjoint
+    // and sum to slightly less than mergeBlas. uploadSurface is nested inside buildBlases,
+    // which the mainLoop timer does not cover, so it is additive with the rest.
+    uint64_t liveSetNs = 0;         // building the validity set of live instances
+    uint64_t dirtyScanNs = 0;       // scanning cached buckets for invalidation
+    uint64_t mainLoopNs = 0;        // per-instance bucket routing
+    uint64_t restoreNs = 0;         // restoring surfaces from clean cached buckets
+    uint64_t prefixSumNs = 0;       // rebuildPrimitivePrefixSums
+    uint64_t uploadSurfaceNs = 0;   // uploadSurfaceData, including the retained finalize
+
+    uint32_t buckets = 0;                   // cached buckets seen this frame
+    uint32_t bucketsDirty = 0;              // of those, how many needed a rebuild
+    uint32_t instancesInDirtyBuckets = 0;   // instances forced through the pipeline by bucket granularity
+    uint32_t pipelineInstances = 0;         // instances that ran the full main-loop body
+    uint32_t skippedCleanInstances = 0;     // instances skipped because their bucket was clean
+    uint32_t samples = 0;                   // frames that took the incremental path
+  };
+  const MergeBlasStats& getMergeBlasStats() const { return m_mergeBlasStats; }
+  void resetMergeBlasStats() { m_mergeBlasStats = MergeBlasStats {}; }
+
   // Scene-wide primitive total from the most recent prefix-sum rebuild. Reported in
   // telemetry because the overflow diagnostic is ONCE()-gated and therefore samples a
   // single arbitrary frame, usually during streaming, which cannot answer how the count
@@ -289,6 +319,8 @@ private:
   std::vector<bool> m_cachedBucketDirty;
 
   uint32_t m_lastTotalPrimitiveCount = 0;
+
+  MergeBlasStats m_mergeBlasStats;
 
   // Maps a merged instance pointer to its bucket index in m_cachedBuckets.
   // Allows O(1) "is this instance in a clean bucket?" check in the main loop.

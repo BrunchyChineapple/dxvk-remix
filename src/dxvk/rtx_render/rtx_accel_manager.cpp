@@ -20,6 +20,7 @@
 * DEALINGS IN THE SOFTWARE.
 */
 #include <assert.h>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <vector>
@@ -46,6 +47,32 @@ namespace dxvk {
 
   // Make this static and not a member of AccelManager to make it safe updating the count from ~PooledBlas()
   static int g_blasCount = 0;
+
+  // Accumulates elapsed nanoseconds into a caller-owned sink on scope exit. Several of
+  // the timed regions below have early continues and returns, so scope-exit accumulation
+  // avoids threading a stop call through every path.
+  //
+  // Anonymous namespace so this translation unit's copy cannot collide with the
+  // equivalent helper in rtx_scene_manager.cpp at link time.
+  namespace {
+  class ScopedNsAccumulator {
+  public:
+    explicit ScopedNsAccumulator(uint64_t& sink)
+      : m_sink(sink)
+      , m_start(std::chrono::steady_clock::now()) {
+    }
+    ScopedNsAccumulator(const ScopedNsAccumulator&) = delete;
+    ScopedNsAccumulator& operator=(const ScopedNsAccumulator&) = delete;
+    ~ScopedNsAccumulator() {
+      m_sink += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now() - m_start).count());
+    }
+
+  private:
+    uint64_t& m_sink;
+    std::chrono::steady_clock::time_point m_start;
+  };
+  } // namespace
 
   static bool isInstanceAccelerationStructureActive(const RtInstance& instance) {
     if (!instance.isRetainedExternal()) {
@@ -703,12 +730,16 @@ namespace dxvk {
         m_ommBindPending = false;
       } else {
         std::unordered_set<RtInstance*> currentInstanceSet;
-        currentInstanceSet.reserve(instances.size());
-        for (RtInstance* instance : instances) {
-          if (isInstanceAccelerationStructureActive(*instance)) {
-            currentInstanceSet.insert(instance);
+        {
+          const ScopedNsAccumulator timer(m_mergeBlasStats.liveSetNs);
+          currentInstanceSet.reserve(instances.size());
+          for (RtInstance* instance : instances) {
+            if (isInstanceAccelerationStructureActive(*instance)) {
+              currentInstanceSet.insert(instance);
+            }
           }
         }
+        const ScopedNsAccumulator dirtyScanTimer(m_mergeBlasStats.dirtyScanNs);
         // Seed from buckets already invalidated by instance destruction since the last
         // build. Those are dirty regardless of what the scan below would conclude.
         bucketDirty.assign(m_cachedBuckets.size(), false);
@@ -777,6 +808,19 @@ namespace dxvk {
       // With no cached buckets, every bucket is built from scratch below, so
       // pending OMM binding invalidation is naturally consumed by the full pass.
       m_ommBindPending = false;
+    }
+
+    // Record bucket granularity for this frame. instancesInDirtyBuckets is the count the
+    // sweeps cannot reveal: it is the number of instances that must be rebuilt because
+    // something else in their bucket changed, not because they changed.
+    ++m_mergeBlasStats.samples;
+    m_mergeBlasStats.buckets += static_cast<uint32_t>(m_cachedBuckets.size());
+    for (uint32_t bi = 0; bi < m_cachedBuckets.size(); ++bi) {
+      if (bi < bucketDirty.size() && bucketDirty[bi]) {
+        ++m_mergeBlasStats.bucketsDirty;
+        m_mergeBlasStats.instancesInDirtyBuckets +=
+            static_cast<uint32_t>(m_cachedBuckets[bi].instances.size());
+      }
     }
 
     // Allocate the transform buffer
@@ -852,6 +896,10 @@ namespace dxvk {
     // Hash map for O(1) bucket lookup instead of O(buckets) linear search per instance
     std::unordered_map<BlasBucketKey, BlasBucket*, BlasBucketKeyHash> bucketMap;
 
+    // Explicit start/stop rather than a scoped accumulator: the loop below is the timed
+    // region and wrapping it in an extra scope would reindent the entire body.
+    const auto mainLoopStart = std::chrono::steady_clock::now();
+
     for (RtInstance* instance : instances) {
       if (!isInstanceAccelerationStructureActive(*instance)) {
         continue;
@@ -898,9 +946,13 @@ namespace dxvk {
             !bucketDirty[bucketIdxIt->second]) {
           // This instance is in a clean cached bucket — skip all per-instance work
           instance->clearBlasDirty();
+          ++m_mergeBlasStats.skippedCleanInstances;
           continue;
         }
       }
+
+      // Past the clean-bucket gate, so this instance runs the full routing body.
+      ++m_mergeBlasStats.pipelineInstances;
 
       // Optimization: skip fillGeometryInfoFromBlasEntry when the BlasEntry geometry
       // has not changed since the last build.  The cached buildGeometries/buildRanges
@@ -1006,6 +1058,10 @@ namespace dxvk {
         trackBlasBuildResources(ctx, execBarriers, blasEntry);
       }
     }
+
+    m_mergeBlasStats.mainLoopNs += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - mainLoopStart).count());
 
     // Build/Update the dynamic BLAS
     for (uint32_t uniqueBlasIdx = 0; uniqueBlasIdx < m_uniqueDynamicBlasCount; ++uniqueBlasIdx) {
@@ -1164,6 +1220,7 @@ namespace dxvk {
     // Clean cached buckets: restore surfaces + TLAS instances directly, touch BLAS.
     // Dirty/new buckets: their surfaces were already added by the main loop via
     // the bucket pipeline; their TLAS instances will be emitted by createBlasBuffersAndInstances.
+    const auto restoreStart = std::chrono::steady_clock::now();
     if (hasValidBucketCache) {
       for (uint32_t bi = 0; bi < m_cachedBuckets.size(); ++bi) {
         if (bucketDirty[bi]) {
@@ -1205,8 +1262,15 @@ namespace dxvk {
       m_reorderedSurfacesFirstIndexOffset.insert(m_reorderedSurfacesFirstIndexOffset.end(), blasBucket->indexOffsets.begin(), blasBucket->indexOffsets.end());
     }
 
+    m_mergeBlasStats.restoreNs += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - restoreStart).count());
+
     // Exclude hard-radius-rejected PointInstancer transforms before primitive-prefix accounting.
-    rebuildPrimitivePrefixSums(cameraManager.getMainCamera().getPosition());
+    {
+      const ScopedNsAccumulator timer(m_mergeBlasStats.prefixSumNs);
+      rebuildPrimitivePrefixSums(cameraManager.getMainCamera().getPosition());
+    }
 
     buildBlases(ctx, execBarriers, cameraManager, opacityMicromapManager, instanceManager, 
                 textures, instances, blasBuckets, blasToBuild, blasRangesToBuild, totalScratchMemory);
@@ -1841,6 +1905,7 @@ namespace dxvk {
       Rc<DxvkContext> ctx,
       InstanceManager& instanceManager) {
     ScopedCpuProfileZone();
+    const ScopedNsAccumulator timer(m_mergeBlasStats.uploadSurfaceNs);
     if (m_reorderedSurfaces.empty()) {
       return;
     }
