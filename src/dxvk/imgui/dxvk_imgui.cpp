@@ -1658,6 +1658,13 @@ namespace dxvk {
       RemixGui::Checkbox("Instance - Print Hash", &RtxOptions::instanceOverrideSelectedInstancePrintMaterialHashObject());
 
       ImGui::Unindent();
+      // Exposed as a widget because the useful value is empirical: smaller buckets bound how
+      // many unchanged instances one changed instance forces to rebuild, at the cost of more
+      // BLASes and a longer per-bucket BLAS pool search. Sweeping it live avoids a rebuild
+      // per candidate value. Changing it discards the bucket cache.
+      RemixGui::DragInt("Max Instances Per Merged BLAS Bucket (0 = uncapped)",
+                        &RtxOptions::maxInstancesPerMergedBlasBucketObject(),
+                        1.f, 0, 65536, "%d", ImGuiSliderFlags_AlwaysClamp);
       RemixGui::Checkbox("Throttle presents", &RtxOptions::enablePresentThrottleObject());
       if (RtxOptions::enablePresentThrottle()) {
         ImGui::Indent();
