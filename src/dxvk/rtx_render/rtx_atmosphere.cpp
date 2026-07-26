@@ -676,9 +676,6 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   // which zeroes it in the cache key so dragging the slider doesn't trigger a rebake.
   args.skyIndirectRadianceScale = std::max(RtxOptions::skyIndirectRadianceScale(), 0.0f);
 
-  // View Altitude (converted m to km)
-  args.viewAltitude = RtxOptions::altitude() * 0.001f;
-
   // LUT dimensions
   args.transmittanceLutWidth = kTransmittanceLutWidth;
   args.transmittanceLutHeight = kTransmittanceLutHeight;
@@ -982,8 +979,11 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     // softness and the thin-edge ambient haze fade.
     args.cloudEdgeAmbientFade          = RtxOptions::cloudEdgeAmbientFade();
 
-    // Independent sun-only scale for volumetric fog in-scattering (issue #35).
-    args.atmosphereSunVolumetricRadianceScale = RtxGlobalVolumetrics::atmosphereSunVolumetricRadianceScale();
+    // atmosphereSunVolumetricRadianceScale retired in the numos3 sync (2026-07-26).
+    // Its froxel-SH injection was removed on 2026-06-28 because it double-counted the
+    // sun (the sun/moons are real Remix distant lights already sampled by the volume NEE
+    // loop). Confirmed dead on our side too: no reference in src/dxvk/shaders and none in
+    // the rtxdi submodule either. Use rtx.volumetrics.fogSunVisibilityGain instead.
   }
 
   // Cloud render camera basis (fork — 2026-05-12, C4). Pushed from
@@ -1087,6 +1087,8 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.padRetired7 = 0.0f;
   args.padRetired8 = 0u;
   args.padRetired9 = 0.0f;
+  args.padRetired10 = 0.0f;
+  args.padRetired11 = 0.0f;
 
   return args;
 }

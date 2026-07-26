@@ -1759,6 +1759,13 @@ namespace dxvk {
                "have visibly darker volumetric ambient than clear-sky scenes). "
                "0 = sky ambient ignores cloud cover (debug only — visually "
                "inverted versus reality).");
+    // Retired: rtx.atmosphere.atmosphereSunVolumetricRadianceScale (fork — issue
+    // #35) scaled the atmosphere sun's contribution where it was added to the
+    // froxel SH in volume_integrator.slangh. That injection was removed on
+    // 2026-06-28 because it double-counted the sun (the sun/moons are real Remix
+    // distant lights and are already sampled by the volume NEE loop), which left
+    // this knob with no consumer. Use rtx.volumetrics.fogSunVisibilityGain to
+    // scale fog in-scattering.
 
     // Wrenninge / Hillaire (Frostbite 2016) multi-scatter approximation for the
     // sun-cloud interaction. Replaces the prior flat-Lambert + single-HG approximation

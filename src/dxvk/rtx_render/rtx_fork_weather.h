@@ -1,10 +1,11 @@
 #pragma once
 
 // rtx_fork_weather.h — fork-owned weather preset declarations.
-// Defines 828 RTX_OPTIONs (12 presets x 69 fields) under the
+// Defines 816 RTX_OPTIONs (12 presets x 68 fields) under the
 // rtx.weather.preset.<presetName> namespace.
 //
-// Field bucket breakdown: 17 cloud + 5 atmosphere + 4 sky/moon mood + 32 volumetric + 11 precipitation.
+// Field bucket breakdown: 17 cloud + 5 atmosphere + 4 sky/moon mood + 31 volumetric
+// + 11 precipitation.
 // Counts here drift on every upstream sync. Derive them, don't trust them: count the
 // X() entries in WEATHER_PRESET_FIELD_LIST below.
 //
@@ -122,7 +123,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f, WK_Scalar, "Volumetric Fog", "Fog Remap", "Remapped Transmittance Measurement Distance Max", 1.0f, 2000.0f, 5.0f, "%.0f") \
   X(float, fogRemapColorMultiscatteringScale, 0.1f, WK_Scalar, "Volumetric Fog", "Fog Remap", "Color Multiscattering Scale", 0.0f, 2.0f, 0.01f, "%.2f") \
   X(bool,  enableTranslucentShadows, false, WK_Step,   "Volumetric Fog", "Medium",        "Enable Translucent Shadows", 0.0f, 1.0f,  1.0f,  "%.0f") \
-  X(float, atmosphereSunFogScale,    1.0f,  WK_Scalar, "Volumetric Fog", "Medium",        "Atmosphere Sun Fog Scale", 0.0f, 50.0f, 0.05f, "%.2f") \
   X(float, depthOffset,              0.5f,  WK_Scalar, "Volumetric Fog", "Medium",        "Depth Offset",        0.0f, 1.0f,  0.01f, "%.2f") \
   X(float, noiseFieldOctaves,        2.0f,  WK_Scalar, "Volumetric Fog", "Heterogeneous", "Noise Field Number of Octaves", 1.0f, 8.0f,  1.0f,  "%.0f") \
   /* Fog density decoupling (fork §-6/§-9 — day/night + underwater split, collapsed by sun elevation in applyBlendedValues) */ \
@@ -181,7 +181,7 @@ namespace dxvk { namespace fork_weather {
 #define WEATHER_PRESET_BIND_smoggy(type, name, def)        WEATHER_PRESET_RTX_OPTION_FOR(smoggy,        type, name, def);
 
 // ---------------------------------------------------------------------------
-// Per-preset value X-macros - one per archetype, 69 fields each, in the same
+// Per-preset value X-macros - one per archetype, 68 fields each, in the same
 // order as WEATHER_PRESET_FIELD_LIST. Fields not explicitly tuned use the
 // neutral default from WEATHER_PRESET_FIELD_LIST, which is also the canonical
 // field order -- see that macro above rather than duplicating the list here.
@@ -238,7 +238,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.0f) \
@@ -311,7 +310,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.05f) \
@@ -384,7 +382,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.05f) \
@@ -457,7 +454,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.30f) \
@@ -530,7 +526,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.0f) \
@@ -603,7 +598,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.10f) \
@@ -676,7 +670,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.10f) \
@@ -751,7 +744,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.0f) \
@@ -824,7 +816,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.0f) \
@@ -897,7 +888,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.0f) \
@@ -970,7 +960,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.60f) \
@@ -1043,7 +1032,6 @@ namespace dxvk { namespace fork_weather {
   X(float, fogRemapTransmittanceMeasurementDistanceMaxMeters, 100.0f) \
   X(float, fogRemapColorMultiscatteringScale, 0.1f) \
   X(bool,  enableTranslucentShadows, false) \
-  X(float, atmosphereSunFogScale,    1.0f) \
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.20f) \
@@ -1067,15 +1055,15 @@ namespace dxvk { namespace fork_weather {
 
 // ---------------------------------------------------------------------------
 // Single-preset macro. Walks WEATHER_PRESET_VALUES_<N> via the binder for
-// preset N, emitting all 69 RTX_OPTION declarations with archetype-tuned
+// preset N, emitting all 68 RTX_OPTION declarations with archetype-tuned
 // defaults. Must be invoked inside a class body (RTX_OPTION declares inline
 // static members).
 // ---------------------------------------------------------------------------
 #define DECLARE_WEATHER_PRESET(N) WEATHER_PRESET_VALUES_##N(WEATHER_PRESET_BIND_##N)
 
 // ---------------------------------------------------------------------------
-// Umbrella macro. Invoke inside RtxOptions struct body to declare all 636
-// RTX_OPTIONs (12 presets x 69 fields).
+// Umbrella macro. Invoke inside RtxOptions struct body to declare all 816
+// RTX_OPTIONs (12 presets x 68 fields).
 // ---------------------------------------------------------------------------
 #define DECLARE_ALL_WEATHER_PRESETS()   \
   DECLARE_WEATHER_PRESET(clear)         \
@@ -1102,7 +1090,7 @@ namespace dxvk { namespace fork_weather {
 namespace dxvk { namespace fork_weather {
 
   // -------------------------------------------------------------------------
-  // WeatherSnapshot - a plain-value copy of all 69 renderer weather params.
+  // WeatherSnapshot - a plain-value copy of all 68 renderer weather params.
   // Members are auto-generated from the single-source-of-truth X-macro so
   // that any field addition automatically propagates here.
   // -------------------------------------------------------------------------
@@ -1141,9 +1129,6 @@ namespace dxvk { namespace fork_weather {
     // Renders the pop-out preset editor as a separate movable window (toggled
     // from showImguiSettings). No-op while closed. Call once per frame.
     void renderEditorWindow();
-
-    bool isPaused() const { return m_paused; }
-    void setPaused(bool paused) { m_paused = paused; }
 
   private:
     // Preset cache -- empty string means "not yet active".

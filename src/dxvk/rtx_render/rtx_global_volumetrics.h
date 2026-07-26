@@ -115,9 +115,12 @@ namespace dxvk {
                args.flags = RtxOptionFlags::UserSetting);
     RTX_OPTION_FLAG("rtx.volumetrics", float, waterPlaneWorldZ, -1.0e9f, RtxOptionFlags::NoSave,
                "Fork (Morrowind): world-space altitude of the water surface, fed by the wrapper each frame from MWBridge::WaterLevel() (a very low sentinel means no water in cell -> split inert). Drives the above/underwater fog gain split. NoSave (game-driven).");
-    RTX_OPTION_ARGS("rtx.volumetrics", float, atmosphereSunVolumetricRadianceScale, 1.0f,
-               "Sun-ONLY volumetric in-scatter scale. Applied to the atmosphere sun radiance before it enters the froxel radiance cache, so the sun's contribution to volumetric fog can be tuned independently of fogSunVisibilityGain (which scales the entire composited cache including scene lights and sky-ambient). This is the clean way to control sun-in-fog without the over-water white-wall: keep fogSunVisibilityGain at 1 so scene lights / sky-ambient read correctly, then lower this to tame the sun. 1.0 = unchanged (current behavior).",
-               args.minValue = 0.0f, args.maxValue = 20.0f, args.flags = RtxOptionFlags::UserSetting);
+    // atmosphereSunVolumetricRadianceScale retired in the numos3 sync (2026-07-26). It scaled
+    // the atmosphere sun radiance before it entered the froxel SH, but that injection was
+    // removed on 2026-06-28 because it double-counted the sun (the sun/moons are real Remix
+    // distant lights already sampled by the volume NEE loop). Confirmed dead here too: zero
+    // references in src/dxvk/shaders and zero in the rtxdi submodule. Use fogSunVisibilityGain
+    // (and fogSunVisibilityGainUnderwater) to scale fog in-scattering instead.
     RTX_OPTION_ARGS("rtx.volumetrics", float, volumetricParticleSunScale, 0.0f,
                "Multiplier for the opacity-lighting-approximation volumetric contribution on alpha-blended surfaces (particles/decals) in evalVolumetricNEE. A 2026-05-26 fork fix hardcoded this to 0 to kill false sun-glow on particles (air-froxels seeing the sun over terrain that shadows the surface), which left particles black. 0 = that behavior (no sun tint on particles). Small values (~0.008) bring back a little atmospheric sun tint on smoke/dust without the false glow.",
                args.minValue = 0.0f, args.maxValue = 1.0f, args.flags = RtxOptionFlags::UserSetting);

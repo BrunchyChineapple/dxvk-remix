@@ -253,11 +253,7 @@ namespace dxvk {
         RemixGui::SetTooltipToLastWidgetOnHover(
             "Sun in-scatter gain for fog below the water surface (the fog you see through the water from shore). "
             "Keep low/0 to kill the underwater white wall while the above-water gain is raised for sun shafts.");
-        RemixGui::DragFloat("Sun Volumetric Radiance Scale", &atmosphereSunVolumetricRadianceScaleObject(), 0.05f, 0.0f, 20.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        RemixGui::SetTooltipToLastWidgetOnHover(
-            "Sun-only scale on the sun's contribution to volumetric fog. Independent of "
-            "Fog Sun Visibility Gain (which scales the whole cache incl. scene lights + sky-ambient). "
-            "Run Fog Sun Visibility Gain = 1 and lower this to tame the over-water sun wall. 1.0 = unchanged.");
+
         RemixGui::DragFloat("Particle Sun Scale", &volumetricParticleSunScaleObject(), 0.001f, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
         RemixGui::SetTooltipToLastWidgetOnHover(
             "Sun/atmosphere tint on alpha-blended particles & decals. 0 = black particles "
@@ -349,17 +345,14 @@ namespace dxvk {
           RemixGui::ColorEdit3("Single Scattering Albedo", &singleScatteringAlbedoObject());
           RemixGui::DragFloat("Anisotropy", &anisotropyObject(), 0.01f, -.99f, .99f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
           RemixGui::DragFloat("Fog Sun Visibility Gain", &fogSunVisibilityGainObject(), 0.05f, 0.0f, 50.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-          // Sun-only counterpart to the gain above (issue #35): scales just the
-          // atmosphere sun's fog contribution, leaving scene-light fog untouched.
-          // Unqualified on purpose: our fork declares atmosphereSunVolumetricRadianceScale
-          // in RtxGlobalVolumetrics (rtx_global_volumetrics.h), not RtxOptions, so upstream's
-          // RtxOptions:: qualification does not compile here.
-          RemixGui::DragFloat("Atmosphere Sun Fog Scale", &atmosphereSunVolumetricRadianceScaleObject(), 0.05f, 0.0f, 50.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-          // Upstream's "Volumetric Consumer Gain" widget is deliberately not adopted. Our
-          // fork removed volumetricConsumerGain from VolumeArgs and replaced it with the
-          // narrower volumetricParticleSunScale (see volume_args.h and the "Particle Sun
-          // Scale" widget above), so the gain never reaches a shader here and the slider
-          // would be inert. The RTX_OPTION still exists for weather-preset compatibility.
+          // The "Atmosphere Sun Fog Scale" widget is gone: its option
+          // (atmosphereSunVolumetricRadianceScale) was retired in the numos3 sync
+          // (2026-07-26) after its froxel-SH injection was removed upstream on 2026-06-28.
+          // Use "Fog Sun Visibility Gain" above to scale fog in-scattering.
+          //
+          // Upstream also places a "Volumetric Consumer Gain" widget here; still not
+          // adopted, because our fork replaced VolumeArgs::volumetricConsumerGain with the
+          // narrower volumetricParticleSunScale, so the slider would be inert.
           RemixGui::DragFloat("Depth Offset", &depthOffsetObject(), 0.01f, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 
           RemixGui::Separator();
@@ -707,7 +700,6 @@ namespace dxvk {
     volumeArgs.volumetricAntilagSensitivity = volumetricAntilagSensitivity();
     volumeArgs.fogSunVisibilityGain = fogSunVisibilityGain();
     volumeArgs.fogSunVisibilityGainUnderwater = fogSunVisibilityGainUnderwater();
-    volumeArgs.atmosphereSunVolumetricRadianceScale = atmosphereSunVolumetricRadianceScale();
     volumeArgs.volumetricParticleSunScale = volumetricParticleSunScale();
     volumeArgs.froxelDepthSliceDistributionExponent = froxelDepthSliceDistributionExponent();
     volumeArgs.froxelMaxDistance = froxelMaxDistanceMeters() * RtxOptions::getMeterToWorldUnitScale();

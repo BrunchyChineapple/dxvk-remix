@@ -73,7 +73,7 @@ struct AtmosphereArgs {
 
   uint skyViewLutHeight;
   float ozoneLayerWidth;  // Width of ozone layer (km)
-  float viewAltitude;     // Camera altitude offset (km)
+  float padRetired10;     // retired: viewAltitude (camera altitude offset, km) — never read by any pass.
   float multiScatterPhysicalStrength;  // 0 = pure analytical (artistic, preset-faithful), 1 = pure LUT-based hemisphere integration (physical)
 
   // Derived parameters (computed on CPU)
@@ -407,7 +407,9 @@ struct AtmosphereArgs {
   // struct is memcmp'd against a cached snapshot to gate LUT re-bakes, so every byte
   // has to be deterministic.
   float pad_cloudBottomDarkeningHeight;
-  float cloudDetailStrength;        // [0,1] silhouette-wobble detail strength (0 = off)
+  float cloudDetailStrength;        // Silhouette wobble amplitude: how strongly the detail field
+                                    // displaces the cloud silhouette (0 = off). Scaled by
+                                    // kWobbleKmPerDetailStrength in cloud_nubis3_common.slangh.
 
   // ----- Nubis Cubed 2023 lighting params (fork — 2026-05-12, C4) -----
   // Consumed by cloud_render.comp.slang via evalNubisCubedSampleCore.
@@ -582,12 +584,11 @@ struct AtmosphereArgs {
                                       // reaches full strength [0..~0.5]. Below it the ambient fades
                                       // toward 0 so the soft skirt doesn't read as grey-brown haze.
                                       // 0 = off (ambient at full strength on all samples).
-  // Independent scale on the physical sun's contribution to volumetric fog
-  // in-scattering (fork — issue #35). NOTE (remixplus-sync union): our retained
-  // rtxdi shaders read this from volumeArgs (volume_args.h); this atmosphereArgs
-  // copy is Kim's and is set by the populator for any of Kim's grafted shader
-  // paths that read cb.atmosphereArgs.*. Reuses the former pad_cloudEdge0 slot.
-  float atmosphereSunVolumetricRadianceScale;
+  // retired: atmosphereSunVolumetricRadianceScale (fork — issue #35) scaled the
+  // sun term where it was added to the froxel SH in volume_integrator.slangh.
+  // That injection was removed on 2026-06-28 (it double-counted the sun, which
+  // is already sampled by the volume NEE loop), leaving this with no consumer.
+  float padRetired11;
   float multiScatterStrength; // Kim: global scale on the multiscatter fill term in
                               // evalAtmosphereRadiance (<1 = warmer sunset). Reuses pad_cloudEdge1.
 

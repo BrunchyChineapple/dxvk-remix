@@ -232,6 +232,9 @@ dxvk_src = files([
   'rtx_render/rtx_fork_api_entry.cpp',
   'rtx_render/rtx_fork_atmosphere.cpp',
   'rtx_render/rtx_fork_capture.cpp',
+  # numos3 stage D: upstream also lists rtx_fork_fsr{,_framegen}.{cpp,h} here. Those are
+  # NOT added -- FSR 3.1 is out of scope for this fork and the files do not exist in this
+  # tree. rtx_fork_game_state.h and rtx_fork_tonemap.h are already listed above.
   'rtx_render/rtx_fork_hooks.h',
   'rtx_render/rtx_fork_light.cpp',
   'rtx_render/rtx_fork_overlay.cpp',
@@ -239,6 +242,7 @@ dxvk_src = files([
   'rtx_render/rtx_fork_precipitation.h',
   'rtx_render/rtx_fork_submit.cpp',
   'rtx_render/rtx_fork_tonemap.cpp',
+  'rtx_render/rtx_fork_tonemap.h',
   'rtx_render/rtx_fork_weather.cpp',
   'rtx_render/rtx_fork_weather.h',
   'rtx_render/rtx_game_capturer.cpp',

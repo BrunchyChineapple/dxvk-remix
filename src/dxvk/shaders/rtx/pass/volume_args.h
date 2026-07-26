@@ -116,11 +116,15 @@ struct VolumeArgs {
   uint  enableHeightFalloff;
   float heightFalloffSeaLevel;     // world-unit altitude where density is full (and below)
   float heightFalloffScaleHeight;  // world-unit e-folding height of the falloff
-  // Fork (Morrowind): sun-ONLY volumetric in-scatter scale, applied to the atmosphere sun
-  // radiance in volume_integrator.slangh BEFORE it enters the froxel SH. Lets sun-in-fog be tuned
-  // independently of fogSunVisibilityGain (which scales the whole composited SH incl. scene lights
-  // and sky-ambient). Run fogSunVisibilityGain=1 + dial this down to tame the over-water sun wall.
-  float atmosphereSunVolumetricRadianceScale;
+  // RETIRED in the numos3 sync (2026-07-26): was atmosphereSunVolumetricRadianceScale, a
+  // sun-only volumetric in-scatter scale applied to the atmosphere sun radiance in
+  // volume_integrator.slangh before it entered the froxel SH. That injection was removed
+  // on 2026-06-28 because it double-counted the sun -- the sun and moons are real Remix
+  // distant lights and are already sampled by the volume NEE loop -- which left this field
+  // written by the CPU and read by nothing. Verified against both src/dxvk/shaders and the
+  // rtxdi submodule: zero references. Use fogSunVisibilityGain to scale fog in-scattering.
+  // Kept as a pad so the VolumeArgs layout stays byte-identical at 336 bytes.
+  float pad_retiredAtmosphereSunVolumetricRadianceScale;
   // Fork (Morrowind): multiplier for the opacity-lighting-approx volumetric contribution on
   // alpha-blended surfaces (particles/decals) in volume_lighting.slangh::evalVolumetricNEE. The
   // 2026-05-26 false-glow fix hardcoded this to 0 (=> black particles); small values (~0.008) bring
