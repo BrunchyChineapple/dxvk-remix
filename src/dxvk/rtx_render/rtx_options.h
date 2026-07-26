@@ -1407,8 +1407,8 @@ namespace dxvk {
 
     RTX_OPTION("rtx.atmosphere", float, starPsfSharpness, 20.0f,
                "PSF Gaussian exponent for procedural stars. Controls the per-star spread "
-               "in cube-grid-cell space (gridScale=400 → 13.5 arcmin/cell). Lower = wider "
-               "softer stars; higher = sharper pinpoints. At 1080p/90° FOV, k=20 yields "
+               "in cube-grid-cell space (gridScale=400 -> 13.5 arcmin/cell). Lower = wider "
+               "softer stars; higher = sharper pinpoints. At 1080p/90 deg FOV, k=20 yields "
                "~1-pixel-FWHM (anti-aliased), k=800 yields ~0.08-pixel-FWHM (severe sub-"
                "pixel flicker on camera motion). 8-30 is the useful range for typical "
                "render resolutions; reduce starBrightness if widening the PSF makes stars "
@@ -1718,12 +1718,13 @@ namespace dxvk {
                "Number of ray-march steps through the cloud slab. Higher = better quality, more cost. Range 1..32.");
     RTX_OPTION("rtx.atmosphere", float, cloudThickness, 3.05f,
                "Vertical depth of the cloud slab in km.");
-    RTX_OPTION("rtx.atmosphere", Vector3, cloudShadowTint, Vector3(0.55f, 0.65f, 0.85f),
-               "Sky-blue bounce color applied on the shadow side of clouds.");
-    RTX_OPTION("rtx.atmosphere", float, cloudShadowTintStrength, 1.0f,
-               "How strongly the shadow tint contributes [0..1].");
-    RTX_OPTION("rtx.atmosphere", float, cloudSunsetWarmth, 0.95f,
-               "Strength of low-sun warm tint on sunward side. 0 = disabled.");
+    // cloudShadowTint / cloudShadowTintStrength / cloudSunsetWarmth retired in the
+    // numos3 sync (2026-07-26). Upstream dropped them on 2026-06-21 as having no
+    // shader consumer; an audit of our tree found the same — they were blended per
+    // weather, written into AtmosphereArgs every frame, and read by no shader. The
+    // sky-bounce tint and sunset warmth are now produced by the physical cloud
+    // shading path (cloudSkyAmbientFill, cloudAmbientShadowStrength, and the
+    // multiscatter LUT) rather than by artistic tint knobs.
     RTX_OPTION("rtx.atmosphere", float, cloudCurvature, 0.38f,
                "Sky-dome curvature for the cloud layer: 0 = real-planet radius "
                "(nearly flat ceiling), 1 = tight dome (clouds visibly curve down "
@@ -1772,7 +1773,10 @@ namespace dxvk {
     // remain accessible via user.conf for power tuning.
     RTX_OPTION("rtx.atmosphere", float, cloudMsScale, 1.0f,
                "Multi-scatter strength multiplier on the Nubis Cubed sigma_ms term [0..2]. "
-               "1.0 = paper baseline; higher brightens cumulus bottoms, lower flattens.");
+               "1.0 = paper baseline. sigma_ms is an EXTINCTION on the body lobe "
+               "(exp(-sigma_ms * D_sun)), so higher = darker shadowed bulk / more "
+               "shading contrast, lower = brighter, flatter body fill. (Doc fixed "
+               "2026-07-14; the old text had the direction inverted.)");
 
     // Cloud spatial variation (Nubis-style — spec 2026-05-06)
     RTX_OPTION("rtx.atmosphere", float, cloudTypeMean, 0.5f,
@@ -1909,6 +1913,75 @@ namespace dxvk {
                "keep the combined base+detail repeat period long. Default 4.3, "
                "viable range 2-12. Applies live (no re-bake).");
 
+    // Cloud detail-shading pass (fork — 2026-07-14). Four knobs that make the
+    // edge-detail field visible INSIDE the silhouette, not just on it:
+    // micro-AO reuses the detail tap as billow-scale relief shading, powder
+    // darkens low-density sun-facing wisps (Schneider 2015), and the height
+    // character / base shear give bases a ragged wind-sheared read while tops
+    // stay billowy. All apply live, all view-path only (the cheap shadow
+    // sampler and the validated self-shadow bakes are untouched); each knob
+    // at 0 is bit-identical legacy.
+    RTX_OPTION("rtx.atmosphere", float, cloudMicroAoStrength, 0.6f,
+               "Billow-scale shading from the edge-detail field [0..1]: grown "
+               "cauliflower knuckles brighten, carved crevices darken, so the "
+               "edge detail reads inside the cloud body instead of only at "
+               "the silhouette. Applies to ambient + multi-scatter body "
+               "light; silver linings are exempt. 0 = off (legacy smooth "
+               "shading).");
+    RTX_OPTION("rtx.atmosphere", float, cloudPowderStrength, 0.5f,
+               "Powder darkening [0..1] (Schneider): thin sun-facing wisps "
+               "and crevice walls go dark against the bright dense body when "
+               "the sun is behind the viewer - the classic crisp-cumulus cue. "
+               "Fades off looking toward the sun so silver linings survive. "
+               "0 = off.");
+    RTX_OPTION("rtx.atmosphere", float, cloudDetailHeightCharacter, 0.7f,
+               "Height-keyed erosion character [0..1]: flips the edge-detail "
+               "lean over the bottom quarter of each cloud so bases read "
+               "ragged/wispy while tops keep round cauliflower billows (Nubis "
+               "wispy-base / billowy-top trick). 0 = uniform character at all "
+               "heights (legacy).");
+    RTX_OPTION("rtx.atmosphere", float, cloudDetailBaseShearKm, 0.2f,
+               "Horizontal shear of the edge-detail field at each cloud's "
+               "base (km), fading to zero at its top - streaks base-level "
+               "wisps sideways like wind-sheared scud while tops stay round. "
+               "0 = no shear.");
+
+    // Lightning (fork — 2026-07-14). A CPU strike scheduler drives a
+    // flickering flash envelope; the cloud view march adds an emissive glow
+    // around the strike (tier 1) and a transient sphere light flashes the
+    // scene through the standard light path, froxel volumetrics included
+    // (tier 2). Off by default — storms are opt-in (weather-preset field
+    // candidate later).
+    RTX_OPTION("rtx.atmosphere", bool, lightningEnable, true,
+               "Lightning master switch. With this on, lightning is driven "
+               "entirely by lightningStrikesPerMinute (default 0 = no "
+               "strikes) - the weather presets raise the rate for storm "
+               "archetypes. Turn this off to mute lightning everywhere, "
+               "including storm presets and the Test Strike button.");
+    RTX_OPTION("rtx.atmosphere", float, lightningStrikesPerMinute, 0.0f,
+               "Mean lightning strike rate per minute [0..60]. Inter-strike "
+               "gaps are randomized (Poisson-like) so strikes cluster and "
+               "lull naturally. 0 = no automatic strikes (Test Strike still "
+               "works). Driven by the weather-preset system when a preset is "
+               "active (thunderstorm 12/min, rainstorm 4/min).");
+    RTX_OPTION("rtx.atmosphere", float, lightningFlashIntensity, 50.0f,
+               "Radiance scale of the in-cloud flash glow. Higher = the deck "
+               "lights up brighter and the glow reaches further through the "
+               "cloud. Tune against your sky brightness; the flash competes "
+               "with direct sunlight, so night storms need far less.");
+    RTX_OPTION("rtx.atmosphere", float, lightningSceneLightIntensity, 2000.0f,
+               "Radiance of the transient sphere light that flashes the "
+               "SCENE at the strike position (independent of the in-cloud "
+               "glow's intensity). 0 = cloud-only lightning (no ground "
+               "flash).");
+    RTX_OPTION("rtx.atmosphere", float, lightningRangeKm, 10.0f,
+               "Maximum strike distance from the camera in km [1.5..30]. "
+               "Strikes distribute uniformly by area between 1 km and this "
+               "range.");
+    RTX_OPTION("rtx.atmosphere", Vector3, lightningColor, Vector3(0.72f, 0.78f, 1.0f),
+               "Lightning flash color (linear RGB), shared by the in-cloud "
+               "glow and the scene flash. Default is a cool blue-white.");
+
     // Cloud-edge / halo tuning (fork — 2026-06-13). Two live knobs for the soft
     // fringe around cloud silhouettes: cloudEdgeSoftness sets how wide the
     // coverage-gate transition band is (the EXTENT of the skirt), and
@@ -1946,19 +2019,40 @@ namespace dxvk {
                "values. Applies live; also reshapes the baked self-shadow "
                "grids so lighting tracks the shapes.");
 
-    // Height-based bottom darkening (fork — 2026-06-10). Vertical light
-    // gradient on the Nubis Cubed multi-scatter + ambient terms so cumulus
-    // undersides read darker than tops. The direct-beam term is exempt so
-    // backlit silver linings are unaffected.
-    RTX_OPTION("rtx.atmosphere", float, cloudBottomDarkening, 0.55f,
-               "How much darker the cloud base is than the top [0..1]. Applies "
-               "to the multi-scatter and ambient lighting terms only; the "
-               "direct sun beam (silver lining) is unaffected. 0 = off (Nubis "
-               "Cubed paper baseline, uniformly lit undersides).");
-    RTX_OPTION("rtx.atmosphere", float, cloudBottomDarkeningHeight, 0.65f,
-               "Slab height fraction (0..1] at which the bottom-darkening "
-               "gradient reaches full brightness. Lower = darkening hugs the "
-               "very base; higher = gradient spans more of the cloud body.");
+    // Underside darkening strength (fork — 2026-06-10; reworked 2026-06-19 to
+    // scale the realistic analytic underside light field instead of a constant
+    // gradient). Modulates the Nubis Cubed multi-scatter + ambient terms so
+    // cumulus undersides read darker than tops. The direct-beam term is exempt
+    // so backlit silver linings are unaffected, and the effect fades out as the
+    // sun nears the horizon so low-sun bases light up (sunset glow).
+    //
+    // numos3 sync (2026-07-26): adopted upstream's rework, which replaces the
+    // old constant-gradient model. The companion cloudBottomDarkeningHeight
+    // option was dropped here — the analytic light field is shaped by
+    // cloudUndersideLightSigma instead, and an audit found no shader consumer
+    // left for the height knob.
+    RTX_OPTION("rtx.atmosphere", float, cloudBottomDarkening, 1.0f,
+               "Strength of the cloud-underside darkening [0..1]. Scales the "
+               "analytic per-column light field (shaped by Underside Shading) "
+               "applied to the multi-scatter and ambient terms; the direct sun "
+               "beam (silver lining) is unaffected. The darkening is strongest "
+               "with the sun overhead and fades out toward the horizon, where "
+               "the low sun rakes under the deck and lights the bases (sunset "
+               "glow). 0 = off (uniformly lit undersides).");
+    RTX_OPTION("rtx.atmosphere", float, cloudAmbientShadowStrength, 0.6f,
+               "Dramatic shading [0..1]: how much the sky-ambient fill is "
+               "attenuated by sun-shadow depth inside the cloud. The ambient "
+               "term otherwise refloods sun-shadowed bulk with bright daytime "
+               "sky light, flattening the cloud; with this, shaded cores fall "
+               "toward dark grey while sunlit faces and silver linings keep "
+               "their full ambient - the high-contrast puffy-cumulus read. "
+               "The sky-dome underside fill (Sky Ambient Fill) is exempt so "
+               "midday bases keep their open-sky floor. 0 = off (legacy flat "
+               "ambient). Applies live.");
+    // NOTE: cloudSkyAmbientFill and cloudSkyBleedStrength are intentionally NOT
+    // re-declared here — our side already declares both further down in this
+    // file. Upstream declares them in this block; keeping both copies would be
+    // a duplicate RTX_OPTION (C2086).
 
     // Worley carve (Schneider15 — slide 17 of RDR2 SIGGRAPH 2019).
     // These knobs control how chunky / cell-shaped the prebaked cloud noise is.
@@ -1996,7 +2090,7 @@ namespace dxvk {
                "Per-km haze extinction applied to cloud RADIANCE (effect A of "
                "the aerial-perspective fork). Dims distant cloud samples "
                "toward atmospheric color so they read as 'softer / duller "
-               "with distance.' Visual softness control \xe2\x80\x94 does NOT prevent "
+               "with distance.' Visual softness control - does NOT prevent "
                "the horizon white wall by itself. 0 = no haze. Default 0.05.");
     RTX_OPTION("rtx.atmosphere", float, cloudAerialFadePerKm, 0.15f,
                "Per-km fade extinction applied to cloud ALPHA accumulation "

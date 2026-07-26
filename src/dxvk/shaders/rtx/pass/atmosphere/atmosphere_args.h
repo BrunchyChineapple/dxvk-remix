@@ -275,12 +275,32 @@ struct AtmosphereArgs {
   float cloudCurvature;     // 0 = Earth-scale dome, 1 = tight dome
 
   // ----- Cloud volumetric / appearance enhancements (fork) -----
-  vec3 cloudShadowTint;        // RGB sky-bounce tint on shadow side
-  float cloudShadowTintStrength;
+  // Cloud detail-shading pass (fork — 2026-07-14). Four scalars reuse the
+  // former pad_cloudShadowTint (vec3) + pad_cloudShadowTintStrength row, so
+  // the CB layout is unchanged.
+  float cloudMicroAoStrength;       // [0..1] billow-scale shading modulation from the
+                                    // edge-detail field (bright knuckles / dark crevices
+                                    // near the cloud surface). 0 = off (legacy smooth shading).
+  float cloudPowderStrength;        // [0..1] Schneider powder darkening of low-density
+                                    // sun-facing samples (crevice / edge darkening when the
+                                    // sun is behind the viewer). 0 = off.
+  float cloudDetailHeightCharacter; // [0..1] height-keyed erosion character: flips the
+                                    // detail signal about the field mean at the cloud BASE
+                                    // (carve-leaning ragged wisps) while tops keep the
+                                    // growth-leaning billow read. 0 = uniform (legacy).
+  float cloudDetailBaseShearKm;     // Horizontal displacement of the detail tap at the cloud
+                                    // base (km), fading to 0 at the top — sheared/streaked
+                                    // base wisps. 0 = no shear (legacy).
 
   float cloudThickness;        // Cloud-slab vertical depth, km
   float cloudLayer2TypeSpread; // [0,1] cloud-type variation for layer 2 (independent of layer 1)
-  float cloudSunsetWarmth;     // Strength of low-sun warm tint
+  float lightningHistoryFade;  // [0..1] lightning ghost-suppression signal (fork — 2026-07-14):
+                               // 1 while a flash is live, decaying over ~0.25 s after it ends.
+                               // evalSkyRadiance collapses the cloud temporal-history weight by
+                               // this factor so the flash never embeds into the ~1 s EMA (the
+                               // reprojected "old frame" ghost on camera move). Reuses the former
+                               // pad_cloudSunsetWarmth slot; CB layout unchanged. Zeroed in
+                               // normalizeForSkyLutCache (per-frame animated, never feeds a bake).
   uint cloudViewSamples;       // Ray-march steps through cloud slab
 
   // ----- Spatial variation fields (Nubis-style weather) -----
@@ -294,7 +314,13 @@ struct AtmosphereArgs {
   float cloudAnvilBias;            // [0,1] cumulus top inflation strength (Nubis anvil pow trick).
   float cloudMsScale;              // Multi-scatter sigma_ms master multiplier (1.0 = paper baseline)
 
-  float cloudMultiScatterStrength; // Wrenninge multi-scatter master multiplier (1.0 = physical baseline).
+  float cloudAmbientShadowStrength; // [0..1] D_sun-keyed attenuation of the cloud AMBIENT term
+                                    // (fork — 2026-07-14, dramatic-shading pass): sun-shadowed
+                                    // bulk loses its sky-ambient fill (exp falloff on the same
+                                    // optical depth that drives the direct lobes), so shaded
+                                    // cores plunge dark while lit faces keep full ambient.
+                                    // 0 = off (legacy flat ambient floor). Reuses the former
+                                    // pad_cloudMultiScatterStrength slot; CB layout unchanged.
   uint  cloudMultiScatterOctaves;  // Number of Wrenninge octaves to sum (clamped 1..4 in shader).
   float cloudLayer2NoiseSeed;      // Seed offset added to layer 2's 2D coverage/type smoothNoise2D
                                    // calls so layer 2 generates a fully decorrelated noise pattern
@@ -335,9 +361,16 @@ struct AtmosphereArgs {
   uint  cloudVoxelGridAmbientDirty; // 1 when D_ambient was (re)baked this frame
   // The three fields below reuse the former pad_cloudVoxel0..2 slots so the
   // constant-buffer layout is unchanged.
-  float cloudBottomDarkening;       // [0,1] how dark the cloud base gets vs the top (multi-scatter + ambient)
-  float cloudBottomDarkeningHeight; // (0,1] slab height fraction at which the gradient reaches full brightness
-  float cloudDetailStrength;        // [0,1] additive edge detail strength (0 = off)
+  float cloudBottomDarkening;       // [0,1] strength of the analytic underside light field (multi-scatter + ambient)
+  // Retired in the numos3 sync (2026-07-26): upstream replaced the constant-gradient
+  // bottom-darkening model with an analytic per-column light field shaped by
+  // cloudUndersideLightSigma, which left this height knob with no shader consumer.
+  // Kept as a pad so the CB layout stays byte-identical (retire-to-pad convention).
+  // Zeroed implicitly by the leading `args = {}` in getAtmosphereArgs — the whole
+  // struct is memcmp'd against a cached snapshot to gate LUT re-bakes, so every byte
+  // has to be deterministic.
+  float pad_cloudBottomDarkeningHeight;
+  float cloudDetailStrength;        // [0,1] silhouette-wobble detail strength (0 = off)
 
   // ----- Nubis Cubed 2023 lighting params (fork — 2026-05-12, C4) -----
   // Consumed by cloud_render.comp.slang via evalNubisCubedSample.
@@ -550,19 +583,97 @@ struct AtmosphereArgs {
   float cloudEvolutionOffsetX;   // Slow 3D offset added to the base 3D noise sample position
   float cloudEvolutionOffsetY;   // (field-evolution: clouds form/dissolve in place). (Kim)
 
-  float cloudEvolutionOffsetZ;
+  float cloudEvolutionOffsetZ;   // Third axis of the field-evolution offset above. (Kim)
   float cloudSkyAmbientFill;     // [0,1] sky-dome underside fill (clouds reflect open sky from
                                  // below, bypassing bottom-darkening; bright by day). (Kim)
-  float sunsetSaturation;        // Saturation boost on sky radiance near the horizon. (Kim)
-  float cloudShadowFactorStrength; // pow() contrast on cloud-on-terrain shadow, folded onto the
-                                   // sun radiance in sampleAtmosphereSunLight. (Kim, moved here)
 
-  float cloudEnergyConserve;     // [0,1] 0 = legacy additive dual-lobe, 1 = energy-conserving
-                                 // convex blend in evalNubisCubedSample. (Kim)
-  float cloudMsLobeWeight;       // [0,1] convex weight: forward single-scatter vs multi-scatter. (Kim)
-  uint  cloudLayer2StepFloor;    // Min march steps through the layer-2 echo deck. (Kim)
-  uint  cloudLayer2StepMax;      // Hard cap on echo-deck steps per ray. (Kim)
+  // ----- Artistic sunset color controls (fork — 2026-06-14) -----
+  // Counteract the desaturation introduced when sunset reddening moved onto the
+  // physical Hillaire two-term LUT model (commit 3e37062b): the multiscatter
+  // fill reads pale-blue and washes the warm single-scatter. Both apply inside
+  // evalAtmosphereRadiance, so the sky-view LUT carries them and clouds inherit
+  // the warmer ambient for free. Defaults (1.0) reproduce the physical look.
+  //
+  // NOTE (numos3 sync, 2026-07-26): `multiScatterStrength` is declared once
+  // earlier in this struct — our side already carried it next to
+  // atmosphereSunVolumetricRadianceScale in the pad_cloudEdge1 slot. Upstream
+  // declares it here instead, so this block keeps only sunsetSaturation to
+  // avoid a duplicate member.
+  float sunsetSaturation;     // Saturation boost on sky radiance, ramped in near the horizon
+                              // (midday untouched). >1 = punchier warm sunset. 1 = no change.
+  // Artistic contrast curve on the cloud-on-terrain shadow (fork — 2026-06-19).
+  // Applied as pow(cloudTransmittance, cloudShadowFactorStrength) where the
+  // factor is folded onto the SUN's radiance in sampleAtmosphereSunLight /
+  // sampleAtmosphereSunLightVolume. This is the same perception-side knob that
+  // previously lived in composite_args.h (it used to scale the screen-space
+  // PrimaryCloudShadowFactor texture); it moved here when the cloud shadow was
+  // re-architected onto the sun term and the screen-space texture was deleted.
+  // 1.0 = raw physical transmittance, >1 deepens cumulus shadows, <1 fades.
+  // Mirrors RtxOptions::cloudShadowFactorStrength(). Reuses the former
+  // pad_artistic0 slot; CB layout unchanged.
+  float cloudShadowFactorStrength;
+  // ----- Cloud direct-lighting energy conservation (fork — 2026-06-19) -----
+  // Reformulates the direct dual-lobe from the legacy additive sum
+  // (T_primary*HG1 + M*HG2, phase integral up to ~2) into an energy-conserving
+  // convex blend (phase integral 1) — the fix for lit clouds out-brightening
+  // the physical sky LUT. Consumed by evalNubisCubedSample. Both reuse the
+  // former pad_artistic1/2 slots; CB layout unchanged.
+  float cloudEnergyConserve;  // [0,1] 0 = legacy additive look (A/B), 1 = energy-conserving convex blend
+  float cloudMsLobeWeight;    // [0,1] convex weight: forward single-scatter lobe (1-w) vs multi-scatter body fill (w)
 
-  vec3  cloudLayer2Color;        // Layer-2 echo-deck base color. (Kim)
-  float pad_cloudLayer2Color0;   // completes the vec4 row
+  // ----- Layer-2 echo-deck step budget (fork — 2026-06-21) -----
+  // The echo deck is marched far more cheaply than layer 1; these are its own
+  // floor/cap on the adaptive (cloudViewStepKm-driven) step count, decoupled
+  // from layer 1's cloudViewSamples / cloudViewSamplesMax. Consumed by
+  // marchEchoDeck in cloud_march_common.slangh.
+  //
+  // IMPORTANT (CB alignment): no free pad slots remained, so this grows the
+  // constant buffer. It MUST grow by a whole 16-byte (vec4) block or
+  // sizeof(AtmosphereArgs) stops being 16-byte aligned and the updateBuffer of
+  // the whole struct corrupts the cbuffer (the two real fields below then read
+  // garbage, and marchEchoDeck's step count blows up into a GPU hang — solid
+  // black whenever layer 2 is enabled). Hence the two explicit pad words: 2
+  // real + 2 pad = one vec4 row. Future additions should consume these pads
+  // first (reuse-the-pad-slot discipline) before growing the struct again.
+  uint cloudLayer2StepFloor;     // Min march steps through the echo deck (near-zenith floor)
+  uint cloudLayer2StepMax;       // Hard cap on echo-deck steps per ray (perf governor)
+  uint pad_cloudLayer2Step0;     // reserve — keeps the block vec4-aligned
+  uint pad_cloudLayer2Step1;     // reserve — keeps the block vec4-aligned
+  // Two extra reserve words (numos3 sync, 2026-07-26). Our struct carries the
+  // meteor + constellation blocks upstream does not, so the running offset here
+  // differs from upstream's by 8 bytes and the vec3 cloudLayer2Color below would
+  // land off a 16-byte boundary with only upstream's two pads. Consume
+  // pad_cloudLayer2Step0/1 first (upstream's reserve), then these, before
+  // growing the struct — and re-run mods/_tools/check_args_align.py after.
+  uint pad_cloudLayer2Step2;     // reserve — fork offset compensation
+  uint pad_cloudLayer2Step3;     // reserve — fork offset compensation
+
+  // Layer-2 echo-deck color (fork — 2026-06-21). Independent albedo for the
+  // deck (the one look knob split out from layer 1). vec3 + 1 pad word = one
+  // vec4 row, so the CB stays 16-byte aligned (see the step block above —
+  // appending a bare vec3 would straddle the row boundary and corrupt the CB).
+  vec3  cloudLayer2Color;        // Deck base color; defaults to cloudColor's near-white
+  float pad_cloudLayer2Color0;   // reserve — completes the vec4 row
+
+  // Lightning (fork — 2026-07-14). Two whole vec4 rows (CB alignment rule
+  // above). The CPU-side strike scheduler (RtxAtmosphere::advanceLightning)
+  // drives a flickering flash envelope; the view-path cloud march adds an
+  // emissive glow around the strike position (compile-gated to the screen
+  // cloud pass only — the secondary-ray cloud LUT must never bake a transient
+  // flash in), and fhSyncAtmosphereDistantLights injects a transient sphere
+  // light at the same position so the scene flashes too. Both rows are zeroed
+  // in normalizeForSkyLutCache so a flash never invalidates the sky-LUT
+  // cache key.
+  vec3  lightningStrikePosKm;     // Strike position, world-anchored Y-up km (same
+                                  // frame as cameraWorldPosYUpKm / samplePos).
+  float lightningFlashIntensity;  // Envelope × lightningFlashIntensity option,
+                                  // premultiplied. 0 = no active flash (the cloud
+                                  // march skips the term entirely).
+
+  vec3  lightningColor;           // Flash tint (linear RGB), shared by the in-cloud
+                                  // glow and the scene sphere light.
+  float lightningEnvelope;        // RAW flicker envelope [0..~1.2], before any
+                                  // intensity scaling — the scene-light sync scales
+                                  // this by lightningSceneLightIntensity so the two
+                                  // consumers calibrate independently.
 };

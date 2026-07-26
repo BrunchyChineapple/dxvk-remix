@@ -1,10 +1,12 @@
 #pragma once
 
-// rtx_fork_weather.h Î“Ã‡Ã¶ fork-owned weather preset declarations.
-// Defines 732 RTX_OPTIONs (12 presets x 61 fields) under the
+// rtx_fork_weather.h — fork-owned weather preset declarations.
+// Defines 708 RTX_OPTIONs (12 presets x 59 fields) under the
 // rtx.weather.preset.<presetName> namespace.
 //
-// Field bucket breakdown: 16 cloud + 5 atmosphere + 4 sky/moon mood + 27 volumetric.
+// Field bucket breakdown: 18 cloud + 5 atmosphere + 4 sky/moon mood + 32 volumetric.
+// Counts here drift on every upstream sync. Derive them, don't trust them: count the
+// X() entries in WEATHER_PRESET_FIELD_LIST below.
 //
 // Usage: invoke DECLARE_ALL_WEATHER_PRESETS() inside the RtxOptions struct body
 // (see rtx_options.h). The macro expands all 12 preset declarations inline.
@@ -32,12 +34,18 @@ namespace dxvk { namespace fork_weather {
     WK_Color,       // Vector3 tint; componentwise lerp
     WK_Vec3,        // Vector3 radiometric; componentwise lerp
     WK_Step,        // non-interpolated (bool/enum); switch at blend midpoint
+    // Display-transform kinds (fork - 2026-07-02, UI usability). Blend math is
+    // plain linear on the STORED value; only the widget converts units, so the
+    // conf/API/shader-facing value is unchanged. For these kinds the table's
+    // min/max/step/fmt columns are in DISPLAY units (they feed only the widget).
+    WK_SpeedKmS,    // stored km/s; widget displays m/s (x1000)
+    WK_PatchPerKm,  // stored spatial frequency (1/km); widget displays patch size in km (1/x)
   };
 } }
 
 // ---------------------------------------------------------------------------
-// Field table X-macro - THE single source of truth for the 61 weather fields
-// (16 cloud + 5 atmosphere + 4 sky/moon mood + 27 volumetric). Every consumer
+// Field table X-macro - THE single source of truth for the 53 weather fields
+// (17 cloud + 5 atmosphere + 4 sky/moon mood + 27 volumetric). Every consumer
 // (WeatherSnapshot members, the per-field descriptor table, the generated
 // ImGui panel, and the blend/read/write loops) is driven from here, so a field
 // added here propagates everywhere with no second site to keep in sync.
@@ -61,13 +69,13 @@ namespace dxvk { namespace fork_weather {
   X(float,   cloudDensity,                       1.0f,                            WK_Scalar,     "Clouds",         "Look",             "Density",                    0.0f,    10.0f,   0.05f,   "%.2f") \
   X(float,   cloudCoverageMean,                  0.5f,                            WK_Scalar,     "Clouds",         "Coverage & Shape", "Coverage",                   0.0f,    1.0f,    0.01f,   "%.2f") \
   X(float,   cloudCoverageSpread,                0.2f,                            WK_Scalar,     "Clouds",         "Coverage & Shape", "Coverage Spread",            0.0f,    1.0f,    0.01f,   "%.2f") \
-  X(float,   cloudCoverageNoiseScale,            0.0033f,                         WK_Scalar,     "Clouds",         "Coverage & Shape", "Coverage Patch Size",        0.0001f, 0.01f,   0.0001f, "%.4f") \
+  X(float,   cloudCoverageNoiseScale,            0.0033f,                         WK_PatchPerKm, "Clouds",         "Coverage & Shape", "Coverage Patch Size",        100.0f,  10000.0f, 5.0f,   "%.0f km") \
   X(float,   cloudTypeMean,                      0.5f,                            WK_Scalar,     "Clouds",         "Coverage & Shape", "Cloud Type",                 0.0f,    1.0f,    0.01f,   "%.2f") \
   X(float,   cloudTypeSpread,                    0.2f,                            WK_Scalar,     "Clouds",         "Coverage & Shape", "Type Spread",                0.0f,    1.0f,    0.01f,   "%.2f") \
-  X(float,   cloudTypeNoiseScale,                0.0034f,                         WK_Scalar,     "Clouds",         "Coverage & Shape", "Type Patch Size",            0.0001f, 0.0034f, 0.0001f, "%.4f") \
+  X(float,   cloudTypeNoiseScale,                0.0034f,                         WK_PatchPerKm, "Clouds",         "Coverage & Shape", "Type Patch Size",            294.0f,  10000.0f, 5.0f,   "%.0f km") \
   X(Vector3, cloudColor,                         Vector3(0.89f, 0.92f, 1.0f),     WK_Color,      "Clouds",         "Look",             "Color",                      0.0f,    1.5f,    0.01f,   "%.2f") \
-  X(float,   cloudWindSpeed,                     0.02f,                           WK_Scalar,     "Clouds",         "Wind",             "Wind Speed",                 0.0f,    1.0f,    0.005f,  "%.3f") \
-  X(float,   cloudWindDirection,                 45.0f,                           WK_Angle,      "Clouds",         "Wind",             "Wind Direction",             0.0f,    360.0f,  1.0f,    "%.1f\xc2\xb0") \
+  X(float,   cloudWindSpeed,                     0.02f,                           WK_SpeedKmS,   "Clouds",         "Wind",             "Wind Speed",                 0.0f,    1000.0f, 0.5f,    "%.1f m/s") \
+  X(float,   cloudWindDirection,                 45.0f,                           WK_Angle,      "Clouds",         "Wind",             "Wind Direction",             0.0f,    360.0f,  1.0f,    "%.1f deg") \
   X(float,   cloudShadowStrength,                1.0f,                            WK_Scalar,     "Clouds",         "Lighting",         "Ground Shadow",              0.0f,    1.0f,    0.01f,   "%.2f") \
   X(float,   cloudThickness,                     3.05f,                           WK_Scalar,     "Clouds",         "Look",             "Depth",                      0.0f,    10.0f,   0.05f,   "%.2f") \
   X(float, cloudUndersideLightSigma, 0.12f, WK_Scalar, "Clouds", "Lighting", "Underside Shading", 0.0f, 1.0f, 0.01f,  "%.2f") \
@@ -77,9 +85,7 @@ namespace dxvk { namespace fork_weather {
   /* Cloud look (fork — retained through remixplus table-driven rework) */ \
   X(float,   cloudAnvilBias,                     0.3f,                            WK_Scalar,     "Clouds",         "Coverage & Shape", "Anvil Spread",               0.0f,    1.0f,    0.01f,   "%.2f") \
   X(float,   cloudAnisotropy,                    0.6f,                            WK_Scalar,     "Clouds",         "Lighting",         "Anisotropy",                -1.0f,    1.0f,    0.01f,   "%.2f") \
-  X(Vector3, cloudShadowTint,                    Vector3(0.55f, 0.65f, 0.85f),    WK_Color,      "Clouds",         "Lighting",         "Shadow Tint",                0.0f,    1.0f,    0.01f,   "%.2f") \
-  X(float,   cloudShadowTintStrength,            1.0f,                            WK_Scalar,     "Clouds",         "Lighting",         "Shadow Tint Strength",       0.0f,    2.0f,    0.05f,   "%.2f") \
-  X(float,   cloudSunsetWarmth,                  0.95f,                           WK_Scalar,     "Clouds",         "Lighting",         "Sunset Warmth",              0.0f,    2.0f,    0.05f,   "%.2f") \
+  X(float, lightningStrikesPerMinute, 0.0f, WK_Scalar, "Clouds", "Lightning", "Strikes Per Minute", 0.0f, 60.0f, 0.1f, "%.1f") \
   /* Atmosphere (5) */ \
   X(float,   airDensity,                         1.0f,                            WK_Scalar,     "Atmosphere",     "Atmosphere",       "Air",                        0.0f,    5.0f,    0.05f,   "%.2f") \
   X(float,   aerosolDensity,                     1.0f,                            WK_Scalar,     "Atmosphere",     "Atmosphere",       "Dust",                       0.0f,    5.0f,    0.05f,   "%.2f") \
@@ -160,13 +166,13 @@ namespace dxvk { namespace fork_weather {
 #define WEATHER_PRESET_BIND_smoggy(type, name, def)        WEATHER_PRESET_RTX_OPTION_FOR(smoggy,        type, name, def);
 
 // ---------------------------------------------------------------------------
-// Per-preset value X-macros (61 fields each)  // Î“Ã‡Ã¶ one per archetype, 52 fields each, in the same
+// Per-preset value X-macros - one per archetype, 59 fields each, in the same
 // order as WEATHER_PRESET_FIELD_LIST. Fields not explicitly tuned use the
 // neutral default from WEATHER_PRESET_FIELD_LIST, which is also the canonical
-// field order Î“Ã‡Ã¶ see that macro above rather than duplicating the list here.
+// field order -- see that macro above rather than duplicating the list here.
 // ---------------------------------------------------------------------------
 
-// clear Î“Ã‡Ã¶ sunny, crisp, low haze
+// clear -- sunny, crisp, low haze
 #define WEATHER_PRESET_VALUES_clear(X)                                                                 \
   X(float,   cloudDensity,                              0.4f)                                          \
   X(float,   cloudCoverageMean,                         0.10f)                                         \
@@ -178,12 +184,13 @@ namespace dxvk { namespace fork_weather {
   X(Vector3, cloudColor,                                Vector3(0.95f, 0.97f, 1.00f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.0f)                                          \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            2.0f)                                          \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
   X(float, cloudAerialFadePerKm,     0.15f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
+  X(float, lightningStrikesPerMinute, 0.0f) \
   X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
   X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
   X(float, skyIndirectRadianceScale, 1.0f) \
@@ -222,32 +229,30 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.0f) \
   X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         0.95f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.80f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.945f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.35f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.35f)
 
-// partlyCloudy Î“Ã‡Ã¶ light scattered clouds
+// partlyCloudy -- light scattered clouds
 #define WEATHER_PRESET_VALUES_partlyCloudy(X)                                                          \
   X(float,   cloudDensity,                              0.9f)                                          \
-  X(float,   cloudCoverageMean,                         0.30f)                                         \
+  X(float,   cloudCoverageMean,                         0.35f)                                         \
   X(float,   cloudCoverageSpread,                       0.20f)                                         \
   X(float,   cloudCoverageNoiseScale,                   0.0033f)                                       \
-  X(float,   cloudTypeMean,                             0.5f)                                          \
+  X(float,   cloudTypeMean,                             0.65f)                                         \
   X(float,   cloudTypeSpread,                           0.3f)                                          \
   X(float,   cloudTypeNoiseScale,                       0.0034f)                                       \
   X(Vector3, cloudColor,                                Vector3(0.92f, 0.95f, 1.00f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.05f)                                         \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            2.5f)                                          \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
   X(float, cloudAerialFadePerKm,     0.15f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
+  X(float, lightningStrikesPerMinute, 0.0f) \
   X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
   X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
   X(float, skyIndirectRadianceScale, 1.0f) \
@@ -286,15 +291,12 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.05f) \
   X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         0.95f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.72f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.94f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.33f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.33f)
 
-// overcast Î“Ã‡Ã¶ current default look
+// overcast -- current default look
 #define WEATHER_PRESET_VALUES_overcast(X)                                                              \
   X(float,   cloudDensity,                              1.8f)                                          \
   X(float,   cloudCoverageMean,                         0.64f)                                         \
@@ -306,18 +308,19 @@ namespace dxvk { namespace fork_weather {
   X(Vector3, cloudColor,                                Vector3(0.89f, 0.92f, 1.00f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.10f)                                         \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            3.05f)                                         \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
   X(float, cloudAerialFadePerKm,     0.15f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
-  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(float, lightningStrikesPerMinute, 0.0f) \
+  X(Vector3, rayleighScattering, Vector3(8.0e-3f, 10.5e-3f, 17.0e-3f)) \
   X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
-  X(float, skyIndirectRadianceScale, 1.0f) \
+  X(float, skyIndirectRadianceScale, 0.9f) \
   X(float,   airDensity,                                1.0f)                                          \
-  X(float,   aerosolDensity,                            1.1f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(15.0f, 15.0f, 15.0f))                  \
+  X(float,   aerosolDensity,                            1.7f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(9.0f, 9.0f, 9.5f))                     \
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
@@ -350,15 +353,12 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.05f) \
   X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         0.95f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.80f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.30f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.30f)
 
-// hazy Î“Ã‡Ã¶ warm summer haze
+// hazy -- warm summer haze
 #define WEATHER_PRESET_VALUES_hazy(X)                                                                  \
   X(float,   cloudDensity,                              1.0f)                                          \
   X(float,   cloudCoverageMean,                         0.40f)                                         \
@@ -370,17 +370,18 @@ namespace dxvk { namespace fork_weather {
   X(Vector3, cloudColor,                                Vector3(0.92f, 0.91f, 0.88f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.10f)                                         \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            2.5f)                                          \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
   X(float, cloudAerialFadePerKm,     0.15f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
-  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(float, lightningStrikesPerMinute, 0.0f) \
+  X(Vector3, rayleighScattering, Vector3(7.0e-3f, 11.0e-3f, 20.0e-3f)) \
   X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
   X(float, skyIndirectRadianceScale, 1.0f) \
-  X(float,   airDensity,                                1.1f)                                          \
-  X(float,   aerosolDensity,                            1.5f)                                          \
+  X(float,   airDensity,                                1.15f)                                         \
+  X(float,   aerosolDensity,                            1.9f)                                          \
   X(Vector3, sunIlluminance,                            Vector3(17.0f, 16.0f, 14.0f))                  \
   X(float,   nightSkyBrightness,                        0.010f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
@@ -414,15 +415,12 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.30f) \
   X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         1.10f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.65f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.85f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.32f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.32f)
 
-// foggy Î“Ã‡Ã¶ the headline fog preset
+// foggy -- the headline fog preset
 #define WEATHER_PRESET_VALUES_foggy(X)                                                                 \
   X(float,   cloudDensity,                              0.6f)                                          \
   X(float,   cloudCoverageMean,                         0.30f)                                         \
@@ -434,18 +432,19 @@ namespace dxvk { namespace fork_weather {
   X(Vector3, cloudColor,                                Vector3(0.85f, 0.88f, 0.92f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.05f)                                         \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            2.0f)                                          \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
   X(float, cloudAerialFadePerKm,     0.15f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
-  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(float, lightningStrikesPerMinute, 0.0f) \
+  X(Vector3, rayleighScattering, Vector3(9.0e-3f, 11.0e-3f, 15.0e-3f)) \
   X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
-  X(float, skyIndirectRadianceScale, 1.0f) \
+  X(float, skyIndirectRadianceScale, 0.85f) \
   X(float,   airDensity,                                1.2f)                                          \
-  X(float,   aerosolDensity,                            2.0f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(10.0f, 10.0f, 10.0f))                  \
+  X(float,   aerosolDensity,                            2.4f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(6.0f, 6.0f, 6.2f))                     \
   X(float,   nightSkyBrightness,                        0.012f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
@@ -478,15 +477,12 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.0f) \
   X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         0.50f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.40f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.89f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.22f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.22f)
 
-// drizzle Î“Ã‡Ã¶ light rain, medium fog
+// drizzle -- light rain, medium fog
 #define WEATHER_PRESET_VALUES_drizzle(X)                                                               \
   X(float,   cloudDensity,                              1.4f)                                          \
   X(float,   cloudCoverageMean,                         0.60f)                                         \
@@ -498,18 +494,19 @@ namespace dxvk { namespace fork_weather {
   X(Vector3, cloudColor,                                Vector3(0.78f, 0.82f, 0.88f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.20f)                                         \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            3.0f)                                          \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
   X(float, cloudAerialFadePerKm,     0.15f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
-  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(float, lightningStrikesPerMinute, 0.0f) \
+  X(Vector3, rayleighScattering, Vector3(8.0e-3f, 10.5e-3f, 16.0e-3f)) \
   X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
-  X(float, skyIndirectRadianceScale, 1.0f) \
+  X(float, skyIndirectRadianceScale, 0.85f) \
   X(float,   airDensity,                                1.1f)                                          \
-  X(float,   aerosolDensity,                            1.5f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(11.0f, 12.0f, 14.0f))                  \
+  X(float,   aerosolDensity,                            2.0f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(5.0f, 5.5f, 6.5f))                     \
   X(float,   nightSkyBrightness,                        0.010f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
@@ -542,15 +539,12 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.10f) \
   X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         0.50f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.70f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.28f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.28f)
 
-// rainstorm Î“Ã‡Ã¶ heavy clouds, dim sun, dense fog
+// rainstorm -- heavy clouds, dim sun, dense fog
 #define WEATHER_PRESET_VALUES_rainstorm(X)                                                             \
   X(float,   cloudDensity,                              2.5f)                                          \
   X(float,   cloudCoverageMean,                         0.80f)                                         \
@@ -562,18 +556,19 @@ namespace dxvk { namespace fork_weather {
   X(Vector3, cloudColor,                                Vector3(0.65f, 0.68f, 0.75f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.40f)                                         \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            4.0f)                                          \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
-  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialFadePerKm,     0.10f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
-  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(float, lightningStrikesPerMinute, 4.0f) \
+  X(Vector3, rayleighScattering, Vector3(9.0e-3f, 11.0e-3f, 15.0e-3f)) \
   X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
-  X(float, skyIndirectRadianceScale, 1.0f) \
-  X(float,   airDensity,                                1.0f)                                          \
-  X(float,   aerosolDensity,                            1.4f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(7.0f, 8.0f, 10.0f))                    \
+  X(float, skyIndirectRadianceScale, 0.75f) \
+  X(float,   airDensity,                                1.05f)                                         \
+  X(float,   aerosolDensity,                            2.2f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(2.5f, 2.8f, 3.4f))                     \
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
@@ -606,15 +601,12 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.10f) \
   X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         0.20f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.95f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.25f)
 
-// thunderstorm Î“Ã‡Ã¶ heaviest, bruised tone (retuned 2026-05-09 by in-game
+// thunderstorm -- heaviest, bruised tone (retuned 2026-05-09 by in-game
 // tuning against the post-FAST-noise + temporal-smoother + Jensen-revert
 // pipeline at cloudAltitude=1.5 km, cloudCurvature=0.38)
 #define WEATHER_PRESET_VALUES_thunderstorm(X)                                                          \
@@ -628,18 +620,19 @@ namespace dxvk { namespace fork_weather {
   X(Vector3, cloudColor,                                Vector3(0.61f, 0.63f, 0.69f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.44f)                                         \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            4.13f)                                         \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
-  X(float, cloudAerialFadePerKm,     0.15f) \
+  X(float, cloudAerialFadePerKm,     0.08f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
-  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(float, lightningStrikesPerMinute, 12.0f) \
+  X(Vector3, rayleighScattering, Vector3(10.0e-3f, 11.0e-3f, 12.0e-3f)) \
   X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
-  X(float, skyIndirectRadianceScale, 1.0f) \
-  X(float,   airDensity,                                1.0f)                                          \
-  X(float,   aerosolDensity,                            1.3f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(4.0f, 4.0f, 6.0f))                     \
+  X(float, skyIndirectRadianceScale, 0.55f) \
+  X(float,   airDensity,                                1.1f)                                          \
+  X(float,   aerosolDensity,                            3.0f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(1.2f, 1.3f, 1.6f))                     \
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
@@ -672,15 +665,12 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.0f) \
   X(float,   cloudAnvilBias,                            0.7f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         0.21f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.50f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.89f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.22f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.22f)
 
-// snow Î“Ã‡Ã¶ medium clouds, cool fog, snow particles
+// snow -- medium clouds, cool fog, snow particles
 #define WEATHER_PRESET_VALUES_snow(X)                                                                  \
   X(float,   cloudDensity,                              1.8f)                                          \
   X(float,   cloudCoverageMean,                         0.65f)                                         \
@@ -692,18 +682,19 @@ namespace dxvk { namespace fork_weather {
   X(Vector3, cloudColor,                                Vector3(0.95f, 0.97f, 1.00f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.20f)                                         \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            3.0f)                                          \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
   X(float, cloudAerialFadePerKm,     0.15f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
-  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(float, lightningStrikesPerMinute, 0.0f) \
+  X(Vector3, rayleighScattering, Vector3(9.0e-3f, 11.0e-3f, 15.0e-3f)) \
   X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
-  X(float, skyIndirectRadianceScale, 1.0f) \
+  X(float, skyIndirectRadianceScale, 0.9f) \
   X(float,   airDensity,                                1.0f)                                          \
-  X(float,   aerosolDensity,                            1.3f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(12.0f, 13.0f, 14.0f))                  \
+  X(float,   aerosolDensity,                            1.8f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(7.0f, 7.5f, 8.0f))                     \
   X(float,   nightSkyBrightness,                        0.012f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
@@ -736,15 +727,12 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.0f) \
   X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         0.30f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.70f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.30f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.30f)
 
-// blizzard Î“Ã‡Ã¶ whiteout, severe visibility loss
+// blizzard -- whiteout, severe visibility loss
 #define WEATHER_PRESET_VALUES_blizzard(X)                                                              \
   X(float,   cloudDensity,                              3.0f)                                          \
   X(float,   cloudCoverageMean,                         0.95f)                                         \
@@ -756,18 +744,19 @@ namespace dxvk { namespace fork_weather {
   X(Vector3, cloudColor,                                Vector3(0.92f, 0.96f, 1.00f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.50f)                                         \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            4.5f)                                          \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
   X(float, cloudAerialFadePerKm,     0.15f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
-  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
+  X(float, lightningStrikesPerMinute, 0.0f) \
+  X(Vector3, rayleighScattering, Vector3(11.0e-3f, 12.0e-3f, 13.0e-3f)) \
   X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
-  X(float, skyIndirectRadianceScale, 1.0f) \
+  X(float, skyIndirectRadianceScale, 0.75f) \
   X(float,   airDensity,                                1.0f)                                          \
-  X(float,   aerosolDensity,                            1.6f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(6.0f, 7.0f, 8.0f))                     \
+  X(float,   aerosolDensity,                            2.6f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(2.8f, 3.2f, 3.6f))                     \
   X(float,   nightSkyBrightness,                        0.008f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
@@ -800,15 +789,12 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.0f) \
   X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         0.10f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.40f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.45f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.20f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.20f)
 
-// sandstorm Î“Ã‡Ã¶ yellow-orange forward-scattering fog
+// sandstorm -- yellow-orange forward-scattering fog
 #define WEATHER_PRESET_VALUES_sandstorm(X)                                                             \
   X(float,   cloudDensity,                              1.5f)                                          \
   X(float,   cloudCoverageMean,                         0.40f)                                         \
@@ -820,18 +806,19 @@ namespace dxvk { namespace fork_weather {
   X(Vector3, cloudColor,                                Vector3(0.85f, 0.65f, 0.40f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.20f)                                         \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            2.5f)                                          \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
   X(float, cloudAerialFadePerKm,     0.15f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
-  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
-  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
-  X(float, skyIndirectRadianceScale, 1.0f) \
-  X(float,   airDensity,                                1.0f)                                          \
-  X(float,   aerosolDensity,                            2.5f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(10.0f, 8.0f, 5.0f))                    \
+  X(float, lightningStrikesPerMinute, 0.0f) \
+  X(Vector3, rayleighScattering, Vector3(20.0e-3f, 12.0e-3f, 6.0e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.3f, 0.22f, 0.12f)) \
+  X(float, skyIndirectRadianceScale, 0.8f) \
+  X(float,   airDensity,                                1.1f)                                          \
+  X(float,   aerosolDensity,                            3.2f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(7.0f, 5.0f, 3.0f))                     \
   X(float,   nightSkyBrightness,                        0.010f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
@@ -864,15 +851,12 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.60f) \
   X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         1.30f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.45f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.50f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterNight, 0.25f)
 
-// smoggy Î“Ã‡Ã¶ industrial dark grey-brown haze
+// smoggy -- industrial dark grey-brown haze
 #define WEATHER_PRESET_VALUES_smoggy(X)                                                                \
   X(float,   cloudDensity,                              1.4f)                                          \
   X(float,   cloudCoverageMean,                         0.45f)                                         \
@@ -884,18 +868,19 @@ namespace dxvk { namespace fork_weather {
   X(Vector3, cloudColor,                                Vector3(0.65f, 0.58f, 0.45f))                  \
   X(float,   cloudWindSpeed,                            0.02f)                                         \
   X(float,   cloudWindDirection,                        45.0f)                                         \
-  X(float,   cloudShadowStrength,                       0.15f)                                         \
+  X(float,   cloudShadowStrength,                       1.0f)                                         \
   X(float,   cloudThickness,                            2.5f)                                          \
   X(float, cloudUndersideLightSigma, 0.12f) \
   X(float, cloudBottomDarkening,     1.0f) \
   X(float, cloudAerialFadePerKm,     0.15f) \
   X(float, cloudAerialHazePerKm,     0.05f) \
-  X(Vector3, rayleighScattering, Vector3(5.8e-3f, 13.5e-3f, 33.1e-3f)) \
-  X(Vector3, nightSkyColor,      Vector3(0.15f, 0.2f, 0.4f)) \
-  X(float, skyIndirectRadianceScale, 1.0f) \
-  X(float,   airDensity,                                1.1f)                                          \
-  X(float,   aerosolDensity,                            1.8f)                                          \
-  X(Vector3, sunIlluminance,                            Vector3(12.0f, 10.0f, 8.0f))                   \
+  X(float, lightningStrikesPerMinute, 0.0f) \
+  X(Vector3, rayleighScattering, Vector3(12.0e-3f, 11.0e-3f, 9.5e-3f)) \
+  X(Vector3, nightSkyColor,      Vector3(0.22f, 0.18f, 0.12f)) \
+  X(float, skyIndirectRadianceScale, 0.85f) \
+  X(float,   airDensity,                                1.15f)                                         \
+  X(float,   aerosolDensity,                            2.2f)                                          \
+  X(Vector3, sunIlluminance,                            Vector3(8.0f, 7.0f, 5.5f))                     \
   X(float,   nightSkyBrightness,                        0.010f)                                        \
   X(float,   moonNeeStrength,                           1.0f)                                          \
   X(float,   moonAtmosphericCouplingStrength,           1.0f)                                          \
@@ -928,9 +913,6 @@ namespace dxvk { namespace fork_weather {
   X(float,   volumetricAnisotropy,                      0.20f) \
   X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
-  X(Vector3, cloudShadowTint,                           Vector3(0.55f, 0.65f, 0.85f)) \
-  X(float,   cloudShadowTintStrength,                   1.0f) \
-  X(float,   cloudSunsetWarmth,                         0.80f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.50f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.60f) \
   X(float,   fogDensityReferenceTransmittanceUnderwaterDay,   0.25f) \
@@ -938,15 +920,15 @@ namespace dxvk { namespace fork_weather {
 
 // ---------------------------------------------------------------------------
 // Single-preset macro. Walks WEATHER_PRESET_VALUES_<N> via the binder for
-// preset N, emitting all 61 RTX_OPTION declarations with archetype-tuned
+// preset N, emitting all 59 RTX_OPTION declarations with archetype-tuned
 // defaults. Must be invoked inside a class body (RTX_OPTION declares inline
 // static members).
 // ---------------------------------------------------------------------------
 #define DECLARE_WEATHER_PRESET(N) WEATHER_PRESET_VALUES_##N(WEATHER_PRESET_BIND_##N)
 
 // ---------------------------------------------------------------------------
-// Umbrella macro. Invoke inside RtxOptions struct body to declare all 624
-// RTX_OPTIONs (12 presets x 61 fields).
+// Umbrella macro. Invoke inside RtxOptions struct body to declare all 636
+// RTX_OPTIONs (12 presets x 59 fields).
 // ---------------------------------------------------------------------------
 #define DECLARE_ALL_WEATHER_PRESETS()   \
   DECLARE_WEATHER_PRESET(clear)         \
@@ -963,7 +945,7 @@ namespace dxvk { namespace fork_weather {
   DECLARE_WEATHER_PRESET(smoggy)
 
 // ---------------------------------------------------------------------------
-// WeatherSnapshot (61 fields) + WeatherBlender Î“Ã‡Ã¶ Task 2 additions.
+// WeatherSnapshot (61 fields) + WeatherBlender -- Task 2 additions.
 // Lives in dxvk::fork_weather namespace. Included by rtx_fork_weather.cpp;
 // forward-use in rtx_fork_hooks.h needs only the hook forward declarations
 // (no WeatherBlender include required there).
@@ -973,7 +955,7 @@ namespace dxvk { namespace fork_weather {
 namespace dxvk { namespace fork_weather {
 
   // -------------------------------------------------------------------------
-  // WeatherSnapshot (61 fields) Î“Ã‡Ã¶ a plain-value copy of all 52 renderer weather params.
+  // WeatherSnapshot - a plain-value copy of all 59 renderer weather params.
   // Members are auto-generated from the single-source-of-truth X-macro so
   // that any field addition automatically propagates here.
   // -------------------------------------------------------------------------
@@ -984,14 +966,14 @@ namespace dxvk { namespace fork_weather {
   };
 
   // -------------------------------------------------------------------------
-  // WeatherBlender Î“Ã‡Ã¶ per-frame lerp pipeline.
+  // WeatherBlender -- per-frame lerp pipeline.
   //
   // Reads __weather.target + __weather.blend_seconds from the GameStateStore,
   // lerps from m_previousSnapshot toward the named preset's RTX_OPTION values
   // over m_blendDurationSec seconds, and writes interpolated values into the
   // Derived layer of each underlying RTX_OPTION via setImmediately().
   //
-  // Dormant when __weather.target is absent or unknown Î“Ã‡Ã¶ zero upstream
+  // Dormant when __weather.target is absent or unknown -- zero upstream
   // behavioural change.
   //
   // Caller (Task 3) provides deltaTimeSeconds from the per-frame render loop.
@@ -1017,7 +999,7 @@ namespace dxvk { namespace fork_weather {
     void setPaused(bool paused) { m_paused = paused; }
 
   private:
-    // Preset cache Î“Ã‡Ã¶ empty string means "not yet active".
+    // Preset cache -- empty string means "not yet active".
     std::string m_previousPresetName;
     std::string m_targetPresetName;
 

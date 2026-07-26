@@ -404,6 +404,13 @@ namespace {
     }
     // Applied post-LUT-sample per ray, never feeds a LUT bake — exclude from the key.
     args.skyIndirectRadianceScale    = 0.0f;
+    // Lightning flash (fork — 2026-07-14): per-frame animated, feeds only the
+    // view-path cloud march + the scene light sync — never a LUT bake. Without
+    // this every flash frame would invalidate the sky-LUT cache key.
+    args.lightningStrikePosKm        = vec3(0.0f, 0.0f, 0.0f);
+    args.lightningFlashIntensity     = 0.0f;
+    args.lightningEnvelope           = 0.0f;
+    args.lightningHistoryFade        = 0.0f;
   }
 
   // Quantize one direction-vector component to the granularity step.
@@ -746,15 +753,28 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     // Our retained cloud-look fields (kept alongside Kim's unified cloud motion — remixplus-sync union).
     args.cloudLayer2CoverageSpread = RtxOptions::cloudLayer2CoverageSpread();
     args.cloudAnisotropy = RtxOptions::cloudAnisotropy();
+
+    // Lightning flash state (fork — 2026-07-14). The scheduler
+    // (advanceLightning, once per frame) owns the envelope + strike position;
+    // this fill just publishes them. lightningFlashIntensity arrives
+    // premultiplied for the cloud march; lightningEnvelope stays raw for the
+    // scene-light sync's independent calibration.
+    args.lightningStrikePosKm    = m_lightningStrikePosKm;
+    args.lightningEnvelope       = m_lightningEnvelope;
+    args.lightningFlashIntensity = m_lightningEnvelope * std::max(RtxOptions::lightningFlashIntensity(), 0.0f);
+    args.lightningColor          = RtxOptions::lightningColor();
+    args.lightningHistoryFade    = m_lightningHistoryFade;
   }
 
   // Cloud volumetric / appearance enhancements
   {
-    args.cloudShadowTint = RtxOptions::cloudShadowTint();
-    args.cloudShadowTintStrength = RtxOptions::cloudShadowTintStrength();
+    // cloudShadowTint / cloudShadowTintStrength / cloudSunsetWarmth were removed in the
+    // numos3 sync (2026-07-26): upstream retired them on 2026-06-21 as having no shader
+    // consumer, and an audit confirmed the same on our side — they were written into the
+    // CB every frame and read by nothing. Their rows now carry the cloud detail-shading
+    // scalars and lightningHistoryFade.
     args.cloudThickness = RtxOptions::cloudThickness();
     args.cloudLayer2TypeSpread = RtxOptions::cloudLayer2TypeSpread();
-    args.cloudSunsetWarmth = RtxOptions::cloudSunsetWarmth();
     args.cloudViewSamples = RtxOptions::cloudViewSamples();
     args.cloudCurvature = RtxOptions::cloudCurvature();
     args.cloudTypeMean = RtxOptions::cloudTypeMean();
@@ -765,7 +785,9 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.cloudCoverageNoiseScale = RtxOptions::cloudCoverageNoiseScale();
     args.cloudAnvilBias = RtxOptions::cloudAnvilBias();
     args.cloudMsScale = RtxOptions::cloudMsScale();
-    args.cloudMultiScatterStrength = RtxOptions::cloudMultiScatterStrength();
+    // Dramatic-shading pass (fork — 2026-07-14). Lives in the former
+    // pad_cloudMultiScatterStrength slot; CB layout unchanged.
+    args.cloudAmbientShadowStrength = RtxOptions::cloudAmbientShadowStrength();
     args.cloudMultiScatterOctaves = RtxOptions::cloudMultiScatterOctaves();
     args.cloudLayer2NoiseSeed = RtxOptions::cloudLayer2NoiseSeed();
     args.cloudNoiseTileKm = RtxOptions::cloudNoiseTileKm();
@@ -798,7 +820,9 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     // Bottom darkening + additive edge detail (fork — 2026-06-10). Live in the
     // former pad_cloudVoxel0..2 slots so the CB layout is unchanged.
     args.cloudBottomDarkening       = RtxOptions::cloudBottomDarkening();
-    args.cloudBottomDarkeningHeight = RtxOptions::cloudBottomDarkeningHeight();
+    // cloudBottomDarkeningHeight retired in the numos3 sync (2026-07-26) — see
+    // pad_cloudBottomDarkeningHeight in atmosphere_args.h. No write: the leading
+    // `args = {}` zeroes the pad deterministically for the sky-LUT memcmp gate.
     // Sky-dome underside fill (Kim — remixplus-sync union). Grafted alongside our bottom-darkening.
     args.cloudSkyAmbientFill        = RtxOptions::cloudSkyAmbientFill();
     args.cloudDetailStrength        = RtxOptions::cloudDetailStrength();
@@ -818,6 +842,12 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
     args.cloudMsSdfDepth      = RtxOptions::cloudMsSdfDepth();
     args.cloudRenderFrameIdx  = m_cloudRenderFrameIdx;
     args.cloudDetailScale     = RtxOptions::cloudDetailScale();
+    // Detail-shading pass (fork — 2026-07-14). Live in the former
+    // pad_cloudShadowTint / pad_cloudShadowTintStrength row; CB layout unchanged.
+    args.cloudMicroAoStrength       = RtxOptions::cloudMicroAoStrength();
+    args.cloudPowderStrength        = RtxOptions::cloudPowderStrength();
+    args.cloudDetailHeightCharacter = RtxOptions::cloudDetailHeightCharacter();
+    args.cloudDetailBaseShearKm     = RtxOptions::cloudDetailBaseShearKm();
 
     args.cloudSunsetAmbientStrength    = RtxOptions::cloudSunsetAmbientStrength();
     args.cloudSunsetAmbientReachInvKm  = RtxOptions::cloudSunsetAmbientReachInvKm();
@@ -1750,6 +1780,113 @@ void RtxAtmosphere::advanceCloudMotion(float dt) {
 
   // Edge boil — single scalar phase expanded along a fixed direction in the shader.
   m_cloudBoilPhase += RtxOptions::cloudBoilSpeed() * dt;  // km/s integrated
+}
+
+// Lightning strike scheduler (fork — 2026-07-14). Called exactly once per
+// frame from updateAtmosphereConstants (after the camera position push, so
+// strike placement uses this frame's camera). Owns the flicker envelope +
+// strike position that getAtmosphereArgs publishes.
+//
+// Model: strikes arrive with exponential inter-arrival times at the
+// lightningStrikesPerMinute mean rate (Poisson-like — irregular gaps, the
+// occasional quick double). Each strike sets the envelope to a randomized
+// peak and schedules 0-2 restrike pulses 40-150 ms apart; between pulses the
+// envelope decays with a ~70 ms time constant. The multi-frame decay is
+// deliberate: real flashes flicker for 100-300 ms, and single-frame pops
+// smear badly under RTXDI / DLSS-RR temporal accumulation.
+std::atomic<bool> RtxAtmosphere::s_lightningStrikeRequested { false };
+
+void RtxAtmosphere::requestLightningStrike() {
+  s_lightningStrikeRequested.store(true);
+}
+
+void RtxAtmosphere::advanceLightning(float dt) {
+  if (!RtxOptions::lightningEnable()) {
+    m_lightningEnvelope = 0.0f;
+    m_lightningHistoryFade = 0.0f;
+    m_lightningPulsesLeft = 0;
+    s_lightningStrikeRequested.store(false);  // don't bank a Test Strike while disabled
+    return;
+  }
+  if (!(dt > 0.0f)) {
+    return;  // pause / first frame: hold the envelope, no decay jump on resume
+  }
+
+  // xorshift32 — cheap, deterministic-per-session; no distribution quality needed.
+  auto rand01 = [this]() -> float {
+    uint32_t x = m_lightningRngState;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    m_lightningRngState = x;
+    return static_cast<float>(x >> 8) * (1.0f / 16777216.0f);
+  };
+
+  // Envelope decay (~70 ms time constant), snapped to 0 below the shader's
+  // skip threshold so the flash term and the scene light go fully inert.
+  constexpr float kDecayTau = 0.07f;
+  m_lightningEnvelope *= std::exp(-dt / kDecayTau);
+  if (m_lightningEnvelope < 1e-3f) {
+    m_lightningEnvelope = 0.0f;
+  }
+
+  // Restrike pulses of the active flash: re-peak the envelope 0-2 times at
+  // randomized 40-150 ms gaps (the classic multi-stroke flicker).
+  if (m_lightningPulsesLeft > 0) {
+    m_lightningTimeToPulse -= dt;
+    if (m_lightningTimeToPulse <= 0.0f) {
+      --m_lightningPulsesLeft;
+      m_lightningEnvelope = std::max(m_lightningEnvelope, 0.45f + 0.55f * rand01());
+      m_lightningTimeToPulse = 0.04f + 0.11f * rand01();
+    }
+  }
+
+  // Scheduling: per-frame Bernoulli draw at probability (rate/60)*dt — a
+  // memoryless (Poisson) process, so inter-strike gaps come out exponential
+  // (bursts and lulls) with NO armed-countdown state. Statelessness matters
+  // here: the weather blender ramps this rate continuously (clear 0 →
+  // thunderstorm 12/min), and an armed countdown drawn at a low mid-blend
+  // rate would sit on a minutes-long gap after the storm fully arrived.
+  // rate 0 = manual-only (Test Strike).
+  const float rate = std::max(RtxOptions::lightningStrikesPerMinute(), 0.0f);
+  bool fire = s_lightningStrikeRequested.exchange(false);
+  if (rate > 0.0f && rand01() < (rate / 60.0f) * dt) {
+    fire = true;
+  }
+
+  if (fire) {
+    // Placement: uniform-in-area annulus around the camera's XZ (km space —
+    // the same world-anchored Y-up frame the cloud march samples in), low in
+    // the cloud slab (bolts glow brightest near the base, and a base-height
+    // flash lights the underside of the deck above it). A strike that lands
+    // where the column model has no cloud simply lights nothing — the march
+    // term scales by local density, so no CPU-side cloud query is needed.
+    constexpr float kMinStrikeKm = 1.0f;
+    const float maxR = std::max(RtxOptions::lightningRangeKm(), kMinStrikeKm + 0.1f);
+    const float r = std::sqrt(kMinStrikeKm * kMinStrikeKm
+                              + (maxR * maxR - kMinStrikeKm * kMinStrikeKm) * rand01());
+    const float ang = rand01() * 2.0f * 3.14159265358979323846f;
+    const float strikeY = RtxOptions::cloudAltitude() + 0.15f * RtxOptions::cloudThickness();
+    m_lightningStrikePosKm = Vector3(m_cameraWorldPosYUpKm.x + std::cos(ang) * r,
+                                     strikeY,
+                                     m_cameraWorldPosYUpKm.z + std::sin(ang) * r);
+    m_lightningEnvelope = 0.7f + 0.3f * rand01();
+    m_lightningPulsesLeft = static_cast<int>(rand01() * 3.0f);  // 0-2 restrikes
+    m_lightningTimeToPulse = 0.04f + 0.11f * rand01();
+  }
+
+  // Ghost-suppression window (fork — 2026-07-14). Tracks the envelope but
+  // decays ~3.5x slower, so it covers the whole flicker PLUS the frames right
+  // after, while any flash residue could still be sitting in the cloud
+  // temporal history. evalSkyRadiance collapses its EMA history weight by
+  // this factor — without it a 100-300 ms flash embeds into the ~1 s history
+  // and a camera move drags a reprojected "old frame" imprint of the lit
+  // deck across the sky. Computed AFTER the fire block so a fresh strike
+  // raises it the same frame its envelope peaks.
+  constexpr float kHistoryFadeTau = 0.25f;
+  m_lightningHistoryFade = std::max(std::min(m_lightningEnvelope, 1.0f),
+                                    m_lightningHistoryFade * std::exp(-dt / kHistoryFadeTau));
+  if (m_lightningHistoryFade < 1e-3f) {
+    m_lightningHistoryFade = 0.0f;
+  }
 }
 
 void RtxAtmosphere::dispatchCloudRender(Rc<DxvkContext> ctx) {

@@ -351,7 +351,15 @@ namespace dxvk {
           RemixGui::DragFloat("Fog Sun Visibility Gain", &fogSunVisibilityGainObject(), 0.05f, 0.0f, 50.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
           // Sun-only counterpart to the gain above (issue #35): scales just the
           // atmosphere sun's fog contribution, leaving scene-light fog untouched.
+          // Unqualified on purpose: our fork declares atmosphereSunVolumetricRadianceScale
+          // in RtxGlobalVolumetrics (rtx_global_volumetrics.h), not RtxOptions, so upstream's
+          // RtxOptions:: qualification does not compile here.
           RemixGui::DragFloat("Atmosphere Sun Fog Scale", &atmosphereSunVolumetricRadianceScaleObject(), 0.05f, 0.0f, 50.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+          // Upstream's "Volumetric Consumer Gain" widget is deliberately not adopted. Our
+          // fork removed volumetricConsumerGain from VolumeArgs and replaced it with the
+          // narrower volumetricParticleSunScale (see volume_args.h and the "Particle Sun
+          // Scale" widget above), so the gain never reaches a shader here and the slider
+          // would be inert. The RTX_OPTION still exists for weather-preset compatibility.
           RemixGui::DragFloat("Depth Offset", &depthOffsetObject(), 0.01f, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 
           RemixGui::Separator();
@@ -725,7 +733,14 @@ namespace dxvk {
     volumeArgs.multiScatteringEstimate = multiScatteringEstimate;
     volumeArgs.enableReferenceMode = enableReferenceMode();
     volumeArgs.volumetricFogAnisotropy = anisotropy();
-    volumeArgs.fogSunVisibilityGain = fogSunVisibilityGain();
+    // Adopt upstream's rasterized-sky gate (remixplus e2e860039): these fork fog knobs are
+    // calibrated against the Numos physical sky and must not perturb SkyboxRasterization.
+    // Our project runs skyMode = 1 (Numos), so this is behaviour-neutral for us and correct
+    // for anyone toggling raster sky for debugging.
+    //
+    // volumeArgs.volumetricConsumerGain is NOT set here: our fork removed that field from
+    // VolumeArgs in favour of volumetricParticleSunScale (assigned below).
+    volumeArgs.fogSunVisibilityGain = RtxOptions::skyMode() == SkyMode::Numos ? fogSunVisibilityGain() : 1.0f;
 
     volumeArgs.enableNoiseFieldDensity = enableHeterogeneousFog();
     volumeArgs.noiseFieldSubStepSize = noiseFieldSubStepSizeMeters() * RtxOptions::getMeterToWorldUnitScale();

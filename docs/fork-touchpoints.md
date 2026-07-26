@@ -645,7 +645,9 @@ initializer list and can't be lifted into a separate TU.
 
 **Category:** index-only
 
-- **Inline tweak** at `RtxGlobalVolumetrics::dispatch` (volumeArgs population block) — 1 LOC (2026-05-26). Populates `volumeArgs.fogSunVisibilityGain` from the matching RTX_OPTION. Adjacent to the existing `volumetricFogAnisotropy` populate; same trivial pattern. Companion to the new field in `volume_args.h` and the new option in `rtx_global_volumetrics.h`.
+- **Inline tweak** at `RtxGlobalVolumetrics::dispatch` (volumeArgs population block) — 2 LOC (2026-05-26; Numos-gated 2026-07-04). Populates `volumeArgs.fogSunVisibilityGain` and `volumeArgs.volumetricConsumerGain` from the matching RTX_OPTIONs, forced to 1.0 unless `RtxOptions::skyMode() == SkyMode::Numos` — both gains are Numos-atmosphere compensations and must not perturb stock volumetrics in rasterized-sky mode. Adjacent to the existing `volumetricFogAnisotropy` populate. Companion to the fields in `volume_args.h` and the options in `rtx_global_volumetrics.h`.
+
+- **Inline tweak** at `RtxGlobalVolumetrics::showImguiSettings` (advanced material section) — 3 widgets (2026-05-26/2026-06-28/2026-07-05). Fork sliders "Fog Sun Visibility Gain", "Atmosphere Sun Fog Scale", and "Volumetric Consumer Gain" alongside the stock advanced material widgets, exposing the fork gain options for tuning.
 
 ---
 
@@ -937,13 +939,13 @@ initializer list and can't be lifted into a separate TU.
 **Category:** migrate
 
 - **Block** at `geometryResolverVertex` (miss handler — sky radiance branch) — ~30 LOC (active) + ~60 LOC (commented-out deprecated decals-on-sky block), planned target `fork_hooks::geoResolverAtmosphereMiss` in `rtx_fork_atmosphere.slangh`.
-  *Adds a conditional atmosphere sky-radiance evaluation (`evalSkyRadiance`) in the geometry-resolver miss path when `cb.skyMode == 1`, selecting between dome light, physical atmosphere, and skybox rasterization. The commented-out block documents the deprecated `enableDecalsOnSky` feature. Cloud temporal smoothing (2026-05-09): the primary view ray's evalSkyRadiance call now passes `enableCloudTemporalSmoothing=true` plus the motion-vector + screen-extent args needed to reproject and EMA-blend the cloud layer against the previous frame's history at slots 206/207. PSR and indirect callers continue to pass false (their pixelCoord refers to a non-primary direction; reusing primary screen-space cloud history would smear).*
+  *Adds a conditional atmosphere sky-radiance evaluation (`evalSkyRadiance`) in the geometry-resolver miss path when `cb.skyMode == 1`, selecting between dome light, physical atmosphere, and skybox rasterization. The commented-out block documents the deprecated `enableDecalsOnSky` feature. Cloud temporal smoothing (2026-05-09): the primary view ray's evalSkyRadiance call now passes `enableCloudTemporalSmoothing=true` plus the motion-vector + screen-extent args needed to reproject and EMA-blend the cloud layer against the previous frame's history at slots 206/207. PSR and indirect callers continue to pass false (their pixelCoord refers to a non-primary direction; reusing primary screen-space cloud history would smear). Sky-matte primary sampling (2026-07-05): in skybox-rasterization mode (`skyMode==0`, no dome light) camera rays now sample the screen-space `SkyMatte` at `cameraPixelCoordinateToScreenUV` instead of the `SkyProbe` cubemap — since the composite-side SkyMatte add was removed (double-sky fix), the resolver write is the visible sky, and the cube parameterization's gradient discontinuity showed as seams along face edges; the matte is the game's own raster for that exact pixel. Rays with `directionAltered` set (crossed a ray portal, so their direction no longer matches the rasterized view) keep the direction-based probe, as do PSR and indirect misses.*
 
 - **Block** at `geometryResolverVertex` (hit path — occluder comment block) — ~42 LOC (fully commented out), planned target `fork_hooks::geoResolverOccluder` in `rtx_fork_atmosphere.slangh`.
   *Preserves the design for the deprecated `isOccluder` surface property that would have shown sky behind occluder surfaces; kept commented for future reference.*
 
 - **Block** at `geometryPSRResolverVertex` (PSR hit — atmosphere sky radiance) — ~9 LOC, planned target `fork_hooks::geoResolverPsrAtmosphere` in `rtx_fork_atmosphere.slangh`.
-  *Adds atmosphere sky-radiance evaluation in the PSR resolver's emissive radiance accumulation path when physical atmosphere mode is active.*
+  *Adds atmosphere sky-radiance evaluation in the PSR resolver's emissive radiance accumulation path when physical atmosphere mode is active. Volumetric attenuation (2026-07-04): the three sky branches (dome light / Numos atmosphere / SkyProbe) were unified into a common `skyRadiance` that is multiplied by `calcVolumetricAttenuation` before accumulation, matching the primary-miss path — fixes reflected sky on water being brighter than the directly-visible sky under fog.*
 
 - **Block** at `geometryPSRResolverVertex` (PSR hit — occluder comment block) — ~45 LOC (fully commented out), planned target `fork_hooks::geoResolverPsrOccluder` in `rtx_fork_atmosphere.slangh`.
   *Same occluder design-preservation comment block for the PSR path.*
@@ -1113,6 +1115,26 @@ initializer list and can't be lifted into a separate TU.
 
 - **Inline tweak** at `(file scope)` (atmosphere FAST-noise texture declaration) (~line 138) — 2-line addition (2026-05-09).
   *Declares `AtmosphereFastNoise` as a `Texture2DArray<float2>` resource bound at `BINDING_ATMOSPHERE_FAST_NOISE` (slot 205). Used by the `fastJitter()` helper in `atmosphere_common.slangh` for cloud ray-march sample-distribution jitter.*
+
+---
+
+## src/dxvk/shaders/rtx/pass/composite/composite.comp.slang
+
+**Category:** migrate
+
+- **Inline tweak** at `applySkyContribution` (sky-miss composition) — 2026-07-05.
+  *Removes the SkyMatte `SkyLight.SampleLevel` else-branch on primary miss. Since sync `1448e4e77`, `geometry_resolver.slangh` already writes rasterized sky (`skyMode==0`; SkyMatte for camera rays / SkyProbe for portal-crossed rays since 2026-07-05) or Numos `evalSkyRadiance` (`skyMode==1`) into `SharedRadiance` on primary miss; composite was double-counting the same sky via SkyMatte. Commit `49229eda4` fixed the double sky by removing the geometry_resolver branch, which broke DLSS-RR particle ordering — this composite-side skip restores official `83150626ef` particle behavior while keeping single sky. Dome-light path unchanged.*
+
+- **Block** at `compositePixel` (cloud-shadow application) — REMOVED 2026-06-19, comment-only.
+  *The entire screen-space cloud-shadow application in composite is gone. The **indirect** multiply was removed 2026-06-18 (issue #37, double-count + geometry-blind). The **direct** multiply (`pow(PrimaryCloudShadowFactor, cloudShadowFactorStrength)` onto post-denoise primary direct radiance) was removed 2026-06-19 when the cloud shadow was re-architected onto the SUN's radiance pre-denoise inside `sampleAtmosphereSunLight` — it now darkens only the sun (correct indoors for all surface types, no per-pixel gate). The `PrimaryCloudShadowFactor` texture binding is also removed; only a removal comment remains in the shader.*
+
+---
+
+## src/dxvk/shaders/rtx/pass/composite/composite_args.h
+
+**Category:** index-only
+
+- **Inline tweak** — cloud-shadow CB fields, now both reserved pads. *Two former cloud-shadow CB slots are now reserved `float pad1` / `float pad2` (CB layout ABI-unchanged). `pad1` held `cloudShadowFactorStrength` until 2026-06-19, when the cloud shadow moved onto the sun term in the NEE and the composite application was deleted (the knob now lives in `atmosphere_args.h::cloudShadowFactorStrength`, reusing the former `pad_artistic0` slot there). `pad2` held `cloudShadowIndirectStrength` until 2026-06-18 (issue #37 indirect multiply removal). Rename-to-pad rather than delete keeps the slots ABI-stable.*
 
 ---
 
@@ -2401,5 +2423,89 @@ Adds the `rtx.atmosphere.skyIndirectRadianceScale` knob (default **1.0** = physi
 - **`src/dxvk/rtx_render/rtx_fork_atmosphere.cpp`** — fork-owned change.
   *Adds the "Sky Indirect Scale" ImGui slider (0–20) + tooltip in the atmosphere UI.*
 - **`RtxOptions.md`** — REGEN PENDING (adds `rtx.atmosphere.skyIndirectRadianceScale`).
+
+---
+
+## Workstream — Cloud detail-shading pass (fork — 2026-07-14)
+
+Attacks the "blobby clouds" read at its root: the edge-detail field previously only wobbled the coverage threshold (silhouette), while every lighting input (D_sun grid, dim profile, SDF proxy) is km-scale smooth — so threshold-grown billows were invisible inside the cloud body. The same detail signal now also SHADES: billow micro-AO (grown knuckles brighten, carved crevices darken, gated by SDF surface proximity so cores stay clean), a Schneider powder term (thin sun-facing wisps darken; faded toward the sun so silver linings survive), a wispy-base/billowy-top character flip over the bottom quarter of each column, and a height-fading horizontal shear on the detail tap. View path only; the cheap shadow sampler and the validated self-shadow bakes are untouched; every knob at 0 is bit-identical legacy.
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_common.slangh`** — fork-owned change.
+  *`sampleCloudDensityTextured` grows an `out float detailSigned` (zero-mean character-shaped detail signal; convenience overload forwards a dummy) and step 4b gains the character flip + base shear; the tap now also runs when only micro-AO wants it. `evalNubisCubedSample` gains the `detailSigned` param plus the micro-AO (ambient + MS body lobe only, clamp [0.15, 1.25]) and powder blocks.*
+- **`src/dxvk/shaders/rtx/pass/atmosphere/cloud_march_common.slangh`** — fork-owned change.
+  *Both march loops (layer 1 + echo deck) thread `detailSigned` from the density sampler into the lighting evaluator.*
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_args.h`** — fork-owned change.
+  *Reclaims the `pad_cloudShadowTint` (vec3) + `pad_cloudShadowTintStrength` row as `cloudMicroAoStrength` / `cloudPowderStrength` / `cloudDetailHeightCharacter` / `cloudDetailBaseShearKm`; CB layout unchanged.*
+- **`src/dxvk/rtx_render/rtx_options.h`** — fork-owned additions.
+  *4 RTX_OPTIONs in the `rtx.atmosphere` cluster after `cloudDetailScale`: `cloudMicroAoStrength` (0.6), `cloudPowderStrength` (0.5), `cloudDetailHeightCharacter` (0.7), `cloudDetailBaseShearKm` (0.2).*
+- **`src/dxvk/rtx_render/rtx_atmosphere.cpp`** — fork-owned change.
+  *`getAtmosphereArgs` populates the four fields.*
+- **`src/dxvk/rtx_render/rtx_fork_atmosphere.cpp`** — fork-owned change.
+  *4 sliders (Detail Shading / Powder Darkening / Base Wispiness / Base Wisp Shear) in the Detail & Edges tree.*
+- **`RtxOptions.md`** — REGEN PENDING (4 new options).
+
+---
+
+## Workstream — Cloud dramatic shading (fork — 2026-07-14)
+
+Adds the contrast axis the Nubis ambient lacked (reference: CoD4 iw3xo daynight cumulus). The sky-ambient fill (`topAmbient`) was the one light term with no response to `D_sun`, so it reflooded sun-shadowed bulk with bright daytime sky light and put a high flat floor under the shading — clouds read soft/flat however the direct lobes were tuned. `evalNubisCubedSample` now attenuates the top-down ambient by `exp(-0.6 * D_sun)` (internal diffusion-flavored sigma, well below the beam sigma), lerped in by the O(1) `cloudAmbientShadowStrength` knob: sunlit faces / silver linings (`D_sun ~ 0`) keep full ambient, shaded cores plunge dark. The sky-dome underside fill (`cloudSkyAmbientFill`) is deliberately exempt — it models open-sky light arriving from below/around (not through) the cloud, and stays the tunable underside floor. Echo deck inherits via its analytic `dSunProxy`; secondary-ray LUT re-bakes on slider change (field not zeroed in the cache-key normalizers). 0 = bit-identical legacy. Also fixes the INVERTED `cloudMsScale` doc/tooltip (higher = darker shadowed bulk, not brighter).
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_common.slangh`** — fork-owned change.
+  *`evalNubisCubedSample`: ambientShadow block ahead of the ambient composite; multiplies `topAmbient` only.*
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_args.h`** — fork-owned change.
+  *Reclaims `pad_cloudMultiScatterStrength` as `cloudAmbientShadowStrength`; CB layout unchanged.*
+- **`src/dxvk/rtx_render/rtx_options.h`** — fork-owned addition.
+  *`cloudAmbientShadowStrength` (default 0.6) after `cloudSkyAmbientFill`; `cloudMsScale` doc direction fixed.*
+- **`src/dxvk/rtx_render/rtx_atmosphere.cpp`** — fork-owned change.
+  *`getAtmosphereArgs` populates the field (next to `cloudMsScale`).*
+- **`src/dxvk/rtx_render/rtx_fork_atmosphere.cpp`** — fork-owned change.
+  *"Ambient Shadowing" slider in the Lighting tree (between Bottom Darkening and Sky Fill); Multi-Scatter tooltip direction fixed.*
+- **`RtxOptions.md`** — REGEN PENDING (1 new option + `cloudMsScale` doc fix).
+
+---
+
+## Workstream — Lightning (fork — 2026-07-14)
+
+In-cloud lightning flashes plus a synchronized transient scene light, driven by a CPU strike scheduler. Strikes fire via a per-frame Bernoulli draw at `lightningStrikesPerMinute` (memoryless Poisson — adapts instantly to the weather blender's continuous rate ramp), place themselves in a 1 km–`lightningRangeKm` annulus around the camera at cloud-base height, and run a ~70 ms-decay envelope with 0–2 restrike pulses. The in-cloud emissive scales with local density via the Beer-Lambert accumulation, so a strike where the column model placed no cloud lights nothing. The flash is compile-gated (`CLOUD_MARCH_LIGHTNING`) to the screen cloud pass only — the persistent secondary-ray cloud LUT must never bake a transient flash. `lightningEnable` (default TRUE) is a master mute; the rate (default 0) is the real switch, raised by storm weather presets (thunderstorm 12/min, rainstorm 4/min) via the new 53rd preset field `lightningStrikesPerMinute`.
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_args.h`** — fork-owned addition.
+  *Two new vec4 rows at the struct end: (`lightningStrikePosKm`, `lightningFlashIntensity`) and (`lightningColor`, `lightningEnvelope` — the raw envelope, so the scene light calibrates independently).*
+- **`src/dxvk/shaders/rtx/pass/atmosphere/cloud_march_common.slangh`** — fork-owned addition.
+  *`CLOUD_MARCH_LIGHTNING` gate (default 0) + `evalLightningFlash` (inverse-square, 0.5 km soft core, 0.35/km extinction reach) added to both march loops' in-scatter source.*
+- **`src/dxvk/shaders/rtx/pass/atmosphere/cloud_render.comp.slang`** — fork-owned addition.
+  *Defines `CLOUD_MARCH_LIGHTNING 1` before including the march header (sole flash consumer).*
+- **`src/dxvk/rtx_render/rtx_atmosphere.h` / `rtx_atmosphere.cpp`** — fork-owned additions.
+  *`advanceLightning(dt)` scheduler (xorshift32, envelope decay, restrikes, annulus placement) + `requestLightningStrike()` static latch for the Test Strike button; `getAtmosphereArgs` publishes the lightning CB fields; `normalizeForSkyLutCache` zeroes them (per-frame animated, never feeds a LUT bake).*
+- **`src/dxvk/rtx_render/rtx_fork_atmosphere.cpp`** — fork-owned additions.
+  *`advanceLightning` tick after the camera-position push; transient `RtSphereLight` (150 m emitter, persistent handle, zero-radiance between strikes, NOT cloudShadowed) in `fhSyncAtmosphereDistantLights`; "Lightning" ImGui tree (enable + Test Strike + rate/intensities/range/color).*
+- **`src/dxvk/rtx_render/rtx_options.h`** — fork-owned additions.
+  *6 RTX_OPTIONs: `lightningEnable` (true), `lightningStrikesPerMinute` (0), `lightningFlashIntensity` (50), `lightningSceneLightIntensity` (2000), `lightningRangeKm` (10), `lightningColor` (blue-white).*
+- **`src/dxvk/rtx_render/rtx_fork_weather.h` / `rtx_fork_weather.cpp`** — fork-owned additions.
+  *`lightningStrikesPerMinute` as weather-preset field 53 (WK_Scalar, Clouds → Lightning): FIELD_LIST row + all 12 preset value macros + the four hand-listed sites (tooltip map, `snapshotRenderer`, `WVARIES`, gated `writeBlendedToDerivedLayer`).*
+- **`RtxOptions.md`** — REGEN PENDING (6 lightning options + 12 preset fields).
+
+---
+
+## Workstream — Weather preset retune (fork — 2026-07-14)
+
+Look-check driven ("thunderstorm looks like a normal day — the sky is blue, there's a lot of light"). Root cause: every preset inherited the clear-day Rayleigh spectrum and only dimmed the sun. The moody presets now retune three axes — sky COLOR (`rayleighScattering` flattened toward grey; sandstorm inverts the spectrum for an orange-brown sky), MURK (`aerosolDensity` up), and LIGHT (`sunIlluminance` cut hard, `skyIndirectRadianceScale` reduced). `cloudShadowStrength` is 1.0 in ALL presets (per request). Thunderstorm/rainstorm also tighten `cloudAerialFadePerKm` so horizon blue can't bleed through the deck. Clear is deliberately untouched. Because `rayleighScattering` and `skyIndirectRadianceScale` now vary across presets, their `weatherVaries` gates fire and both get written during a blend (comment updated at the write site).
+
+- **`src/dxvk/rtx_render/rtx_fork_weather.h`** — fork-owned change.
+  *Per-preset values only (no structural change): shadow 1.0 ×12; graded sky/murk/light retunes for overcast, drizzle, rainstorm, thunderstorm, snow, blizzard, foggy; sandstorm orange sky + warm night sky; smoggy brown-grey; hazy milky; partlyCloudy coverage 0.35 / type 0.65.*
+- **`src/dxvk/rtx_render/rtx_fork_weather.cpp`** — fork-owned change.
+  *Stale "neutral in every preset" gate comment updated in `writeBlendedToDerivedLayer`.*
+
+---
+
+## Workstream — Lightning ghost suppression (fork — 2026-07-14)
+
+A lightning flash embedded into the cloud temporal smoother's ~1 s EMA (fixed 0.92 history weight in `evalSkyRadiance`) outlived itself 3–10x; on camera move the reprojected history dragged a sharp-edged "old frame" imprint of the flash-lit deck across the sky. The strike scheduler now tracks a ghost-suppression signal — 1 while a flash is live, decaying over ~0.25 s after — and the temporal blend collapses its history weight by `x(1 - 0.8 * fade)` (0.92 → ~0.18 at full fade, ~2-frame convergence), so the flash never embeds. The jitter the EMA normally hides is masked by the flash itself; inert at fade 0. Validated in-game.
+
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_args.h`** — fork-owned change.
+  *Reclaims the `pad_cloudSunsetWarmth` slot as `lightningHistoryFade`; CB layout unchanged.*
+- **`src/dxvk/rtx_render/rtx_atmosphere.h` / `rtx_atmosphere.cpp`** — fork-owned change.
+  *`m_lightningHistoryFade` tracked at the end of `advanceLightning` (max of envelope and a tau-0.25 s decay); published by `getAtmosphereArgs`; zeroed in `normalizeForSkyLutCache`.*
+- **`src/dxvk/shaders/rtx/pass/atmosphere/atmosphere_sky.slangh`** — fork-owned change.
+  *Temporal-smoothing block scales `kHistoryWeight` by the fade before the history lerp.*
 
 ---
