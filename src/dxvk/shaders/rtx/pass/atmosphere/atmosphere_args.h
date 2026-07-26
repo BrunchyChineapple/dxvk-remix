@@ -46,17 +46,6 @@ struct MoonParams {
   float surfaceNoiseScale; // Multiplier on UV scale fed into surface noise
   float darkSideBrightness;// Fraction of lit radiance applied on dark side
   float roughnessAmount;   // Multiplier on micro-detail amplitude
-
-  // Bloodmoon (Hircine's Great Hunt event, fork — 2026-05-24).
-  // bloodmoonAffinity selects which moon transforms; for Morrowind canon
-  // Secunda is the Bloodmoon (affinity=1.0) and Masser stays normal
-  // (affinity=0.0). The shader blends surfaceColor toward
-  // args.bloodmoonTint by (affinity * args.bloodmoonStrength) when the
-  // master `args.bloodmoonActive` is on.
-  float bloodmoonAffinity; // [0,1] how much THIS moon participates in a Bloodmoon
-  float padBloodmoon0;     // 16-byte alignment
-  float padBloodmoon1;
-  float padBloodmoon2;
 };
 
 // Atmosphere parameters for Hillaire physically-based atmospheric scattering
@@ -531,24 +520,6 @@ struct AtmosphereArgs {
   float constellationGuardianBoost;     // Extra brightness for the 3 Guardian constellations (default 1.2)
   float padConstellation0;              // 16-byte alignment
 
-  // ----- Bloodmoon — Hircine's Great Hunt (fork — 2026-05-24) -----
-  // When Hircine hosts a Great Hunt, Secunda turns deep red and becomes the
-  // Bloodmoon. Masser stays normal. Per-moon `bloodmoonAffinity` (above in
-  // MoonParams) selects which moon participates; the master fields here
-  // control whether the event is active and what tint/strength to apply.
-  //
-  // bloodmoonActive is wrapper-driven (NoSave) so the wrapper can fire it
-  // from MWSE-Lua hooks (Bloodmoon main quest stages, manual debug
-  // trigger from ImGui, etc.) without polluting user.conf. The shader
-  // blends each moon's surfaceColor toward bloodmoonTint by
-  // (affinity * bloodmoonStrength) every frame when active. Strength
-  // ramps to provide a visible transition rather than a hard cut.
-  float bloodmoonActive;     // 0 = normal, 1 = Bloodmoon event active. NoSave.
-  float bloodmoonStrength;   // [0..1] tint blend amount applied to participating moons. Default 1.0.
-  float bloodmoonGlow;       // Extra brightness multiplier on participating moons during event. Default 1.4.
-  float padBloodmoon0;
-  vec3  bloodmoonTint;       // Surface tint color participating moons blend toward. Default deep crimson.
-  float padBloodmoon1;
   // ----- Cloud-edge / halo tuning (fork — 2026-06-13). Exposed live in ImGui. -----
   float cloudEdgeSoftness;            // VIEW coverage-gate smoothstep band width [~0.02..0.4].
                                       // Sets silhouette softness: wider => broader faint

@@ -277,13 +277,6 @@ namespace {
     float    noiseScale      = 1.0f;
     float    darkSide        = 0.05f;
     float    roughness       = 1.0f;
-    // Bloodmoon participation: only Secunda (moon 0) participates in
-    // Hircine's Great Hunt per Morrowind canon. Masser stays normal. The
-    // affinity field is hardcoded by index here rather than per-moon
-    // RTX_OPTIONs because the lore-truth doesn't vary per user (and we'd
-    // need 4 new RTX_OPTIONs in the DECLARE_MOON_OPTIONS macro to add
-    // them anyway).
-    float    bloodmoonAffinity = (i == 0) ? 1.0f : 0.0f;
 
     switch (i) {
     case 0:
@@ -344,10 +337,6 @@ namespace {
     m.surfaceNoiseScale  = noiseScale;
     m.darkSideBrightness = darkSide;
     m.roughnessAmount    = roughness;
-    m.bloodmoonAffinity  = bloodmoonAffinity;
-    m.padBloodmoon0      = 0.0f;
-    m.padBloodmoon1      = 0.0f;
-    m.padBloodmoon2      = 0.0f;
   }
 
   // Zero the AtmosphereArgs fields that animate every frame but feed only
@@ -398,9 +387,6 @@ namespace {
     // multiscattering_lut.comp.slang, sky_view_lut.comp.slang). Without
     // zeroing these, every quantization-boundary cross of moon
     // elevation/rotation/phase invalidates the cache for no benefit.
-    //
-    // Bloodmoon master state is also miss-path-only (atmosphere_sky.slangh
-    // moon disk shader and halo glow), so normalize it too.
     for (uint32_t i = 0; i < MAX_MOONS; ++i) {
       MoonParams& m = args.moons[i];
       m.direction          = vec3(0.0f, 0.0f, 0.0f);
@@ -415,15 +401,7 @@ namespace {
       m.surfaceNoiseScale  = 0.0f;
       m.darkSideBrightness = 0.0f;
       m.roughnessAmount    = 0.0f;
-      m.bloodmoonAffinity  = 0.0f;
-      m.padBloodmoon0      = 0.0f;
-      m.padBloodmoon1      = 0.0f;
-      m.padBloodmoon2      = 0.0f;
     }
-    args.bloodmoonActive    = 0.0f;
-    args.bloodmoonStrength  = 0.0f;
-    args.bloodmoonGlow      = 0.0f;
-    args.bloodmoonTint      = vec3(0.0f, 0.0f, 0.0f);
     // Applied post-LUT-sample per ray, never feeds a LUT bake — exclude from the key.
     args.skyIndirectRadianceScale    = 0.0f;
   }
@@ -741,18 +719,6 @@ AtmosphereArgs RtxAtmosphere::getAtmosphereArgs() const {
   args.constellationMonthHighlight = RtxOptions::constellationMonthHighlight();
   args.constellationGuardianBoost  = RtxOptions::constellationGuardianBoost();
   args.padConstellation0           = 0.0f;
-
-  // ----- Bloodmoon (fork — 2026-05-24) -----
-  // Wrapper-driven master toggle (NoSave). When the wrapper detects an
-  // active Great Hunt event (Bloodmoon main quest, MWSE-Lua hook, manual
-  // ImGui debug button), it pushes bloodmoonActive = 1 and the shader
-  // tints participating moons toward bloodmoonTint.
-  args.bloodmoonActive    = RtxOptions::bloodmoonActive() ? 1.0f : 0.0f;
-  args.bloodmoonStrength  = RtxOptions::bloodmoonStrength();
-  args.bloodmoonGlow      = RtxOptions::bloodmoonGlow();
-  args.padBloodmoon0      = 0.0f;
-  args.bloodmoonTint      = RtxOptions::bloodmoonTint();
-  args.padBloodmoon1      = 0.0f;
 
   // Cloud parameters
   {

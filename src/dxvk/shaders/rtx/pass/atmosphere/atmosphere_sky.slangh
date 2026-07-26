@@ -566,10 +566,6 @@ void evalNightSky(vec3 viewDir, AtmosphereArgs args,
     float moonSkyBrightness = 0.0f;
     [unroll] for (int mi = 0; mi < MAX_MOONS; ++mi) {
       MoonParams m = args.moons[mi];
-      // Bloodmoon brightens participating moons, which legitimately makes
-      // meteors harder to see — apply the same transform here so the
-      // dimming model stays consistent.
-      applyBloodmoonToMoon(m, args);
       if (m.enabled > 0.5f && m.direction.y > 0.0f) {
         float phaseFull = 1.0f - 2.0f * abs(m.phase - 0.5f);
         // direction.y is already sin(elevation), so it doubles as our zenith weight.
@@ -884,23 +880,6 @@ void computeVolcanicSurfaceDetail(float diskX, float diskY, MoonParams m,
   );
 }
 
-// Apply Bloodmoon tint + glow to a MoonParams copy in-place. Returns true
-// if the moon participates in the active event. Safe to call when
-// args.bloodmoonActive is 0 (returns false, leaves m unchanged).
-//
-// Used by all moon paths (disk render, cloud-moon NEE, ambient airglow,
-// halo glow) so the tint is consistent across direct illumination,
-// silver-lining, and atmosphere coupling. Otherwise the disk would turn
-// red but the cloud body underneath would still light up moonlight-blue.
-bool applyBloodmoonToMoon(inout MoonParams m, AtmosphereArgs args) {
-  float blend = args.bloodmoonActive * args.bloodmoonStrength * m.bloodmoonAffinity;
-  if (blend <= 0.0f) return false;
-  blend = saturate(blend);
-  m.color = mix(m.color, args.bloodmoonTint, blend);
-  m.brightness *= mix(1.0f, args.bloodmoonGlow, m.bloodmoonAffinity);
-  return true;
-}
-
 // Render moon disk for moonIdx in args.moons[]. Returns radiance contribution
 // for this pixel and writes diskCoverage in [0,1] indicating disk opacity at
 // this view direction. Caller composites moons over the night sky using
@@ -953,16 +932,6 @@ vec3 evalMoonDisk(vec3 viewDir, uint moonIdx, AtmosphereArgs args, out float dis
   float surfaceDetail = 1.0f;
   vec3 surfaceColor = m.color;
 
-  // Bloodmoon — Hircine's Great Hunt (fork — 2026-05-24).
-  // Helper mutates m.color and m.brightness in place when the master
-  // toggle is active and this moon participates (affinity > 0). Default
-  // mapping: only Secunda (moon 0) participates. The mutated m is then
-  // consumed by the surface-detail shaders and the sharedFactor lighting
-  // math below — so the disk surface, limb darkening, and atmospheric
-  // transmittance all read the tinted base.
-  if (applyBloodmoonToMoon(m, args)) {
-    surfaceColor = m.color;
-  }
   switch (m.surfaceStyle) {
   case 0u:
     computeRockySurfaceDetail(diskX, diskY, m, surfaceDetail, surfaceColor);
@@ -1128,9 +1097,6 @@ vec3 evalSkyRadiance(
     for (uint gi = 0u; gi < MAX_MOONS; ++gi) {
       MoonParams m = args.moons[gi];
       if (m.enabled < 0.5f) continue;
-      // Bloodmoon: tint and brightness boost apply to the halo glow too,
-      // so participating moons cast a warm crimson aureole around the disk.
-      applyBloodmoonToMoon(m, args);
       vec3 moonDir = normalize(m.direction);
       float cosAngle = dot(viewDirYUp, moonDir);
       float angularDist = acos(clamp(cosAngle, -1.0f, 1.0f));
