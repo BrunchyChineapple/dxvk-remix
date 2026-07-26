@@ -41,6 +41,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+// <memory> for std::make_unique: our fork's RtxContext::commitExternalGeometryToRT
+// takes std::unique_ptr<ExternalDrawState> rather than upstream's by-value state.
+#include <memory>
 #include <vector>
 
 namespace dxvk { namespace fork_precipitation {
@@ -451,8 +454,17 @@ namespace dxvk { namespace fork_precipitation {
     std::vector<RasterGeometry> submeshes;
     submeshes.push_back(std::move(geometry));
 
+    // numos3 sync (2026-07-26): our fork's registerExternalMesh takes a third
+    // argument, replacementHash, added by the retained-distant-world work to split
+    // the authored replacement identity from the owning handle. It is written into
+    // submesh.externalMesh and drives capture plus replacement lookup. The
+    // precipitation emitter is procedural and has no separate authored identity, so
+    // pass the handle value itself -- that reproduces the pre-split behaviour where
+    // externalMesh == handle, which is what upstream's two-argument call assumed.
     ctx.getSceneManager().getAssetReplacer()->registerExternalMesh(
-      reinterpret_cast<remixapi_MeshHandle>(kMeshHandleValue), std::move(submeshes));
+      reinterpret_cast<remixapi_MeshHandle>(kMeshHandleValue),
+      static_cast<XXH64_hash_t>(kMeshHandleValue),
+      std::move(submeshes));
 
     m_meshRegistered = true;
     return true;
@@ -832,28 +844,44 @@ namespace dxvk { namespace fork_precipitation {
     const Params params = resolveParams();
     const RtxParticleSystemDesc& desc = refreshDesc(ctx, params);
 
-    DrawCallState drawCall {};
-    drawCall.cameraType = CameraType::Main;
-    // transformData / materialData are private to DrawCallState; the friended
-    // hook fills them in (same arrangement the Remix API uses for its own
-    // hand-built external draws).
-    fork_hooks::precipitationEmitterDrawCall(drawCall, buildEmitterTransform(ctx, params));
-
     // No categories on the emitter itself: it is hidden, and the particle
     // manager stamps InstanceCategories::Particle onto the geometry it
     // generates. (This field only feeds the external-draw identity hash anyway;
     // the categories that reach the instance come from the draw call.)
     const CategoryFlags categories {};
 
-    ExternalDrawState state {
-      std::move(drawCall),
-      reinterpret_cast<remixapi_MeshHandle>(kMeshHandleValue),
-      CameraType::Main,
-      categories,
-      /* doubleSided */ true,
-      desc,
-      {}
-    };
+    // numos3 sync (2026-07-26): heap-owned and populated in place, rather than
+    // upstream's positional aggregate initializer plus a by-value commit. Three
+    // reasons, all fork divergence from the retained-distant-world work:
+    //
+    //  * our ExternalDrawState carries two extra members -- retainedHandle and
+    //    retainedStaticOwnership -- between `mesh` and `cameraType`, so upstream's
+    //    positional list shifts by two slots and mis-assigns every field after
+    //    `mesh`;
+    //  * our RtxContext::commitExternalGeometryToRT takes
+    //    std::unique_ptr<ExternalDrawState>, so the state must be heap-owned;
+    //  * DrawCallState declares a defaulted COPY assignment, which suppresses the
+    //    implicit move assignment. Assigning a local into the struct would
+    //    therefore silently deep-copy it, so drawCall is filled in place instead.
+    //
+    // This mirrors RemixAPIPrivateAccessor::toRtDrawState, the fork's canonical way
+    // of hand-building an external draw.
+    auto state = std::make_unique<ExternalDrawState>();
+    state->drawCall.cameraType = CameraType::Main;
+    // transformData / materialData are private to DrawCallState; the friended
+    // hook fills them in (same arrangement the Remix API uses for its own
+    // hand-built external draws).
+    fork_hooks::precipitationEmitterDrawCall(state->drawCall, buildEmitterTransform(ctx, params));
+
+    state->mesh                 = reinterpret_cast<remixapi_MeshHandle>(kMeshHandleValue);
+    state->cameraType           = CameraType::Main;
+    state->categories           = categories;
+    state->doubleSided          = true;
+    state->optionalParticleDesc = desc;
+    // retainedHandle and retainedStaticOwnership are deliberately left default. The
+    // precipitation emitter is a transient per-frame external draw, not a retained
+    // distant static, so it keeps the ordinary external-draw identity-hash behaviour
+    // and takes no part in retained-cell ownership.
 
     ctx.commitExternalGeometryToRT(std::move(state));
     m_wasActive = true;
