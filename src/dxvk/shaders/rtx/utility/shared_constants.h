@@ -45,6 +45,21 @@ static const uint8_t surfaceMaterialTypeMask = uint8_t(0x3u);
 #define OPAQUE_SURFACE_MATERIAL_FLAG_IS_RAYTRACED_RENDER_TARGET (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(3))
 #define OPAQUE_SURFACE_MATERIAL_FLAG_HAS_DISPLACEMENT (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(4))
 #define OPAQUE_SURFACE_MATERIAL_FLAG_IS_HAIR_CARD (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(5))
+// numos3 sync (2026-07-26): upstream declares the three flags below at offsets 5/6/7,
+// which collides with IS_HAIR_CARD above (our fork owns offset 5). Shifted to 6/7/8.
+// OFFSET(X) = 2 + X and the opaque flags live in a uint16_t alongside the 2-bit material
+// type, so offsets 0..13 are available and 8 is well inside the budget.
+//
+// Set when the albedo/emissive source texture uses an sRGB VkFormat, so the sampler hardware already
+// linearized it on read. The shader skips its own gammaToLinear() for that channel to avoid double
+// linearization (constants remain gamma-encoded and are always converted). See opaque_surface_material_interaction.slangh.
+#define OPAQUE_SURFACE_MATERIAL_FLAG_ALBEDO_TEXTURE_IS_SRGB (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(6))
+#define OPAQUE_SURFACE_MATERIAL_FLAG_EMISSIVE_TEXTURE_IS_SRGB (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(7))
+// Fork (2026-07-26): marks a particle material whose sprites are known to see open sky (weather
+// precipitation - the spawn-time shelter probe guarantees it). The resolver's opacity lighting
+// approximation adds a sky-ambient term for such particles on top of the froxel radiance sample,
+// supplying the skylight that the froxel grid does not contain (its integrator has no sky term).
+#define OPAQUE_SURFACE_MATERIAL_FLAG_SKY_LIT_PARTICLE (1 << COMMON_MATERIAL_FLAG_TYPE_OFFSET(8))
 
 
 #define OPAQUE_SURFACE_MATERIAL_INTERACTION_FLAG_HAS_HEIGHT_TEXTURE (1 << 0)
