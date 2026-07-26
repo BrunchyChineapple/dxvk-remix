@@ -1,10 +1,10 @@
 #pragma once
 
 // rtx_fork_weather.h — fork-owned weather preset declarations.
-// Defines 708 RTX_OPTIONs (12 presets x 59 fields) under the
+// Defines 696 RTX_OPTIONs (12 presets x 58 fields) under the
 // rtx.weather.preset.<presetName> namespace.
 //
-// Field bucket breakdown: 18 cloud + 5 atmosphere + 4 sky/moon mood + 32 volumetric.
+// Field bucket breakdown: 17 cloud + 5 atmosphere + 4 sky/moon mood + 32 volumetric.
 // Counts here drift on every upstream sync. Derive them, don't trust them: count the
 // X() entries in WEATHER_PRESET_FIELD_LIST below.
 //
@@ -83,7 +83,6 @@ namespace dxvk { namespace fork_weather {
   X(float, cloudAerialFadePerKm,     0.15f, WK_Scalar, "Clouds", "Distance", "Horizon Fade",      0.0f, 1.0f, 0.005f, "%.3f") \
   X(float, cloudAerialHazePerKm,     0.05f, WK_Scalar, "Clouds", "Distance", "Distance Haze",     0.0f, 1.0f, 0.005f, "%.3f") \
   /* Cloud look (fork — retained through remixplus table-driven rework) */ \
-  X(float,   cloudAnvilBias,                     0.3f,                            WK_Scalar,     "Clouds",         "Coverage & Shape", "Anvil Spread",               0.0f,    1.0f,    0.01f,   "%.2f") \
   X(float,   cloudAnisotropy,                    0.6f,                            WK_Scalar,     "Clouds",         "Lighting",         "Anisotropy",                -1.0f,    1.0f,    0.01f,   "%.2f") \
   X(float, lightningStrikesPerMinute, 0.0f, WK_Scalar, "Clouds", "Lightning", "Strikes Per Minute", 0.0f, 60.0f, 0.1f, "%.1f") \
   /* Atmosphere (5) */ \
@@ -166,7 +165,7 @@ namespace dxvk { namespace fork_weather {
 #define WEATHER_PRESET_BIND_smoggy(type, name, def)        WEATHER_PRESET_RTX_OPTION_FOR(smoggy,        type, name, def);
 
 // ---------------------------------------------------------------------------
-// Per-preset value X-macros - one per archetype, 59 fields each, in the same
+// Per-preset value X-macros - one per archetype, 58 fields each, in the same
 // order as WEATHER_PRESET_FIELD_LIST. Fields not explicitly tuned use the
 // neutral default from WEATHER_PRESET_FIELD_LIST, which is also the canonical
 // field order -- see that macro above rather than duplicating the list here.
@@ -227,7 +226,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.0f) \
-  X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.80f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.945f) \
@@ -289,7 +287,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.05f) \
-  X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.72f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.94f) \
@@ -351,7 +348,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.05f) \
-  X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.80f) \
@@ -413,7 +409,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.30f) \
-  X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.65f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.85f) \
@@ -475,7 +470,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.0f) \
-  X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.40f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.89f) \
@@ -537,7 +531,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.10f) \
-  X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.70f) \
@@ -599,7 +592,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.10f) \
-  X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.95f) \
@@ -663,7 +655,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.0f) \
-  X(float,   cloudAnvilBias,                            0.7f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.50f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.89f) \
@@ -725,7 +716,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.0f) \
-  X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.55f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.70f) \
@@ -787,7 +777,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.0f) \
-  X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.40f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.45f) \
@@ -849,7 +838,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.60f) \
-  X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.45f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.50f) \
@@ -911,7 +899,6 @@ namespace dxvk { namespace fork_weather {
   X(float, depthOffset,              0.5f) \
   X(float, noiseFieldOctaves,        2.0f) \
   X(float,   volumetricAnisotropy,                      0.20f) \
-  X(float,   cloudAnvilBias,                            0.3f) \
   X(float,   cloudAnisotropy,                           0.6f) \
   X(float,   fogDensityReferenceTransmittanceDay,       0.50f) \
   X(float,   fogDensityReferenceTransmittanceNight,     0.60f) \
@@ -920,7 +907,7 @@ namespace dxvk { namespace fork_weather {
 
 // ---------------------------------------------------------------------------
 // Single-preset macro. Walks WEATHER_PRESET_VALUES_<N> via the binder for
-// preset N, emitting all 59 RTX_OPTION declarations with archetype-tuned
+// preset N, emitting all 58 RTX_OPTION declarations with archetype-tuned
 // defaults. Must be invoked inside a class body (RTX_OPTION declares inline
 // static members).
 // ---------------------------------------------------------------------------
@@ -928,7 +915,7 @@ namespace dxvk { namespace fork_weather {
 
 // ---------------------------------------------------------------------------
 // Umbrella macro. Invoke inside RtxOptions struct body to declare all 636
-// RTX_OPTIONs (12 presets x 59 fields).
+// RTX_OPTIONs (12 presets x 58 fields).
 // ---------------------------------------------------------------------------
 #define DECLARE_ALL_WEATHER_PRESETS()   \
   DECLARE_WEATHER_PRESET(clear)         \
@@ -955,7 +942,7 @@ namespace dxvk { namespace fork_weather {
 namespace dxvk { namespace fork_weather {
 
   // -------------------------------------------------------------------------
-  // WeatherSnapshot - a plain-value copy of all 59 renderer weather params.
+  // WeatherSnapshot - a plain-value copy of all 58 renderer weather params.
   // Members are auto-generated from the single-source-of-truth X-macro so
   // that any field addition automatically propagates here.
   // -------------------------------------------------------------------------

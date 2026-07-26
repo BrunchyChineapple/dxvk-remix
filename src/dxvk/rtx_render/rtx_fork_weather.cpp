@@ -758,7 +758,6 @@ namespace dxvk { namespace fork_weather { namespace {
     s.cloudShadowStrength        = RtxOptions::cloudShadowStrength();
     s.cloudThickness             = RtxOptions::cloudThickness();
     // Cloud look (fork — retained through remixplus table-driven rework)
-    s.cloudAnvilBias             = RtxOptions::cloudAnvilBias();
     s.cloudAnisotropy            = RtxOptions::cloudAnisotropy();
     // cloudShadowTint / cloudShadowTintStrength / cloudSunsetWarmth removed in the
     // numos3 sync (2026-07-26). Upstream retired them on 2026-06-21 as having no
@@ -902,7 +901,6 @@ namespace dxvk { namespace fork_weather { namespace {
     RtxOptions::cloudShadowStrengthObject().setImmediately(interp.cloudShadowStrength);
     RtxOptions::cloudThicknessObject().setImmediately(interp.cloudThickness);
     // Cloud look (fork — retained through remixplus rework; written ungated as HEAD did)
-    RtxOptions::cloudAnvilBiasObject().setImmediately(interp.cloudAnvilBias);
     RtxOptions::cloudAnisotropyObject().setImmediately(interp.cloudAnisotropy);
     // cloudShadowTint / cloudShadowTintStrength / cloudSunsetWarmth writes removed in
     // the numos3 sync (2026-07-26) — the fields are gone from WeatherSnapshot and from

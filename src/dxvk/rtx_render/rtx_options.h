@@ -1707,6 +1707,9 @@ namespace dxvk {
                     "Cloud drift speed in km/s. Game-driven every frame from wrapper wind state.");
     RTX_OPTION_FLAG("rtx.atmosphere", float, cloudWindDirection, 45.0f, RtxOptionFlags::NoSave,
                     "Cloud wind direction in degrees (0 = +X, 90 = +Z). Game-driven every frame.");
+    // cloudEvolutionSpeed / cloudBoilSpeed / cloudEvolutionVerticalBias are declared
+    // further down in the grafted remixplus union block, so upstream's copies of them
+    // are not repeated here (duplicate RTX_OPTION = C2086).
     RTX_OPTION("rtx.atmosphere", float, cloudShadowStrength, 1.0f,
                "How strongly overcast clouds dim ground and atmosphere lighting [0..1]. "
                "1.0 = full physical voxel-grid shadow contribution from cloudVoxelShadowsEnable; "
@@ -1779,9 +1782,9 @@ namespace dxvk {
                "2026-07-14; the old text had the direction inverted.)");
 
     // Cloud spatial variation (Nubis-style — spec 2026-05-06)
-    RTX_OPTION("rtx.atmosphere", float, cloudTypeMean, 0.5f,
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeMean, 1.0f,
                "Mean cloud type across the sky [0,1]: 0=stratus, 0.5=stratocumulus, 1=cumulus.");
-    RTX_OPTION("rtx.atmosphere", float, cloudTypeSpread, 0.2f,
+    RTX_OPTION("rtx.atmosphere", float, cloudTypeSpread, 0.54f,
                "Spatial variation amplitude for cloud type [0,1]. 0=uniform, 1=full range across the sky.");
     RTX_OPTION("rtx.atmosphere", float, cloudTypeNoiseScale, 0.0034f,
                "Region size frequency for type noise. Numerically smaller = larger spatial features. "
@@ -1795,10 +1798,8 @@ namespace dxvk {
                     "Mean cloud coverage across the sky [0,1]: 0=clear, 1=overcast. Game-driven every frame.");
     RTX_OPTION("rtx.atmosphere", float, cloudCoverageSpread, 1.0f,
                "Spatial variation amplitude for coverage [0,1]. 0=uniform, 1=full range.");
-    RTX_OPTION("rtx.atmosphere", float, cloudCoverageNoiseScale, 0.0033f,
+    RTX_OPTION("rtx.atmosphere", float, cloudCoverageNoiseScale, 0.00257732f,
                "Region size frequency for coverage noise. Independent from type noise scale.");
-    RTX_OPTION("rtx.atmosphere", float, cloudAnvilBias, 0.3f,
-               "Cumulus top inflation strength [0,1]. 0=flat tops, 1=fully spread mushroom-cap anvils.");
     RTX_OPTION("rtx.atmosphere", float, cloudNoiseTileKm, 12.0f,
                "World-space tile period (km) for the prebaked 3D cloud noise texture. "
                "Smaller = more visible repetition; larger = lower-frequency cloud detail. "
@@ -1815,11 +1816,6 @@ namespace dxvk {
                "show, with statistics-preserving blending (the cloud look "
                "is unchanged). Disable for the legacy periodic field "
                "(visible repetition at the tile period).");
-    RTX_OPTION("rtx.atmosphere", float, cloudNoiseBaseFreqScale, 1.0f,
-               "Multiplier on the cloud noise bake's base + detail FBM "
-               "frequencies [0.25..4]. 1.0 = legacy bake. Raise for "
-               "smaller/busier cloud features, lower for larger ones. "
-               "Re-bakes the noise volume live on change.");
 
     // Per-column cloud model (fork — 2026-06-11, column-shaping rework).
     // Root-cause fix for the "stacked separated layers" read: previously
@@ -1832,12 +1828,10 @@ namespace dxvk {
     // baked 2D placement map (cluster field, top jitter, base lift) and
     // re-keys all vertical shaping + the Nubis lighting proxies on each
     // cloud's OWN normalized height.
-    RTX_OPTION("rtx.atmosphere", bool, cloudColumnShapingEnable, true,
-               "Per-cloud column model: every cloud gets its own base, "
-               "tower height and complete vertical shape from a placement "
-               "map, instead of all clouds being cut by the same two global "
-               "altitude planes. Fixes the stacked-flat-layers read. "
-               "Disable for the legacy global-slab shaping.");
+    // cloudColumnShapingEnable retired in the numos3 sync (2026-07-26). The Nubis3
+    // conversion supersedes the per-column shaping model: vertical shape now comes
+    // from the NVDF body SDF and its dimensional profile, so the gate has no shader
+    // consumer. The placement-map options below still drive the NVDF bake.
     RTX_OPTION("rtx.atmosphere", float, cloudCellSizeKm, 2.0f,
                "Average cloud-cluster footprint in km [0.5..6] for the "
                "placement map bake. Smaller = many small clouds; larger = "
@@ -1861,6 +1855,108 @@ namespace dxvk {
                "Coverage-remap feather band at cloud-cluster edges "
                "[0.05..1]. Narrow = crisp solid-cored clouds; wide = soft "
                "wispy transitions. Applies live.");
+    // Nubis3 conversion (fork — Phase A). The cloud body (placement map +
+    // column model) is voxelized and distance-transformed into a real SDF
+    // (the NVDF) — the foundation for Nubis3's profile-from-SDF density
+    // model and sphere-traced marching in later phases.
+    RTX_OPTION("rtx.atmosphere", float, nvdfNominalCoverage, 0.65f,
+               "Coverage the cloud-body SDF (NVDF) bakes at [0 or 0.25..1]. "
+               "0 = auto: track the live weather coverage quantized to 0.25 "
+               "steps (recommended — keeps the sample-time coverage "
+               "level-set offset small; re-bakes amortized only when the "
+               "drift crosses a step). Nonzero pins the bake nominal for "
+               "debugging or look-tuning.");
+    RTX_OPTION("rtx.atmosphere", float, nvdfProfileDepthKm, 0.6f,
+               "Nubis3: depth into the cloud body (km) over which the "
+               "dimensional profile ramps 0 -> 1 [0.1..3]. Small = dense "
+               "hard-shelled clouds; large = soft translucent-edged bodies. "
+               "Applies live.");
+    RTX_OPTION("rtx.atmosphere", float, nvdfCoverageOffsetKm, 0.2f,
+               "Nubis3: km of iso-surface (level-set) shift per unit of "
+               "coverage delta from the baked nominal [0..4]. Higher = "
+               "coverage changes grow/shrink clouds more aggressively "
+               "(bodies merge sooner at high coverage). Applies live with "
+               "zero rebakes.");
+    RTX_OPTION("rtx.atmosphere", float, nubis3ErosionStrength, 0.42f,
+               "Nubis3: scale on the wispy/billowy noise composite that "
+               "erodes the dimensional profile [0..2]. 0 = smooth un-eroded "
+               "bodies (pure SDF blobs); 1 = paper-faithful erosion; higher "
+               "= ragged heavily-carved clouds. Applies live.");
+    RTX_OPTION("rtx.atmosphere", float, nubis3SharpenStrength, 1.0f,
+               "Nubis3: blend toward the paper's pow() density sharpen "
+               "[0..1], which lifts low densities to bring out definition "
+               "in wisps and edges. 0 = off (raw erosion output). Applies "
+               "live.");
+    RTX_OPTION("rtx.atmosphere", float, nvdfBodyErosionStrength, 1.5f,
+               "Nubis3: strength of the 3D noise carve applied to the cloud "
+               "BODIES in the NVDF occupancy bake [0..1.5]. The carve shifts "
+               "the placement waterline per voxel, baking concavity "
+               "(overhangs, notches, lumps) into the otherwise-convex column "
+               "bodies — the anti-blobby body lever. 0 = smooth convex "
+               "bodies. Changing it re-bakes the SDF (amortized, ~6 frames).");
+    RTX_OPTION("rtx.atmosphere", float, nubis3HFDetailStrength, 0.62f,
+               "Nubis3: near-camera high-frequency detail mix (Nubis Cubed "
+               "p.125 'inHFDetails') [0..3]. Blends twice-folded "
+               "high-frequency noise into the erosion composite close to the "
+               "camera for fly-through crispness. 1 = the paper's 10% max "
+               "mix at the nearest range; 0 = off. Applies live.");
+    RTX_OPTION("rtx.atmosphere", float, nubis3ShapeVarietyKm, 1.11f,
+               "Nubis3: mid-frequency SHAPE displacement amplitude in km "
+               "[0..1.5] (the GT7 mid-band role). Pushes/pulls the body "
+               "iso-surface by up to half this at ~2.4 km wavelengths — "
+               "lobes, notches and full splits that turn round singular "
+               "blobs into varied cloud clusters. Whole-body reshaping, "
+               "not edge detail; coverage-neutral on average. 0 = off. "
+               "Applies live, no rebake.");
+    RTX_OPTION("rtx.atmosphere", float, nubis3SunNearFieldKm, 3.0f,
+               "Nubis3: near-field live sun-shadow range in km [0..3] "
+               "(Nubis Cubed p.129 'first light samples live'). Within this "
+               "range of each lit march sample the sun occlusion is measured "
+               "with live density taps instead of the pre-baked D_sun grid, "
+               "whose ~0.6 km bake taps blur away lobe-scale self-shadowing; "
+               "the grid still supplies the far field beyond the range. "
+               "Gives mid-band lobes their own sunlit faces and shadowed "
+               "crevices — the directional cue that makes clouds read as 3D "
+               "volumes instead of reshaped blobs. 0 = grid only (cheaper, "
+               "softer). Applies live.");
+    RTX_OPTION("rtx.atmosphere", float, nubis3FineDetailStrength, 0.0f,
+               "Nubis3: fine-frequency detail band [0..2] (GT7-style third "
+               "noise band). A third tap of the detail volume at 2.11x "
+               "(content ~220..41 m) feeds the micro-AO relief shading and "
+               "the edge wisp cut for clouds within ~9 km — fine cauliflower "
+               "granulation on lit faces and scalloped wisp edges, the grain "
+               "the sqrt-adaptive march can resolve but the base texture "
+               "tops out above. 0 = off. Applies live.");
+    RTX_OPTION("rtx.atmosphere", float, nubis3EdgeErosion, 2.28f,
+               "Nubis3: edge wisp cut [0..3]. Extra erosion shaped by the "
+               "wispy noise channel, concentrated at the silhouette and "
+               "fading by mid-shell — cuts trailing wisp shapes out of cloud "
+               "edges while billowy cores keep rounded cauliflower edges. "
+               "0 = uniform erosion only. Applies live.");
+    RTX_OPTION("rtx.atmosphere", float, nubis3InteriorTexture, 0.0f,
+               "Nubis3: interior density texture strength [0..1]. Modulates "
+               "the density INSIDE the body by the raw detail noise (the "
+               "stand-in for Nubis3's authored per-voxel Density Scale NVDF "
+               "and iw3xo's multiplicative self-gate), so lit cloud faces "
+               "show billow-scale light variation instead of saturating to "
+               "a flat white mass. 0 = flat interiors (old behavior). "
+               "Applies live.");
+    RTX_OPTION("rtx.atmosphere", float, nvdfStepScale, 0.95f,
+               "Nubis3 Phase C: safety factor on the SDF empty-space skip in "
+               "the cloud march [0..0.95]. In empty air the march jumps "
+               "ahead by (min SDF tap) x this factor instead of stepping "
+               "uniformly — a large perf win at the horizon. 0 disables "
+               "(uniform legacy stepping). Lower it if silhouettes show "
+               "onion-shell banding.");
+    RTX_OPTION("rtx.atmosphere", float, nubis3AdaptiveStepKm, 0.025f,
+               "Nubis3: sqrt-adaptive march step FLOOR in km [0..0.2] (Nubis "
+               "Cubed p.172/174 hybrid stepping). When nonzero, the view "
+               "march steps max(SDF x SDF Step Scale, cloudViewStepKm x "
+               "sqrt(dist / 12 km)) clamped no smaller than this — fine "
+               "steps near the camera resolve the sub-100 m detail the "
+               "fixed lattice could never sample, growing with distance as "
+               "the pixel footprint grows. 0 = the legacy fixed-length "
+               "lattice march. Applies live.");
     // Adaptive march sampling (fork — 2026-06-12). A fixed step COUNT
     // across a slab span that varies ~4 km (zenith) to 50+ km (horizon
     // through the curved shell) undersamples horizon rays — ~1.6 km steps
@@ -1885,7 +1981,7 @@ namespace dxvk {
                "default spacing out to ~6 km of cloud span; lower costs "
                "less but lets some banding back in at the far horizon. "
                "32 = legacy cost ceiling. Applies live.");
-    RTX_OPTION("rtx.atmosphere", float, cloudUndersideLightSigma, 0.12f,
+    RTX_OPTION("rtx.atmosphere", float, cloudUndersideLightSigma, 0.2f,
                "Extinction of the light filtering down through each cloud, "
                "per km of overlying water [0..0.5]. Drives the analytic "
                "per-column light field that lights cloud undersides in "
@@ -1900,7 +1996,7 @@ namespace dxvk {
     // the prebaked noise volume grows billows OUTWARD from the density field
     // where it is weak (silhouettes), leaving saturated cores untouched.
     // Nubis detail remap, bias mirrored across the field mean for growth.
-    RTX_OPTION("rtx.atmosphere", float, cloudDetailStrength, 0.6f,
+    RTX_OPTION("rtx.atmosphere", float, cloudDetailStrength, 0.0f,
                "Edge detail strength [0..1]. Grows high-frequency "
                "cauliflower billows OUTWARD from cloud EDGES while leaving dense "
                "cores solid. 0 = off (smooth legacy silhouettes). Note: the "
@@ -1934,12 +2030,6 @@ namespace dxvk {
                "the sun is behind the viewer - the classic crisp-cumulus cue. "
                "Fades off looking toward the sun so silver linings survive. "
                "0 = off.");
-    RTX_OPTION("rtx.atmosphere", float, cloudDetailHeightCharacter, 0.7f,
-               "Height-keyed erosion character [0..1]: flips the edge-detail "
-               "lean over the bottom quarter of each cloud so bases read "
-               "ragged/wispy while tops keep round cauliflower billows (Nubis "
-               "wispy-base / billowy-top trick). 0 = uniform character at all "
-               "heights (legacy).");
     RTX_OPTION("rtx.atmosphere", float, cloudDetailBaseShearKm, 0.2f,
                "Horizontal shear of the edge-detail field at each cloud's "
                "base (km), fading to zero at its top - streaks base-level "
@@ -1974,7 +2064,7 @@ namespace dxvk {
                "SCENE at the strike position (independent of the in-cloud "
                "glow's intensity). 0 = cloud-only lightning (no ground "
                "flash).");
-    RTX_OPTION("rtx.atmosphere", float, lightningRangeKm, 10.0f,
+    RTX_OPTION("rtx.atmosphere", float, lightningRangeKm, 15.0f,
                "Maximum strike distance from the camera in km [1.5..30]. "
                "Strikes distribute uniformly by area between 1 km and this "
                "range.");
@@ -1982,18 +2072,9 @@ namespace dxvk {
                "Lightning flash color (linear RGB), shared by the in-cloud "
                "glow and the scene flash. Default is a cool blue-white.");
 
-    // Cloud-edge / halo tuning (fork — 2026-06-13). Two live knobs for the soft
-    // fringe around cloud silhouettes: cloudEdgeSoftness sets how wide the
-    // coverage-gate transition band is (the EXTENT of the skirt), and
-    // cloudEdgeAmbientFade fades the horizon-tinted ambient on thin samples (the
-    // discolored COLOR of the skirt). Both apply live, no re-bake.
-    RTX_OPTION("rtx.atmosphere", float, cloudEdgeSoftness, 0.15f,
-               "Cloud silhouette softness [0.02..0.4] — width of the view-path "
-               "coverage-gate transition band. Lower = crisper edges and a "
-               "tighter silhouette; higher = softer edges but a broader faint "
-               "skirt of sub-threshold cloud that can read as a halo. The "
-               "shadow/optical-depth gate is held at 0.25 so self-shadow bakes "
-               "are unaffected. Applies live.");
+    // Cloud-edge / halo tuning (fork — 2026-06-13). cloudEdgeAmbientFade fades
+    // the horizon-tinted ambient on thin samples (the discolored COLOR of the
+    // soft skirt around silhouettes). Applies live, no re-bake.
     RTX_OPTION("rtx.atmosphere", float, cloudEdgeAmbientFade, 0.15f,
                "Thin-edge ambient fade [0..0.5]. Sub-threshold skirt samples are "
                "ambient-dominated, and the ambient is sampled at the horizon (a "
@@ -2011,13 +2092,6 @@ namespace dxvk {
     // higher values — neither look shipped. Default 1.0 = bit-exact
     // identity (feature inert) until the towering-cumulus problem is
     // solved properly, likely at the sky-system level.
-    RTX_OPTION("rtx.atmosphere", float, cloudVerticalStretch, 1.0f,
-               "EXPERIMENTAL vertical connectedness of cloud bodies [1..3]. "
-               "1 = fully 3D noise (default; feature inert); higher anchors "
-               "clouds to a stable vertical footprint so cumulus reads as "
-               "connected towers — but currently smears vertically at high "
-               "values. Applies live; also reshapes the baked self-shadow "
-               "grids so lighting tracks the shapes.");
 
     // Underside darkening strength (fork — 2026-06-10; reworked 2026-06-19 to
     // scale the realistic analytic underside light field instead of a constant
@@ -2039,6 +2113,9 @@ namespace dxvk {
                "with the sun overhead and fades out toward the horizon, where "
                "the low sun rakes under the deck and lights the bases (sunset "
                "glow). 0 = off (uniformly lit undersides).");
+    // Upstream also declares cloudSkyAmbientFill here with a retuned default; skipped
+    // because our fork already declares that option further down in this file, and a
+    // second RTX_OPTION with the same name is C2086.
     RTX_OPTION("rtx.atmosphere", float, cloudAmbientShadowStrength, 0.6f,
                "Dramatic shading [0..1]: how much the sky-ambient fill is "
                "attenuated by sun-shadow depth inside the cloud. The ambient "
@@ -2059,24 +2136,12 @@ namespace dxvk {
     // Changing any of them (or cloudNoiseTileKm) re-bakes the 256^3 noise volume
     // live via RtxAtmosphere::needsCloudNoiseRebake — no relaunch needed, though
     // dragging a slider re-bakes each frame the value changes and may hitch.
-    // Morrowind override #8: default stays 0.0f (Kim's 0.6 carve is too aggressive
-    // for our coverage/density settings — kills cloud coverage). With the live
-    // re-bake above, the override's old "requires game relaunch" caveat is obsolete.
-    RTX_OPTION("rtx.atmosphere", float, cloudWorleyCarveStrength, 0.0f,
-               "Schneider15 cauliflower carve strength. The Worley FBM is "
-               "subtracted from the Perlin base in the cloud noise bake to "
-               "produce chunky 3D cell silhouettes. 0 = pure Perlin (smooth "
-               "blobs, flat pancake look); 1.0 = aggressive carve (crushed "
-               "base shape). 0.6 default. Re-bakes the cloud noise volume live on change.");
-    RTX_OPTION("rtx.atmosphere", float, cloudWorleyFrequency, 1.0f,
-               "Worley feature-point density, cycles per km. Smaller = larger "
-               "cumulus cells (boulder-sized chunks); larger = smaller cells "
-               "(cauliflower bumps). Default 1.0 targets cumulus-cell scale. "
-               "Re-bakes the cloud noise volume live on change.");
-    RTX_OPTION("rtx.atmosphere", uint32_t, cloudWorleyOctaves, 3,
-               "Worley FBM octave count (clamped 1..4 in the bake shader). "
-               "Higher = more sub-scale detail on cell boundaries. Default 3. "
-               "Re-bakes the cloud noise volume live on change.");
+    // Morrowind override #8 (cloudWorleyCarveStrength = 0.0f) is RETIRED as of the
+    // numos3 sync (2026-07-26). The Nubis3 conversion deleted the Perlin/Worley noise
+    // bake (rtx_cloud_noise_baker.comp.slang) that the carve operated on, so
+    // cloudWorleyCarveStrength / cloudWorleyFrequency / cloudWorleyOctaves have no
+    // consumer left and are removed here alongside upstream. Cauliflower silhouettes
+    // now come from the NVDF body SDF plus the Nubis3 erosion/detail bands.
 
     // Cloud aerial perspective. Distant cloud samples attenuate exponentially
     // with march distance, mimicking real atmospheric extinction. Without
@@ -2150,6 +2215,12 @@ namespace dxvk {
                "internal (DLSS-input) resolution [0.25..1]. 0.5 = quarter the "
                "pixels (~4x cheaper cloud march); 1.0 = native (legacy, "
                "bit-exact). Applies on the next frame; live-tunable.");
+    RTX_OPTION("rtx.atmosphere", float, cloudHistoryWeight, 0.85f,
+               "EMA history weight of the cloud temporal smoother [0..0.98]. "
+               "Higher = smoother/softer clouds that respond slowly; lower = "
+               "crisper, faster-responding clouds with more visible per-frame "
+               "jitter. 0 disables the temporal blend entirely (raw jittered "
+               "march). 0.92 = the previous hardcoded value. Applies live.");
 
     // Secondary-ray cloud LUT (fork — 2026-06-10, perf). Every indirect /
     // PSR / reflection ray that reaches sky-miss previously ran the full
@@ -2173,18 +2244,12 @@ namespace dxvk {
     // pipeline (NRD / DLSS-RR) temporally converges one blue-noise-jittered
     // ray per frame to the same soft penumbra, so the multi-ray loop is
     // oversampling. 0 = legacy uncapped count.
-    RTX_OPTION("rtx.atmosphere", int, sunShadowMaxSamples, 1,
-               "Cap on sun soft-shadow visibility rays per primary pixel "
-               "(secondary bounces use half the capped value, min 1). "
-               "Default 1 (in-game validated 2026-06-11: large perf win, no "
-               "penumbra smudging — the denoiser temporally converges a "
-               "single jittered ray to the same softness). 0 = legacy "
-               "anisotropy-driven count (1-12).");
-    RTX_OPTION("rtx.atmosphere", int, moonShadowMaxSamples, 1,
-               "Cap on moon soft-shadow visibility rays per primary pixel "
-               "at night (secondary bounces use half the capped value, "
-               "min 1). Default 1 (in-game validated 2026-06-11). "
-               "0 = legacy constant 4.");
+    // sunShadowMaxSamples / moonShadowMaxSamples retired in the numos3 sync
+    // (2026-07-26). Upstream removed them on 2026-06-21 together with the bespoke
+    // atmosphere NEE loops they capped; the sun and moons are now ordinary Remix
+    // distant lights sampled by the normal NEE path, which has its own sampling
+    // controls. An audit of the merged tree found no shader reading either field,
+    // and their CB words now carry nubis3SharpenStrength / nvdfNominalCoverage.
 
     // Cloud voxel-grid re-bake granularity (fork — 2026-06-11, perf). The
     // D_sun / D_ambient grids re-baked every frame; the perf-bisect freeze
@@ -2352,21 +2417,21 @@ namespace dxvk {
                "range. Lets the shadow strength be tuned independently of "
                "the bake magnitude (cloudShadowMarchStrength) without re-baking.");
 
-    // Cloud Height LUT (slide 3 lift — RDR2 SIGGRAPH 2019, fork — 2026-05-15).
-    // 64x128 R8 lookup table indexed by (cloud type slice, height fraction).
-    // Replaces the 3-keypoint procedural trapezoid in cloudTypeProfile() with a
-    // baked curve family — stratus / stratocumulus / cumulus stay close to the
-    // procedural shape so default-on doesn't regress the shipped Nubis Cubed
-    // look, but the high-type end gains an anvil lift and the low-type end can
-    // be re-tuned per weather without rebuilding shaders.
-    RTX_OPTION("rtx.atmosphere", bool, cloudHeightLutEnable, true,
-               "When true, cloud_render.comp.slang samples a 64x128 baked "
-               "height LUT to determine the per-altitude shape modulator "
-               "instead of the procedural cloudTypeProfile trapezoid. The LUT "
-               "is baked once at startup and keyed by (typeSlice, heightFrac). "
-               "Voxel grid bakers + analytical evalClouds still use the "
-               "procedural curve, so this flag only affects the screen-space "
-               "cloud render pass.");
+    // Morrowind override #9 (cloud height-LUT densityEnvelope widening) is RETIRED as
+    // of the numos3 sync (2026-07-26): cloud_height_lut_baker.comp.slang is deleted by
+    // the Nubis3 conversion, so cloudHeightLutEnable has no consumer and is removed.
+    // Per-altitude shaping now comes from the NVDF dimensional profile.
+    // cloudShadowIndirectStrength REMOVED (fork — 2026-06-18, was issue #37).
+    // This knob fed a screen-space multiply of the per-pixel cloud shadow factor
+    // onto the primary INDIRECT lobes in composite. It was removed because it
+    // double-counted the cloud occlusion already carried physically by
+    // evalSkyRadiance on indirect rays that escape to the sky, and — being
+    // geometry-blind (the factor projects straight up with no roof knowledge) —
+    // it was the actual root cause of interiors darkening under overcast for
+    // every surface type. See the removal note in composite.comp.slang. The
+    // legitimate outdoor whole-mesh-ambient dimming under a cumulus is preserved
+    // through evalSkyRadiance; no replacement knob is needed.
+
 
     // Two-layer cloud map (slide 1 lift — RDR2 SIGGRAPH 2019, fork — 2026-05-15).
     // Adds an independent second cloud slab at a higher altitude (cirrus deck
@@ -2374,13 +2439,17 @@ namespace dxvk {
     // the lower slab first and composites layer 2 onto residual transmittance.
     // Default off so today's look is preserved bit-for-bit.
     RTX_OPTION("rtx.atmosphere", bool, cloudLayer2Enable, true,
-               "When true, cloud_render.comp.slang marches a second cloud "
-               "slab on top of the primary one. Layer 2 has its own altitude / "
-               "thickness / type / coverage / density-scale knobs (the "
-               "cloudLayer2* options below). Voxel-grid terrain shadows + "
-               "ground-shadow NEE remain layer-1-only — cirrus is optically "
-               "thin enough that the per-frame compute cost of shadowing it "
-               "isn't worth the visual delta.");
+               "When true, cloud_render.comp.slang marches a second 'echo' "
+               "cloud deck above the primary slab — the same cloud-slab density "
+               "model at a higher, gapped altitude, marched cheaply (low step "
+               "budget, analytic sun shadow, no moon path). Layer 2 has its own "
+               "altitude / thickness / type / coverage / density-scale / "
+               "noise-seed knobs (the cloudLayer2* options below); the seed "
+               "decorrelates the deck's coverage/type field from layer 1 so it "
+               "reads as a related-but-different cloudscape. Voxel-grid terrain "
+               "shadows + ground-shadow NEE remain layer-1-only.");
+    // Morrowind: layer 2 ships ENABLED (upstream default is false). Kept on through the
+    // numos3 sync to preserve the shipped cloudscape; revisit during the Nubis3 look pass.
     RTX_OPTION("rtx.atmosphere", float, cloudLayer2Altitude, 5.5f,
                "Altitude (km) of the layer-2 slab base. Default 7.5 km targets "
                "the cirrus altitude band.");
