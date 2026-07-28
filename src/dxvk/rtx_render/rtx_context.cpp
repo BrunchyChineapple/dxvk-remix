@@ -911,6 +911,24 @@ namespace dxvk {
   }
 
   void RtxContext::logFramePerfWindow() {
+    // Opt-in (rtx.enableRetainedPerfLogging, default off). Returning here also skips the
+    // DxvkStatCounters query below, which is the one non-trivial cost in this path.
+    //
+    // Note what this does NOT skip: the per-phase elapsedNsSince() accumulation in injectRTX
+    // still runs every frame. Those are a dozen-odd steady-clock reads scattered through a
+    // function that is already issuing GPU work, and gating each one would mean a branch per
+    // phase in the hot path for no measurable return. Do not describe this option as removing
+    // all instrumentation cost.
+    //
+    // The accumulated window is reset so that enabling the option mid-session starts from a
+    // clean window instead of reporting averages over frames that were never fully sampled.
+    if (!RtxOptions::enableRetainedPerfLogging()) {
+      if (m_framePerf.frames != 0) {
+        m_framePerf = FramePerfWindow {};
+      }
+      return;
+    }
+
     // Matches the RetainedPerf window so the two log lines can be read as one picture.
     constexpr uint32_t kFramePerfWindowFrames = 300;
 

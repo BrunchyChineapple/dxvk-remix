@@ -2687,6 +2687,16 @@ namespace dxvk {
   }
 
   void SceneManager::logRetainedPerfWindow() {
+    // Opt-in (rtx.enableRetainedPerfLogging, default off) -- see the option comment in
+    // rtx_options.h. Reset the window when disabled so enabling it mid-session reports a
+    // full clean window rather than an average over partially-accumulated frames.
+    if (!RtxOptions::enableRetainedPerfLogging()) {
+      if (m_retainedPerf.frames != 0) {
+        m_retainedPerf = RetainedPerfWindow {};
+      }
+      return;
+    }
+
     if (!m_retainedExternalInstances.empty()) {
       m_retainedPerfEverActive = true;
     }

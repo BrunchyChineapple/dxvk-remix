@@ -479,6 +479,18 @@ namespace dxvk {
     RTX_OPTION("rtx", uint32_t, minPrimsInDynamicBLAS, 1000, "The minimum number of triangles required to promote a mesh to it's own BLAS, otherwise it lands in the merged BLAS with multiple other meshes.");
     RTX_OPTION("rtx", uint32_t, maxPrimsInMergedBLAS, 50000, "The maximum number of triangles for a mesh that can be in the merged BLAS.  ");
     RTX_OPTION_FLAG("rtx", uint32_t, maxInstancesPerMergedBlasBucket, 0, RtxOptionFlags::NoSave, "Maximum instances placed in one merged BLAS bucket before a new bucket is started. 0 disables the cap, which is the default.\nDiagnostic only: capping was measured to lose. It does bound rebuild amplification as intended, but each bucket carries a large fixed cost - a build-sizes driver query, a linear BLAS pool search, content hashing, and acceleration structure allocation when no pooled BLAS fits - and that cost grows faster than bucket count. At radius 10 a cap of 256 cut the routing loop from 6.5 ms to 1.4 ms while the remainder of the BLAS build rose from 4.7 ms to 25 ms. Retained here to measure bucket-count sensitivity, not to be enabled.");
+    // Fork (Morrowind): opt-in frame-time and retained-world telemetry. Both windows emit a
+    // handful of Logger::info lines every 300 rendered frames, which is useful during a perf
+    // investigation and pure log noise the rest of the time -- roughly 450 of the 1300 lines in
+    // a normal remix-dxvk.log came from these two before they were gated. Off by default.
+    //
+    // Disabling also skips the per-frame DxvkStatCounters query that feeds the sync window. It
+    // does NOT skip the per-phase steady-clock reads in injectRTX, which are cheap and remain
+    // unconditional; this is a log-volume switch, not a full instrumentation kill switch.
+    RTX_OPTION_FLAG("rtx", bool, enableRetainedPerfLogging, false, RtxOptionFlags::NoSave,
+                    "Log frame-time and retained-world telemetry to the Remix log every 300 rendered frames.\n"
+                    "Emits the FramePerf (per-phase injectRTX breakdown plus a synchronisation window sourced from DxvkStatCounters) and RetainedPerf (retained submission, ownership pruning, GC and merged-BLAS breakdown) lines.\n"
+                    "Off by default: this is perf-investigation instrumentation, not diagnostics, and it is the dominant source of log volume when enabled. Turning it off also skips the per-frame stat-counter query that backs the sync window, though the cheap per-phase timer reads remain active either way.");
     RTX_OPTION_FLAG("rtx", bool, forceMergeAllMeshes, false, RtxOptionFlags::NoSave, "Force merges all meshes into as few BLAS as possible.  This is generally not desirable for performance, but can be a useful debugging tool.");
     RTX_OPTION_FLAG("rtx", bool, minimizeBlasMerging, false, RtxOptionFlags::NoSave, "Minimize BLAS merging to the minimum possible, this option tries to give all meshes their own BLAS.  This is generally not desirable forperformance, but can be a useful debugging tool.");
 
