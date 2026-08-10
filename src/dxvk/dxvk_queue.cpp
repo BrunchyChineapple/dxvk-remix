@@ -128,6 +128,21 @@ namespace dxvk {
     m_mutexQueue.unlock();
   }
 
+  // NV-DXVK start: GPU crash diagnostics
+  // Serializes the CPU-side acceleration structure history so a device loss can be
+  // attributed to specific geometry. Aftermath stalling stays with the submission
+  // sites that already own it.
+  void DxvkSubmissionQueue::onGpuCrash(const char* reason) {
+    if (m_gpuCrashHandled.exchange(true)) {
+      return;
+    }
+
+    // The submission queue is destroyed and its threads joined before the device's
+    // common objects, so the scene manager and recorder are still alive here.
+    m_device->getCommon()->getSceneManager().getAccelManager().dumpCrashState(reason);
+  }
+  // NV-DXVK end
+
   void DxvkSubmissionQueue::submitCmdLists() {
     env::setThreadName("dxvk-submit");
 
@@ -247,6 +262,14 @@ namespace dxvk {
       } else if (status == VK_ERROR_DEVICE_LOST || entry.submit.cmdList != nullptr) {
         Logger::err(str::format("DxvkSubmissionQueue: Command submission failed: ", status));
         m_lastError = status;
+
+        // NV-DXVK start: GPU crash diagnostics
+        // Only a device loss produces a GPU crash dump, so other submission
+        // failures are left with their existing handling.
+        if (status == VK_ERROR_DEVICE_LOST) {
+          onGpuCrash("queue submission");
+        }
+        // NV-DXVK end
         
         if (m_device->config().enableAftermath) {
           // Stall the pending exception until aftermath has finished writing (or hits some error)
@@ -308,6 +331,13 @@ namespace dxvk {
       if (status != VK_SUCCESS) {
         Logger::err(str::format("DxvkSubmissionQueue: Failed to sync fence: ", status));
         m_lastError = status;
+
+        // NV-DXVK start: GPU crash diagnostics
+        if (status == VK_ERROR_DEVICE_LOST) {
+          onGpuCrash("fence synchronization");
+        }
+        // NV-DXVK end
+
         m_device->waitForIdle();
       }
 

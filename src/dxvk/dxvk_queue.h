@@ -258,6 +258,9 @@ namespace dxvk {
     std::atomic<bool>       m_stopped = { false };
     std::atomic<uint32_t>   m_pending = { 0u };
     std::atomic<uint64_t>   m_gpuIdle = { 0ull };
+    // NV-DXVK start: GPU crash diagnostics
+    std::atomic<bool>       m_gpuCrashHandled = { false };
+    // NV-DXVK end
 
     dxvk::mutex                 m_mutex;
     dxvk::mutex                 m_mutexQueue;
@@ -278,6 +281,10 @@ namespace dxvk {
     void submitCmdLists();
 
     void finishCmdLists();
+
+    // NV-DXVK start: GPU crash diagnostics
+    void onGpuCrash(const char* reason);
+    // NV-DXVK end
     
     // NV-DXVK start: DLFG integration
     DxvkFrameInterpolationInfo m_currentFrameInterpolationData;
